@@ -1,0 +1,57 @@
+{
+  "geraet" : {
+    "konfiguration" : {
+      "name" : "Befund",
+      "serviceId" : 0,
+      "eintragFachinformationstyp" : 2,
+      "gdtKonfiguration" : {
+        "gdtId" : "BIMP_GDT",
+        "gdtAbsender" : "T2MED_PX",
+        "gdtKuerzel" : "MGRT",
+        "geraetVerfahren" : "ALLG0",
+        "testIdent" : null,
+        "zeichensatz" : "2",
+        "betriebsmodus" : 3,
+        "anzeigeZeitpunkt" : 1,
+        "einzelverarbeitung" : false,
+        "abweichendeImportdatei" : "T2MDBEF.gdt",
+        "abweichendeExportdatei" : "BEFT2MD.gdt",
+        "langzeitmessung" : false,
+        "serienmessung" : false,
+        "annahmeOhneMessauftrag" : false,
+        "dezimalzeichen" : 1,
+        "satzart" : 1,
+        "automatischeZuordnung" : 1
+      },
+      "dokumenteUebernehmen" : true,
+      "kurzeintragGewuenscht" : false,
+      "koerpermassStrukturiertUebernehmen" : false,
+      "kostentraegerIKUebertragen" : false,
+      "sswUebertragen" : false,
+      "telefonUebertragen" : false,
+      "emailUebertragen" : false,
+      "zeitpunktUebernehmen" : false,
+      "messauftragGruppenweitSuchen" : false,
+      "inhaltsbeschreibungUebernehmen" : true,
+      "anzahlDerZeilen" : 5,
+      "messergebnisPraesentationTyp" : 3,
+      "freieKategorieAuswertung" : 1,
+      "nachtraeglicheBefundung" : 1,
+      "verwendeteMessergebnisFelder" : [ ],
+      "gruppe" : null
+    },
+    "stationZuordnung" : {
+      "importverzeichnis" : "/Volumes/GDT",
+      "exportverzeichnis" : "/Volumes/GDT",
+      "programm" : "/System/Applications/TextEdit.app",
+      "parameter" : null,
+      "wiederaufrufProgramm" : null,
+      "wiederaufrufParameter" : null,
+      "verwendungszweck" : 1,
+      "separatKonfiguriert" : false,
+      "einleseverzoegerung" : null,
+      "messgeraetVerbergen" : false,
+      "netzwerkpfad" : true
+    }
+  }
+}
