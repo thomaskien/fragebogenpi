@@ -10,8 +10,11 @@ Ziel ist:
 - **Befundfotos direkt in die Kartei vom Handy**
 
 
+iPad:
 
-<img src="https://github.com/thomaskien/fragebogenpi/blob/main/3B2759B2-4B6C-4BED-919C-FFDB21ACE07B_4_5005_c.jpeg" alt="drawing" width="300"/>
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/IMG_1169.png" alt="drawing" width="800"/>
+
+Wird zu:
 
 <img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot 2026-02-01 at 00.28.35.png" alt="drawing" width="800"/>
 
@@ -20,12 +23,12 @@ Ziel ist:
 Man braucht:
 - **kein teures medizinsoftwarebla für xxxx,xx Euro**
 - einen Raspberry ab version 4
-- installieren mit Raspberry OS (ich nehme light)
+- installieren mit Raspberry OS (ich nehme light) z.B. version 13
 - eine High-Endurance-SD
-- ein Plastikgerhäuse für den Raspberry damit das WLAN noch funktioniert
+- ein Plastikgehäuse für den Raspberry damit das WLAN nicht abgeschirmt wird
 - Einen Netzwerkanschluss in der Nähe des Wartezimmers
-- ein altes iPad für die Anamnesebögen
-- ein altes iPhone für Kartei-Selfie wenn man möchte
+- ein (altes) iPad für die Anamnesebögen
+- ein (altes) iPhone für Kartei-Selfie wenn man möchte
 - Befunde kann man mit seinem normalen Handy Fotografieren wenn es per VPN oder WLAN im Praxisnetz ist
 
 Das Projekt richtet einen Raspberry Pi so ein, dass:
