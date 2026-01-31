@@ -5,12 +5,12 @@
 Ziel ist:
 - Daten strukturiert in das Praxisverwaltungssystem zu bekommen
 - Entwickelt für T2med -> modifizierbar für andere systeme
-- Anamnesebögen für Neupatienten
-- Patientenfoto für die Kartei
-- Befundfotos direkt in die Kartei vom Handy
+- **Anamnesebögen für Neupatienten**
+- **Patientenfoto für die Kartei**
+- **Befundfotos direkt in die Kartei vom Handy**
 
 Man braucht:
-- kein teures medizinsoftwarebla für xxxx,xx Euro
+- **kein teures medizinsoftwarebla für xxxx,xx Euro**
 - einen Raspberry ab version 4
 - installieren mit Raspberry OS (ich nehme light)
 - eine High-Endurance-SD
@@ -18,7 +18,7 @@ Man braucht:
 - Einen Netzwerkanschluss in der Nähe des Wartezimmers
 - ein altes iPad für die Anamnesebögen
 - ein altes iPhone für Kartei-Selfie wenn man möchte
-- Befunde kann man mit seinem normalen gerät Fotografieren
+- Befunde kann man mit seinem normalen Handy Fotografieren wenn es per VPN oder WLAN im Praxisnetz ist
 
 Das Projekt richtet einen Raspberry Pi so ein, dass:
 - im **LAN** ein normal erreichbarer Web- und Samba-Server läuft
