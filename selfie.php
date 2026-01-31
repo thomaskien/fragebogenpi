@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /*
- * selfie.php  (all-in-one)
+ * selfie.php v1.7
  *
  * Changelog (since v1.2)
  * - v1.2: Upload + Schreiben selfie.jpg + Antwort-GDT 6310 (6302-6305) im selben Ordner
@@ -10,10 +10,14 @@ declare(strict_types=1);
  * - v1.4: Auto-Refresh alle 3s, wenn keine Auftrags-GDT vorhanden
  * - v1.5: Nach erfolgreicher Antwort: Auftrags-GDT löschen, UI zeigt "erfolgreich übermittelt" und lädt neu
  * - v1.6: Client-side Downscale (Canvas) statt Server-GD, da GD fehlt
- * - v1.7: UI: Patient (Vorname Nachname) ganz groß oben, entfernte Hinweis-/Endpoint-Blöcke
+ * - v1.7: UI: Patient (Vorname Nachname) ganz groß oben, entfernte Hinweis-/Endpoint-Blöcke, Abbruch-Button
+ *         + Anpassungen: Downscale max. Kante 800px, Entfernt 6228 und 6304 aus Antwort-GDT, Textumbruch im Wartefenster
  */
 
-$dirPdf = '/srv/fragebogenpi/GDT';   // <- dein Pfad (GDT-Ordner)
+$APP_FOOTER = 'fragebogenpi von Dr. Thomas Kienzle 2026';
+$APP_VERSION = 'v1.7';
+
+$dirPdf = '/srv/fragebogenpi/GDT';   // Zielordner (GDT)
 $OUT_JPG_NAME = 'selfie.jpg';
 $OUT_GDT_NAME = 'T2MDSLF.gdt';
 
@@ -105,14 +109,12 @@ function find_request_gdt(string $gdtDir, string $ignoreBasename): ?string {
 if (!is_dir($dirPdf)) {
     @mkdir($dirPdf, 0775, true);
 }
-if (!is_dir($dirPdf) || !is_writable($dirPdf)) {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        json_out(500, [
-            'status'  => 'error',
-            'message' => 'Zielverzeichnis existiert nicht oder ist nicht beschreibbar',
-            'dir'     => $dirPdf
-        ]);
-    }
+if ((!is_dir($dirPdf) || !is_writable($dirPdf)) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    json_out(500, [
+        'status'  => 'error',
+        'message' => 'Zielverzeichnis existiert nicht oder ist nicht beschreibbar',
+        'dir'     => $dirPdf
+    ]);
 }
 
 // ----------------- request gdt -----------------
@@ -134,6 +136,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'dir'            => $dirPdf,
         'request_gdt'    => $requestPath ? basename($requestPath) : null,
     ];
+
+    // ---- ABBRUCH ----
+    if (($_POST['action'] ?? '') === 'abort') {
+        if ($requestPath && is_file($requestPath)) {
+            $ok = @unlink($requestPath);
+            json_out(200, [
+                'status'  => 'ok',
+                'message' => 'abgebrochen',
+                'request_deleted' => $ok,
+                'request_gdt' => basename($requestPath),
+            ]);
+        }
+        json_out(200, [
+            'status'  => 'ok',
+            'message' => 'keine Anforderungsdatei vorhanden'
+        ]);
+    }
 
     if (!$requestPath || !is_file($requestPath)) {
         json_out(409, [
@@ -185,8 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     }
 
-    // Wir erwarten i. d. R. JPEG, weil wir clientseitig zu JPEG wandeln.
-    // (Wenn du dennoch PNG zulassen willst: einfach MIME-Check lockern.)
+    // Wir erwarten JPEG (clientseitig erzeugt)
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime  = $finfo->file($file['tmp_name']);
     if ($mime !== 'image/jpeg') {
@@ -230,7 +248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ans8315 = $req8316 !== '' ? $req8316 : 'T2MED_PX';
     $ans8316 = $req8315 !== '' ? $req8315 : 'KIMP_GDT';
 
-    // Antwort-GDT bauen
+    // Antwort-GDT bauen (OHNE 6228 und OHNE 6304!)
     $lines = [];
     $lines[] = gdt_line('8000', '6310');
     $lines[] = gdt_line('8100', '000000'); // placeholder
@@ -246,11 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $lines[] = gdt_line('6200', 'KI01');
     $lines[] = gdt_line('6201', 'KI-Selfie');
-    $lines[] = gdt_line('6228', 'Selfie-Anhang: ' . $OUT_JPG_NAME);
 
     $lines[] = gdt_line('6302', '000001');
     $lines[] = gdt_line('6303', 'JPG');
-    $lines[] = gdt_line('6304', 'Selfie');
     $lines[] = gdt_line('6305', $OUT_JPG_NAME);
 
     $lines[] = gdt_line('9999', '');
@@ -259,27 +275,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     write_gdt_file($outGdtPath, $lines);
 
     // Danach: Auftragsdatei löschen
-    $deleted = false;
-    $delErr = null;
-    try {
-        $deleted = @unlink($requestPath);
-        if (!$deleted) {
-            $delErr = 'unlink fehlgeschlagen (Rechte/Lock?)';
-        }
-    } catch (Throwable $e) {
-        $delErr = $e->getMessage();
-    }
+    $deleted = @unlink($requestPath);
 
     json_out(200, [
-        'status'        => 'ok',
-        'message'       => 'erfolgreich übermittelt',
-        'filename'      => $OUT_JPG_NAME,
-        'mime'          => $mime,
-        'path'          => $targetJpg,
-        'answer_gdt'    => $OUT_GDT_NAME,
-        'request_gdt'   => basename($requestPath),
-        'request_deleted' => $deleted,
-        'delete_error'  => $delErr
+        'status'          => 'ok',
+        'message'         => 'erfolgreich übermittelt',
+        'filename'        => $OUT_JPG_NAME,
+        'mime'            => $mime,
+        'path'            => $targetJpg,
+        'answer_gdt'      => $OUT_GDT_NAME,
+        'request_gdt'     => basename($requestPath),
+        'request_deleted' => $deleted
     ]);
 }
 
@@ -287,9 +293,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $uploadUrl = $_SERVER['SCRIPT_NAME'];
 $sessionId = $requestPath ? basename($requestPath) : 'NO_REQUEST';
 
-// Wenn keine Auftrags-GDT: Refresh-Seite (3s)
-if (!$requestPath || !is_file($requestPath)) {
 ?>
+<?php if (!$requestPath || !is_file($requestPath)) { ?>
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -303,7 +308,8 @@ if (!$requestPath || !is_file($requestPath)) {
     .card { background:#fff; border-radius:14px; padding:16px; box-shadow:0 6px 18px rgba(0,0,0,0.06); margin:0 auto; max-width:var(--maxw); }
     .patient { font-size: 2.3rem; font-weight: 900; margin: 4px 0 10px 0; }
     .hint { font-size:1rem; color:#555; line-height:1.4; }
-    .small { font-size:0.85rem; color:#777; margin-top:10px; word-break:break-all; }
+    .small { font-size:0.85rem; color:#777; margin-top:10px; }
+    .footer { margin-top: 14px; font-size: 0.8rem; color: #777; }
   </style>
 </head>
 <body>
@@ -314,14 +320,13 @@ if (!$requestPath || !is_file($requestPath)) {
       <b><?php echo h($dirPdf); ?></b><br/><br/>
       Seite aktualisiert sich automatisch alle 3 Sekunden.
     </div>
-    <div class="small">Sobald die Auftragsdatei da ist, erscheint der Kamera-Button.</div>
+    <div class="small">Sobald die Auftragsdatei da ist,<br>erscheint der Kamera-Button.</div>
+    <div class="footer"><?php echo h($APP_FOOTER . ' · ' . $APP_VERSION); ?></div>
   </div>
 </body>
 </html>
-<?php
-    exit;
-}
-?>
+<?php exit; } ?>
+
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -370,6 +375,7 @@ if (!$requestPath || !is_file($requestPath)) {
     }
     #takePhotoBtn { background: #007aff; color: #fff; }
     #uploadBtn { background: #34c759; color: #fff; }
+    #abortBtn { background: #ff3b30; color: #fff; }
     #uploadBtn:disabled { background: #a7e3b7; cursor: not-allowed; }
     #status {
       font-size: 1.05rem;
@@ -385,6 +391,7 @@ if (!$requestPath || !is_file($requestPath)) {
       border-radius: 12px;
       display: none;
     }
+    .footer { margin-top: 14px; font-size: 0.8rem; color: #777; }
   </style>
 </head>
 <body>
@@ -396,9 +403,12 @@ if (!$requestPath || !is_file($requestPath)) {
 
     <button id="takePhotoBtn">📷 Selfie aufnehmen</button>
     <button id="uploadBtn" disabled>⬆️ Upload</button>
+    <button id="abortBtn">❌ Abbruch</button>
 
     <img id="preview" alt="Vorschau" />
     <div id="status"></div>
+
+    <div class="footer"><?php echo h($APP_FOOTER . ' · ' . $APP_VERSION); ?></div>
   </div>
 
   <script>
@@ -408,6 +418,7 @@ if (!$requestPath || !is_file($requestPath)) {
     var cameraInput = document.getElementById("cameraInput");
     var takePhotoBtn = document.getElementById("takePhotoBtn");
     var uploadBtn = document.getElementById("uploadBtn");
+    var abortBtn = document.getElementById("abortBtn");
     var preview = document.getElementById("preview");
     var statusEl = document.getElementById("status");
 
@@ -449,10 +460,9 @@ if (!$requestPath || !is_file($requestPath)) {
       setStatus("Bild ausgewählt (" + kb + " KB)", false);
     });
 
-    // ---- Client-side Downscale (ohne Server-GD) ----
-    // Default: maximale Kante 1280 px, Qualität 0.82
+    // ---- Client-side Downscale (Canvas -> JPEG) ----
     function downscaleToJpeg(file, maxDim, quality) {
-      maxDim = maxDim || 1280;
+      maxDim = maxDim || 800;          // max. Kante 800px
       quality = (quality == null) ? 0.82 : quality;
 
       return new Promise(function(resolve, reject) {
@@ -483,13 +493,11 @@ if (!$requestPath || !is_file($requestPath)) {
         };
         img.onerror = function() { reject(new Error("Bild konnte nicht geladen werden")); };
 
-        var url;
         try {
-          url = URL.createObjectURL(file);
+          img.src = URL.createObjectURL(file);
         } catch (e) {
-          return reject(e);
+          reject(e);
         }
-        img.src = url;
       });
     }
 
@@ -498,12 +506,12 @@ if (!$requestPath || !is_file($requestPath)) {
 
       uploadBtn.disabled = true;
       takePhotoBtn.disabled = true;
+      abortBtn.disabled = true;
       setStatus("Upload läuft…", false);
 
-      downscaleToJpeg(selectedFile, 1280, 0.82)
+      downscaleToJpeg(selectedFile, 800, 0.82)
         .then(function(blob) {
           var formData = new FormData();
-          // Server erwartet "image" und MIME image/jpeg
           formData.append("image", blob, "selfie.jpg");
           formData.append("session_id", SESSION_ID);
 
@@ -525,8 +533,6 @@ if (!$requestPath || !is_file($requestPath)) {
             var msg = (r.data && r.data.message) ? r.data.message : "Upload fehlgeschlagen";
             throw new Error(msg);
           }
-
-          // Gewünscht: einmal "erfolgreich übermittelt" ausgeben und dann neu laden
           setStatus("✅ erfolgreich übermittelt", false);
           setTimeout(function() { location.reload(); }, 1200);
         })
@@ -535,6 +541,41 @@ if (!$requestPath || !is_file($requestPath)) {
           setStatus("❌ " + msg, true);
           uploadBtn.disabled = false;
           takePhotoBtn.disabled = false;
+          abortBtn.disabled = false;
+        });
+    });
+
+    abortBtn.addEventListener("click", function () {
+      if (!confirm("Vorgang wirklich abbrechen? Die Anforderung wird gelöscht.")) return;
+
+      uploadBtn.disabled = true;
+      takePhotoBtn.disabled = true;
+      abortBtn.disabled = true;
+      setStatus("Abbruch läuft…", false);
+
+      var formData = new FormData();
+      formData.append("action", "abort");
+      formData.append("session_id", SESSION_ID);
+
+      fetch(UPLOAD_URL, { method: "POST", body: formData })
+        .then(function(res) {
+          var ct = res.headers.get("content-type") || "";
+          if (ct.indexOf("application/json") !== -1) return res.json();
+          return res.text().then(function(text) {
+            throw new Error("Server hat kein JSON geliefert: " + text.slice(0, 200));
+          });
+        })
+        .then(function(data) {
+          if (!data || data.status !== "ok") throw new Error((data && data.message) ? data.message : "Abbruch fehlgeschlagen");
+          setStatus("❌ abgebrochen", false);
+          setTimeout(function() { location.reload(); }, 800);
+        })
+        .catch(function(err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          setStatus("❌ " + msg, true);
+          uploadBtn.disabled = false;
+          takePhotoBtn.disabled = false;
+          abortBtn.disabled = false;
         });
     });
   </script>
