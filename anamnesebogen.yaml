@@ -1,0 +1,316 @@
+# anamnesebogen.yaml
+# Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
+# Version 1.7
+
+meta:
+  title: "Anamnese"
+  version: "1.7"
+  language: "de"
+
+sections:
+
+  - title: "Eigene Vorerkrankungen"
+    type: checklist
+    questions:
+      - { id: hypertonie, label: "Bluthochdruck" }
+      - { id: herzerkrankung, label: "Herzkrankheit" }
+      - { id: schlaganfall, label: "Schlaganfall" }
+      - { id: thrombose, label: "Thrombose / Lungenembolie" }
+
+      - { id: depression, label: "Depression" }
+      - { id: panikattacken, label: "Panikattacken" }
+      - { id: burnout, label: "Burn-out" }
+      - { id: ptbs, label: "Posttraumatische Belastungsstörung (PTBS)" }
+
+      - { id: copd, label: "\"Raucherlunge\" (COPD)" }
+      - { id: asthma, label: "Asthma / chronische Bronchitis" }
+      - { id: diabetes, label: "Blutzuckerkrankheit (Diabetes)" }
+      - { id: fettstoffwechsel, label: "Fettstoffwechselstörung / Cholesterin" }
+      - { id: gicht, label: "Harnsäurestoffwechselstörung / Gicht" }
+      - { id: niere, label: "Nierenerkrankung" }
+      - { id: leber, label: "Leberentzündung" }
+      - { id: magen_darm, label: "Magen- / Darmerkrankung" }
+      - { id: tumor, label: "Tumorerkrankung" }
+      - { id: polyneuropathie, label: "Polyneuropathie" }
+      - { id: gelenke, label: "Gelenkerkrankung / Rheuma" }
+      - { id: hautkrankheiten, label: "Hautkrankheiten" }
+      - { id: schilddruese, label: "Schilddrüsenerkrankung" }
+      - { id: hiv, label: "HIV-Infektion / AIDS" }
+      - { id: epilepsie, label: "Anfallsleiden / Epilepsie" }
+      - { id: inkontinenz, label: "Inkontinenz" }
+      - { id: prostata, label: "Prostata-Beschwerden / Prostataerkrankung" }
+      - { id: alkoholkrankheit, label: "Alkoholkrankheit" }
+      - { id: drogensucht, label: "Drogensucht" }
+      - { id: allergie, label: "Allergie" }
+
+  - title: "Weitere Vorerkrankungen / Sonstiges"
+    questions:
+      - id: vorerkrankungen_sonst
+        label: "Weitere Vorerkrankungen / wichtige Hinweise"
+        type: text
+        multiline: true
+
+  - title: "Allergien"
+    show_if:
+      id: allergie
+      equals: true
+    questions:
+      - id: allergie_typen
+        label: "Allergiearten"
+        type: multiselect
+        options:
+          - Pollen
+          - Hausstaub
+          - Nahrungsmittel
+          - Medikamente
+          - Chemikalien
+          - Tierhaare
+
+      - id: allergie_details
+        label: "Allergie – genaueres / Reaktionen"
+        type: text
+        multiline: true
+        show_if:
+          id: allergie
+          equals: true
+
+      - id: allergieausweis
+        label: "Allergieausweis vorhanden"
+        type: yesno
+
+      - id: allergischer_schock
+        label: "Früherer allergischer Schock"
+        type: yesno
+
+  - title: "Operationen"
+    type: checklist
+    questions:
+      - { id: op_tumor, label: "Tumoroperation" }
+      - { id: op_galle, label: "Gallenoperation" }
+      - { id: op_blinddarm, label: "Blinddarmoperation" }
+      - { id: op_dickdarm, label: "Dickdarmoperation" }
+      - { id: op_knochen, label: "Knochenbruch" }
+      - { id: op_karpaltunnel, label: "Karpaltunnel" }
+      - { id: op_magen, label: "Magenoperation" }
+      - { id: op_magenverkleinerung, label: "Magenverkleinerung" }
+      - { id: op_lunge, label: "Lungenoperation" }
+      - { id: op_herzklappe, label: "Herzklappenoperation" }
+      - { id: op_bypass_herz, label: "Bypass Herz" }
+      - { id: op_bypass_bein, label: "Bypass Bein" }
+      - { id: op_gehirn, label: "Gehirnoperation" }
+      - { id: op_auge_star, label: "Auge – Star-OP" }
+      - { id: op_auge_sonst, label: "Auge – sonstige Operation" }
+      - { id: op_ohr, label: "Ohr" }
+      - { id: op_nase, label: "Nase" }
+      - { id: op_polypen, label: "Polypen" }
+      - { id: op_mandeln, label: "Mandeln" }
+      - { id: op_hautkrebs, label: "Hautkrebs" }
+
+  - title: "Weitere / andere Operationen"
+    questions:
+      - id: op_sonstige
+        label: "Weitere / andere Operationen (Art + Jahr)"
+        type: text
+        multiline: true
+
+  - title: "Blut / Gerinnung"
+    type: checklist
+    questions:
+      - { id: gerinnungsstoerung, label: "Blutgerinnungsstörung" }
+      - { id: blutverduenner, label: "Ich nehme einen Blutverdünner" }
+
+  - title: "Familienanamnese"
+    type: checklist
+    questions:
+      - { id: fam_hypertonie, label: "Bluthochdruck" }
+      - { id: fam_diabetes, label: "Blutzuckerkrankheit (Diabetes)" }
+      - { id: fam_fett, label: "Fettstoffwechselstörung / Cholesterin" }
+      - { id: fam_herzinfarkt, label: "Herzinfarkt" }
+      - { id: fam_schlaganfall, label: "Schlaganfall" }
+      - { id: fam_thrombose, label: "Thrombose / Lungenembolie" }
+      - { id: fam_depression, label: "Depression" }
+      - { id: fam_suizid, label: "Suizid" }
+      - { id: fam_sucht, label: "Suchterkrankung" }
+      - { id: fam_erbkrankheit, label: "Erbkrankheit" }
+
+  - title: "Erbkrankheit – Details"
+    show_if:
+      id: fam_erbkrankheit
+      equals: true
+    questions:
+      - id: fam_erbkrankheit_details
+        label: "Bitte angeben"
+        type: text
+        multiline: true
+
+  - title: "Hilfsmittel"
+    questions:
+      - id: hilfsmittel_verwendet
+        label: "Ich benutze Hilfsmittel"
+        type: yesno
+
+      - id: hilfsmittel
+        label: "Ich benutze"
+        type: multiselect
+        show_if:
+          id: hilfsmittel_verwendet
+          equals: "yes"
+        options:
+          - "Brille (lesen)"
+          - "Brille (fern)"
+          - Lupe
+          - Hörgerät
+          - Stock
+          - Rollator
+          - Rollstuhl
+          - Gebiss
+
+      - id: hilfsmittel_ausreichend
+        label: "Hilfsmittel ausreichend"
+        type: yesno
+        show_if:
+          id: hilfsmittel_verwendet
+          equals: "yes"
+
+  - title: "Zähne"
+    questions:
+      - id: zaehne_status
+        label: "Zahnstatus"
+        type: choice
+        options: [gut, saniert, schlecht, sehr schlecht]
+
+      - id: zaehne_angst_zahnarzt_schlecht
+        label: "Angst vor Zahnarzt"
+        type: yesno
+        show_if:
+          id: zaehne_status
+          equals: schlecht
+
+      - id: zaehne_angst_zahnarzt_sehr_schlecht
+        label: "Angst vor Zahnarzt"
+        type: yesno
+        show_if:
+          id: zaehne_status
+          equals: sehr schlecht
+
+  - title: "Nikotin, Alkohol und Drogen"
+    questions:
+      - id: raucher
+        label: "Raucher"
+        type: yesno
+
+      - id: rauchen_zigaretten_tag
+        label: "Durchschnittliche Zigaretten pro Tag"
+        type: number
+        show_if:
+          id: raucher
+          equals: "yes"
+
+      - id: rauchen_jahre
+        label: "Seit wie vielen Jahren"
+        type: number
+        show_if:
+          id: raucher
+          equals: "yes"
+
+      - id: packyears
+        label: "Packyears"
+        type: derived
+        show_if:
+          id: raucher
+          equals: "yes"
+
+      - id: rauchen_rauchpausen_anzahl
+        label: "Anzahl Rauchpausen"
+        type: number
+        show_if:
+          id: raucher
+          equals: "yes"
+
+      - id: rauchen_rauchpausen_details
+        label: "Rauchpausen – maximale Länge"
+        type: text
+        show_if:
+          id: raucher
+          equals: "yes"
+
+      - id: alkohol
+        label: "Alkoholkonsum"
+        type: choice
+        options: [nein, gelegentlich, täglich]
+
+      - id: alkohol_getraenke_woche
+        label: "Getränke pro Woche"
+        type: text
+        show_if:
+          id: alkohol
+          not_equals: nein
+
+      - id: alkohol_entzugsbehandlungen
+        label: "Anzahl Entzugsbehandlungen (Alkohol)"
+        type: number
+        show_if:
+          id: alkohol
+          not_equals: nein
+
+      - id: drogen_haeufigkeit
+        label: "Drogen – Häufigkeit"
+        type: choice
+        options: [nein, gelegentlich, regelmäßig, täglich]
+
+      - id: drogen
+        label: "Welche Drogen"
+        type: multiselect
+        show_if:
+          id: drogen_haeufigkeit
+          not_equals: nein
+        options:
+          - Cannabis
+          - Kokain
+          - Andere Stimulantien
+          - Psychoaktive Substanzen (z. B. LSD)
+          - Benzodiazepine
+          - Opioide
+          - Mehrere Substanzen
+
+      - id: drogen_andere_als_cannabis_geraucht
+        label: "Wurden schon einmal andere Drogen als Cannabis geraucht?"
+        type: yesno
+        show_if:
+          id: drogen_haeufigkeit
+          not_equals: nein
+
+      - id: drogen_nasal
+        label: "Nasaler Konsum"
+        type: yesno
+        show_if:
+          id: drogen_haeufigkeit
+          not_equals: nein
+
+      - id: drogen_iv
+        label: "Intravenöser Konsum"
+        type: yesno
+        show_if:
+          id: drogen_haeufigkeit
+          not_equals: nein
+
+      - id: drogen_entzugsbehandlungen
+        label: "Anzahl Entzugsbehandlungen (Drogen)"
+        type: number
+        show_if:
+          id: drogen_haeufigkeit
+          not_equals: nein
+
+  - title: "Häufige gesundheitliche Probleme"
+    questions:
+      - id: haeufige_probleme_freitext
+        label: "Bitte ergänzen"
+        type: text
+        multiline: true
+
+  - title: "Verwandtschaft"
+    questions:
+      - id: verwandtschaft_praxis
+        label: "Ich bin mit folgenden anderen Patienten dieser Praxis verwandt / wechselseitige Bezugsperson"
+        type: text
+        multiline: true
