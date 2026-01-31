@@ -1,0 +1,845 @@
+#!/usr/bin/env bash
+#
+# fragebogenpi.sh
+# Projekt: fragebogenpi
+# Autor: Thomas Kienzle
+#
+# Version: 1.2
+#
+# =========================
+# Changelog (vollständig)
+# =========================
+#
+# - 1.0 (2026-01-31)
+#   * Initiale Version
+#   * Interaktives Installationsscript für Raspberry Pi OS
+#   * Installation und Konfiguration von:
+#       - Apache Webserver + PHP
+#       - Samba (2 Shares: GDT, PDF)
+#       - hostapd + dnsmasq (isoliertes WLAN)
+#   * WLAN-Access-Point "fragebogenpi" (wlan0)
+#       - Eigenes Subnetz
+#       - KEIN Routing ins LAN oder Internet
+#       - Zugriff ausschließlich auf lokalen Webserver
+#   * nftables-Firewall:
+#       - wlan0: nur HTTP/HTTPS erlaubt
+#       - SMB & SSH auf wlan0 gesperrt
+#       - Forwarding vollständig deaktiviert
+#   * Samba:
+#       - Optional anonymer Zugriff oder Passwortschutz
+#       - Optionaler User "fragebogenpi"
+#       - Shares schreib-/lesbar
+#       - SMB ausschließlich über eth0
+#   * Webserver:
+#       - HTTP oder optional HTTPS
+#       - Self-signed Zertifikat gültig bis 2050
+#   * Konsistente Dateirechte:
+#       - www-data schreibberechtigt (PHP-Verarbeitung vorbereitet)
+#
+# - 1.1 (2026-01-31)
+#   * SSH-Zugriff zusätzlich gehärtet:
+#       - sshd bindet nur an LAN-IP (eth0)
+#   * Hostname wird systemweit gesetzt auf "fragebogenpi"
+#   * avahi-daemon aktiviert (mDNS / Bonjour)
+#       - Erreichbarkeit über "fragebogenpi.local"
+#   * Erweiterte Abschlussausgabe:
+#       - Anzeige WLAN-Zugangsdaten
+#       - Anzeige aktueller LAN-IP
+#       - Anzeige MAC-Adressen (eth0 / wlan0)
+#   * Hinweis zur empfohlenen DHCP-Reservation im Router
+#
+# - 1.1.1 (2026-01-31)
+#   * Klarstellung zur Erreichbarkeit:
+#       - "fragebogenpi" nur bei funktionierender Router/DNS-Auflösung
+#       - "fragebogenpi.local" via mDNS (empfohlen)
+#       - IP-Adresse immer gültig
+#   * Abschlussausgabe entsprechend präzisiert
+#   * KEINE funktionalen Änderungen gegenüber 1.1
+#
+# - 1.1.2 (2026-01-31)
+#   * Bugfix: rand_pw() beendet Script nicht mehr (SIGPIPE/EXIT=141 mit pipefail behoben)
+#       - Passwörter werden robust via python3 generiert (keine Pipefail-Falle)
+#   * apt-get upgrade vor Paketinstallation ergänzt
+#
+# - 1.1.3 (2026-01-31)
+#   * Bugfix/Kompatibilität: dhcpcd ist nicht auf allen Systemen vorhanden (z.B. Bookworm/NM)
+#       - Statische IP für wlan0 wird robuster gesetzt
+#       - Wenn NetworkManager aktiv ist, wird wlan0 gezielt auf "unmanaged" gesetzt, um Konflikte zu vermeiden
+#
+# - 1.1.4 (2026-01-31)
+#   * Bugfix/Robustheit: dnsmasq kann auf manchen Systemen nicht starten (Port 53 belegt)
+#       - Script prüft Port 53:
+#           -> frei: dnsmasq macht DHCP + DNS-Wildcard (address=/#/AP_IP)
+#           -> belegt: dnsmasq läuft DHCP-only (port=0) ohne DNS
+#       - Bei dnsmasq-Fehler: automatische Ausgabe von systemctl status + journalctl -xeu
+#
+# - 1.1.5 (2026-01-31)
+#   * Bugfix: dnsmasq "Cannot assign requested address" abgefangen (wlan0 ohne AP-IP)
+#       - AP-IP wird erzwungen (iproute2) und Setup bricht mit Diagnose ab, wenn nicht möglich
+#
+# - 1.1.6 (2026-01-31)
+#   * Bugfix: fragebogenpi-ap-ip.service Race Conditions reduziert
+#       - Helper-Skript setzt AP-IP robust (rfkill unblock, warten auf wlan0, flush+add)
+#       - Service mit udev-settle / After=NetworkManager
+#
+# - 1.2 (2026-01-31)
+#   * Variante A umgesetzt: Shares liegen außerhalb des Webroots (nicht direkt per Web erreichbar)
+#       - /srv/fragebogenpi/GDT und /srv/fragebogenpi/PDF
+#       - PHP/Apache (www-data) hat Schreibrechte via Owner+ACL
+#       - PDF ist nicht im DocumentRoot -> nicht direkt per HTTP/HTTPS abrufbar
+#   * Firewall verbessert:
+#       - LAN wird NICHT gefiltert (keine Einschränkungen auf eth0)
+#       - Einschränkungen NUR auf wlan0: erlaubt DHCP/DNS/HTTP/HTTPS, alles andere drop
+#       - Forwarding weiterhin komplett gesperrt + ip_forward=0 (kein Routing)
+#   * Installer-UI verbessert:
+#       - Header: "## fragebogenpi vX.Y von Thomas Kienzle"
+#       - Übersichtliche Step-Blöcke mit Markierung und Status
+#
+# =========================
+#
+set -euo pipefail
+
+# -------------------------
+# Konfiguration (Defaults)
+# -------------------------
+AP_SSID="fragebogenpi"
+HOSTNAME_FQDN="fragebogenpi"
+
+AP_INTERFACE="wlan0"
+LAN_INTERFACE="eth0"
+
+AP_SUBNET_CIDR="10.23.0.0/24"
+AP_IP="10.23.0.1"
+AP_DHCP_START="10.23.0.50"
+AP_DHCP_END="10.23.0.150"
+AP_NETMASK="255.255.255.0"
+
+WEBROOT="/var/www/html"
+
+# Variante A: Shares außerhalb des Webroots
+SHARE_BASE="/srv/fragebogenpi"
+SHARE_GDT="${SHARE_BASE}/GDT"
+SHARE_PDF="${SHARE_BASE}/PDF"
+
+SAMBA_USER="fragebogenpi"
+
+SSL_DIR="/etc/ssl/fragebogenpi"
+SSL_KEY="${SSL_DIR}/fragebogenpi.key"
+SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
+
+AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
+AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
+
+# -------------------------
+# UI / Logging
+# -------------------------
+VERSION="1.2"
+STEP_NO=0
+
+banner() {
+  echo
+  echo "## fragebogenpi v${VERSION} von Thomas Kienzle"
+  echo "##"
+  echo "## Starte installation..."
+  echo
+}
+
+log()  { echo -e "[fragebogenpi] $*"; }
+warn() { echo -e "[fragebogenpi][WARN] $*" >&2; }
+die()  { echo -e "[fragebogenpi][ERROR] $*" >&2; exit 1; }
+
+step() {
+  STEP_NO=$((STEP_NO+1))
+  echo
+  echo "======================================================"
+  echo "== Schritt ${STEP_NO}: $*"
+  echo "======================================================"
+}
+
+ok() {
+  echo "[OK] $*"
+}
+
+# -------------------------
+# Helper
+# -------------------------
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    die "Bitte als root ausführen: sudo bash fragebogenpi.sh"
+  fi
+}
+
+rand_pw() {
+  python3 - <<'PY'
+import secrets
+alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+print("".join(secrets.choice(alphabet) for _ in range(16)), end="")
+PY
+}
+
+backup_file() {
+  local f="$1"
+  if [[ -f "$f" ]]; then
+    cp -a "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
+  fi
+}
+
+ask_yes_no() {
+  local prompt="$1"
+  local default="$2"  # "y" oder "n"
+  local answer=""
+  while true; do
+    if [[ "$default" == "y" ]]; then
+      read -r -p "$prompt [Y/n]: " answer
+      answer="${answer:-Y}"
+    else
+      read -r -p "$prompt [y/N]: " answer
+      answer="${answer:-N}"
+    fi
+    case "${answer,,}" in
+      y|yes) return 0 ;;
+      n|no)  return 1 ;;
+      *) echo "Bitte y oder n eingeben." ;;
+    esac
+  done
+}
+
+ask_choice_http_https() {
+  local answer=""
+  while true; do
+    read -r -p "Webserver: Nur HTTP (1) oder HTTP+HTTPS (2)? [1/2]: " answer
+    case "$answer" in
+      1) echo "http"; return 0 ;;
+      2) echo "https"; return 0 ;;
+      *) echo "Bitte 1 oder 2 eingeben." ;;
+    esac
+  done
+}
+
+get_iface_ipv4() {
+  local iface="$1"
+  ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true
+}
+
+get_iface_mac() {
+  local iface="$1"
+  cat "/sys/class/net/${iface}/address" 2>/dev/null || true
+}
+
+systemd_unit_exists() {
+  systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx "$1"
+}
+
+port_in_use() {
+  local port="$1"
+  if ss -H -lntu 2>/dev/null | awk '{print $5}' | grep -Eq "(:|\\])${port}\$"; then
+    return 0
+  fi
+  return 1
+}
+
+print_service_debug_and_die() {
+  local svc="$1"
+  warn "Service '${svc}' konnte nicht gestartet werden."
+  warn "----- systemctl status ${svc} -----"
+  systemctl --no-pager -l status "${svc}" || true
+  warn "----- journalctl -xeu ${svc} (letzte 160 Zeilen) -----"
+  journalctl --no-pager -xeu "${svc}" | tail -n 160 || true
+  die "Abbruch, bitte Logausgabe oben prüfen."
+}
+
+print_network_debug() {
+  warn "----- Netzwerk-Diagnose -----"
+  warn "ip -br link:"
+  ip -br link || true
+  warn "ip -4 -br addr:"
+  ip -4 -br addr || true
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
+    warn "nmcli dev status:"
+    nmcli dev status || true
+  fi
+  warn "rfkill list (falls vorhanden):"
+  command -v rfkill >/dev/null 2>&1 && rfkill list || true
+  warn "-----------------------------"
+}
+
+# -------------------------
+# Installation
+# -------------------------
+install_packages() {
+  step "System aktualisieren und Pakete installieren"
+  log "Paketlisten aktualisieren & System upgraden..."
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+  log "Installiere benötigte Pakete..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    apache2 php libapache2-mod-php \
+    samba \
+    hostapd dnsmasq \
+    nftables \
+    acl openssl \
+    avahi-daemon \
+    python3
+
+  ok "Pakete installiert"
+}
+
+set_hostname() {
+  step "Hostname setzen und mDNS aktivieren"
+  log "Setze Hostname auf '${HOSTNAME_FQDN}'..."
+  if command -v hostnamectl >/dev/null 2>&1; then
+    hostnamectl set-hostname "${HOSTNAME_FQDN}"
+  else
+    echo "${HOSTNAME_FQDN}" > /etc/hostname
+    hostname "${HOSTNAME_FQDN}" || true
+  fi
+
+  if ! grep -qE "127\.0\.1\.1\s+${HOSTNAME_FQDN}\b" /etc/hosts; then
+    echo "127.0.1.1 ${HOSTNAME_FQDN}" >> /etc/hosts
+  fi
+
+  systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+  systemctl restart avahi-daemon >/dev/null 2>&1 || true
+
+  ok "Hostname/mDNS konfiguriert"
+}
+
+setup_share_dirs() {
+  step "Share-Verzeichnisse (Variante A) erstellen und Rechte setzen"
+  log "Erstelle Share-Verzeichnisse außerhalb des Webroots: ${SHARE_BASE}"
+  mkdir -p "$SHARE_GDT" "$SHARE_PDF"
+
+  # Ziel: PHP (www-data) muss schreiben können, Samba ebenso.
+  # Wir setzen Owner auf www-data und geben via ACL zusätzliche Sicherheit für neue Dateien/Ordner.
+  chown -R www-data:www-data "$SHARE_BASE"
+  chmod -R 2775 "$SHARE_BASE"
+
+  # ACL: www-data rwx (sollte redundant sein, aber hilft in Misch-Setups)
+  setfacl -R -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
+  setfacl -R -d -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
+
+  ok "Shares liegen außerhalb des Webroots (nicht direkt per Web erreichbar)"
+}
+
+setup_samba() {
+  step "Samba konfigurieren (Shares GDT/PDF im LAN)"
+  local use_auth="$1"          # "yes"|"no"
+  local samba_pw="$2"          # wenn use_auth=yes
+
+  log "Konfiguriere Samba..."
+
+  local smbconf="/etc/samba/smb.conf"
+  backup_file "$smbconf"
+
+  cat > "$smbconf" <<EOF
+[global]
+   workgroup = WORKGROUP
+   server string = fragebogenpi samba server
+   security = user
+   map to guest = Bad User
+   guest account = nobody
+
+   # SMB nur im LAN anbieten (eth0)
+   interfaces = lo ${LAN_INTERFACE}
+   bind interfaces only = yes
+
+   # SMB1 vermeiden
+   server min protocol = SMB2
+   server max protocol = SMB3
+
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+
+   create mask = 0664
+   directory mask = 2775
+   force create mode = 0664
+   force directory mode = 2775
+EOF
+
+  if [[ "$use_auth" == "no" ]]; then
+    cat >> "$smbconf" <<EOF
+
+[GDT]
+   path = ${SHARE_GDT}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   force user = www-data
+   force group = www-data
+
+[PDF]
+   path = ${SHARE_PDF}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   force user = www-data
+   force group = www-data
+EOF
+  else
+    cat >> "$smbconf" <<EOF
+
+[GDT]
+   path = ${SHARE_GDT}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${SAMBA_USER}
+   force user = www-data
+   force group = www-data
+
+[PDF]
+   path = ${SHARE_PDF}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${SAMBA_USER}
+   force user = www-data
+   force group = www-data
+EOF
+
+    log "Lege Benutzer '${SAMBA_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
+    if ! id -u "${SAMBA_USER}" >/dev/null 2>&1; then
+      useradd -m -s /usr/sbin/nologin "${SAMBA_USER}"
+    fi
+
+    (echo "${samba_pw}"; echo "${samba_pw}") | smbpasswd -a -s "${SAMBA_USER}"
+    smbpasswd -e "${SAMBA_USER}" >/dev/null 2>&1 || true
+  fi
+
+  systemctl enable --now smbd nmbd || true
+  systemctl restart smbd nmbd || true
+
+  ok "Samba läuft (nur LAN/eth0)"
+}
+
+configure_nm_unmanage_wlan0() {
+  # NM kann wlan0 umkonfigurieren (Race). Wir setzen wlan0 auf unmanaged.
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
+    log "NetworkManager erkannt – setze ${AP_INTERFACE} auf unmanaged (nur AP)..."
+    mkdir -p /etc/NetworkManager/conf.d
+    local nmconf="/etc/NetworkManager/conf.d/99-fragebogenpi-unmanage-${AP_INTERFACE}.conf"
+    backup_file "$nmconf"
+    cat > "$nmconf" <<EOF
+[keyfile]
+unmanaged-devices=interface-name:${AP_INTERFACE}
+EOF
+    systemctl reload NetworkManager || systemctl restart NetworkManager
+    command -v udevadm >/dev/null 2>&1 && udevadm settle || true
+    sleep 1
+  fi
+}
+
+install_ap_ip_helper() {
+  mkdir -p "$(dirname "$AP_IP_HELPER")"
+  backup_file "$AP_IP_HELPER"
+
+  cat > "$AP_IP_HELPER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+AP_INTERFACE="${AP_INTERFACE}"
+AP_IP="${AP_IP}"
+
+echo "[fragebogenpi-ap-ip] start: set \${AP_INTERFACE} -> \${AP_IP}/24"
+
+if command -v rfkill >/dev/null 2>&1; then
+  rfkill unblock wifi || true
+fi
+
+for i in {1..20}; do
+  if [[ -d "/sys/class/net/\${AP_INTERFACE}" ]]; then
+    break
+  fi
+  sleep 0.2
+done
+
+if [[ ! -d "/sys/class/net/\${AP_INTERFACE}" ]]; then
+  echo "[fragebogenpi-ap-ip][ERROR] Interface \${AP_INTERFACE} existiert nicht."
+  exit 1
+fi
+
+/usr/sbin/ip link set dev "\${AP_INTERFACE}" up
+/usr/sbin/ip -4 addr flush dev "\${AP_INTERFACE}" || true
+/usr/sbin/ip addr add "\${AP_IP}/24" dev "\${AP_INTERFACE}"
+
+GOT_IP="\$(/usr/sbin/ip -4 -o addr show dev "\${AP_INTERFACE}" | awk '{print \$4}' | cut -d/ -f1 | head -n1 || true)"
+if [[ "\${GOT_IP:-}" != "\${AP_IP}" ]]; then
+  echo "[fragebogenpi-ap-ip][ERROR] IP setzen fehlgeschlagen: got '\${GOT_IP:-<leer>}' expected '\${AP_IP}'"
+  /usr/sbin/ip -4 -br addr show dev "\${AP_INTERFACE}" || true
+  exit 1
+fi
+
+echo "[fragebogenpi-ap-ip] ok: \${AP_INTERFACE} = \${AP_IP}/24"
+EOF
+
+  chmod 0755 "$AP_IP_HELPER"
+}
+
+install_ap_ip_service() {
+  install_ap_ip_helper
+
+  backup_file "$AP_IP_SERVICE"
+  cat > "$AP_IP_SERVICE" <<EOF
+[Unit]
+Description=fragebogenpi: set static AP IP on ${AP_INTERFACE}
+After=NetworkManager.service systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=hostapd.service dnsmasq.service
+
+[Service]
+Type=oneshot
+ExecStart=${AP_IP_HELPER}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now fragebogenpi-ap-ip.service || true
+  systemctl restart fragebogenpi-ap-ip.service || print_service_debug_and_die "fragebogenpi-ap-ip.service"
+}
+
+configure_ap_ip() {
+  step "WLAN-AP IP auf wlan0 setzen (10.23.0.1/24)"
+  configure_nm_unmanage_wlan0
+
+  if systemd_unit_exists "dhcpcd.service"; then
+    log "dhcpcd gefunden – konfiguriere /etc/dhcpcd.conf..."
+    local dhcpcd="/etc/dhcpcd.conf"
+    backup_file "$dhcpcd"
+    sed -i '/^# --- fragebogenpi BEGIN ---$/,/^# --- fragebogenpi END ---$/d' "$dhcpcd" || true
+    cat >> "$dhcpcd" <<EOF
+
+# --- fragebogenpi BEGIN ---
+interface ${AP_INTERFACE}
+  static ip_address=${AP_IP}/24
+  nohook wpa_supplicant
+# --- fragebogenpi END ---
+EOF
+    systemctl restart dhcpcd || true
+  else
+    log "dhcpcd nicht vorhanden – nutze systemd oneshot (iproute2) für persistente AP-IP."
+    install_ap_ip_service
+  fi
+
+  # Zusätzliche Absicherung: sofort setzen
+  ip link set dev "${AP_INTERFACE}" up || true
+  ip addr add "${AP_IP}/24" dev "${AP_INTERFACE}" 2>/dev/null || true
+
+  local got_ip
+  got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
+  if [[ "${got_ip:-}" != "$AP_IP" ]]; then
+    warn "AP-IP auf ${AP_INTERFACE} ist aktuell '${got_ip:-<leer>}' statt '${AP_IP}'."
+    print_network_debug
+    die "AP-IP konnte nicht gesetzt werden; dnsmasq/hostapd würden scheitern."
+  fi
+
+  ok "AP-IP gesetzt (${AP_INTERFACE} = ${AP_IP})"
+}
+
+setup_ap_hostapd_dnsmasq() {
+  step "WLAN Access Point (hostapd) + DHCP (dnsmasq) konfigurieren"
+  local wifi_pw="$1"
+
+  log "Konfiguriere WLAN-Access-Point '${AP_SSID}' auf ${AP_INTERFACE}..."
+  # AP-IP muss vorher sitzen
+  local got_ip
+  got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
+  [[ "${got_ip:-}" == "$AP_IP" ]] || die "AP-IP fehlt auf ${AP_INTERFACE}. Bitte vorher configure_ap_ip erfolgreich ausführen."
+
+  # hostapd
+  local hostapd_conf="/etc/hostapd/hostapd.conf"
+  backup_file "$hostapd_conf"
+  cat > "$hostapd_conf" <<EOF
+interface=${AP_INTERFACE}
+driver=nl80211
+ssid=${AP_SSID}
+hw_mode=g
+channel=6
+wmm_enabled=1
+auth_algs=1
+ignore_broadcast_ssid=0
+
+wpa=2
+wpa_passphrase=${wifi_pw}
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+EOF
+
+  local hostapd_default="/etc/default/hostapd"
+  backup_file "$hostapd_default"
+  sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' "$hostapd_default" || true
+
+  # dnsmasq: DHCP + optional DNS (wenn Port 53 frei)
+  local dnsmasq_conf="/etc/dnsmasq.d/fragebogenpi.conf"
+  backup_file "$dnsmasq_conf"
+
+  local dns_enabled="yes"
+  if port_in_use 53; then
+    dns_enabled="no"
+    warn "Port 53 (DNS) ist belegt. dnsmasq wird DHCP-only gestartet."
+  fi
+
+  if [[ "$dns_enabled" == "yes" ]]; then
+    cat > "$dnsmasq_conf" <<EOF
+# fragebogenpi: DHCP + DNS (nur auf ${AP_INTERFACE})
+interface=${AP_INTERFACE}
+bind-interfaces
+listen-address=${AP_IP}
+
+dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
+
+# Wildcard-DNS -> alles zeigt auf den Pi (komfortabel, kein Internet)
+address=/#/${AP_IP}
+EOF
+  else
+    cat > "$dnsmasq_conf" <<EOF
+# fragebogenpi: DHCP-only (DNS deaktiviert)
+interface=${AP_INTERFACE}
+bind-interfaces
+listen-address=${AP_IP}
+port=0
+
+dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
+EOF
+  fi
+
+  systemctl enable --now dnsmasq || true
+  systemctl restart dnsmasq || print_service_debug_and_die "dnsmasq.service"
+
+  systemctl unmask hostapd >/dev/null 2>&1 || true
+  systemctl enable --now hostapd || true
+  systemctl restart hostapd || print_service_debug_and_die "hostapd.service"
+
+  ok "AP/DHCP aktiv"
+}
+
+setup_https_if_requested() {
+  step "Webserver konfigurieren (HTTP/HTTPS)"
+  local mode="$1"
+
+  if [[ "$mode" == "http" ]]; then
+    log "HTTP-only gewählt. HTTPS wird nicht aktiviert."
+    ok "Apache HTTP aktiv"
+    return 0
+  fi
+
+  log "HTTPS gewählt. Erzeuge self-signed Zertifikat (gültig bis 2050) und aktiviere Apache SSL..."
+
+  mkdir -p "$SSL_DIR"
+  chmod 700 "$SSL_DIR"
+
+  local end_date="2050-01-01"
+  local now_epoch end_epoch days
+  now_epoch="$(date +%s)"
+  end_epoch="$(date -d "${end_date}" +%s)"
+  if [[ "$end_epoch" -le "$now_epoch" ]]; then
+    die "Enddatum ${end_date} liegt nicht in der Zukunft."
+  fi
+  days="$(( (end_epoch - now_epoch) / 86400 ))"
+
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+    -keyout "$SSL_KEY" -out "$SSL_CRT" \
+    -days "$days" \
+    -subj "/C=DE/ST=DE/L=DE/O=fragebogenpi/OU=fragebogenpi/CN=${HOSTNAME_FQDN}.local"
+
+  chmod 600 "$SSL_KEY"
+  chmod 644 "$SSL_CRT"
+
+  a2enmod ssl >/dev/null
+  a2enmod rewrite >/dev/null
+
+  local ssl_site="/etc/apache2/sites-available/default-ssl.conf"
+  backup_file "$ssl_site"
+  sed -i "s|^\s*SSLCertificateFile\s\+.*|SSLCertificateFile ${SSL_CRT}|g" "$ssl_site"
+  sed -i "s|^\s*SSLCertificateKeyFile\s\+.*|SSLCertificateKeyFile ${SSL_KEY}|g" "$ssl_site"
+
+  a2ensite default-ssl >/dev/null
+  systemctl reload apache2
+
+  ok "Apache HTTPS aktiv (self-signed)"
+}
+
+restrict_sshd_to_lan_ip() {
+  step "SSH auf LAN beschränken (sshd ListenAddress)"
+  local lan_ip="$1"
+
+  if [[ -z "${lan_ip:-}" ]]; then
+    warn "LAN-IP auf ${LAN_INTERFACE} nicht ermittelbar. SSH-Bindung wird übersprungen."
+    return 0
+  fi
+
+  log "Beschränke SSH auf LAN-IP ${lan_ip}..."
+
+  local sshd_conf="/etc/ssh/sshd_config"
+  backup_file "$sshd_conf"
+
+  sed -i '/^\s*ListenAddress\s\+/d' "$sshd_conf"
+  {
+    echo ""
+    echo "# --- fragebogenpi: SSH nur im LAN ---"
+    echo "ListenAddress ${lan_ip}"
+    echo "# --- /fragebogenpi ---"
+  } >> "$sshd_conf"
+
+  systemctl restart ssh || systemctl restart sshd
+  ok "SSH auf LAN-IP gebunden"
+}
+
+setup_firewall_nftables_wlan_only() {
+  step "Firewall: nur WLAN beschränken, LAN unberührt lassen (kein Routing)"
+
+  # Ziel:
+  # - LAN: KEINE Filterung/Einschränkung (alles accept)
+  # - WLAN (wlan0): nur DHCP/DNS/HTTP/HTTPS, sonst DROP
+  # - Forwarding: DROP (kein Routing)
+  # - ip_forward: 0
+  local nftconf="/etc/nftables.conf"
+  backup_file "$nftconf"
+
+  cat > "$nftconf" <<EOF
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+  chain input {
+    type filter hook input priority 0;
+    policy accept;
+
+    # WLAN-Isolation: nur DHCP/DNS/HTTP/HTTPS erlauben, alles andere drop
+    iif "${AP_INTERFACE}" ct state established,related accept
+    iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
+    iif "${AP_INTERFACE}" udp dport 53 accept
+    iif "${AP_INTERFACE}" tcp dport { 80, 443 } accept
+    iif "${AP_INTERFACE}" drop
+  }
+
+  chain forward {
+    type filter hook forward priority 0;
+    policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0;
+    policy accept;
+  }
+}
+EOF
+
+  systemctl enable --now nftables
+  systemctl restart nftables
+
+  local sysctl_conf="/etc/sysctl.d/99-fragebogenpi.conf"
+  cat > "$sysctl_conf" <<EOF
+net.ipv4.ip_forward=0
+net.ipv6.conf.all.forwarding=0
+EOF
+  sysctl --system >/dev/null
+
+  ok "WLAN restriktiv, LAN frei, Routing aus"
+}
+
+# -------------------------
+# Main
+# -------------------------
+main() {
+  require_root
+  banner
+
+  log "Starte Setup 'fragebogenpi' (v${VERSION})..."
+
+  if [[ ! -d /sys/class/net/${AP_INTERFACE} ]]; then
+    die "Interface ${AP_INTERFACE} nicht gefunden."
+  fi
+  if [[ ! -d /sys/class/net/${LAN_INTERFACE} ]]; then
+    warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba/SSH-Bindung könnte abweichen."
+  fi
+
+  step "Konfiguration abfragen"
+  local wifi_pw
+  wifi_pw="$(rand_pw)"
+
+  local web_mode
+  web_mode="$(ask_choice_http_https)"
+
+  local protect_shares="no"
+  local samba_pw=""
+  if ask_yes_no "Samba-Shares mit Passwort schützen (User '${SAMBA_USER}')?" "y"; then
+    protect_shares="yes"
+    samba_pw="$(rand_pw)"
+  fi
+  ok "Eingaben übernommen"
+
+  install_packages
+  set_hostname
+  setup_share_dirs
+  setup_samba "$protect_shares" "$samba_pw"
+  configure_ap_ip
+  setup_ap_hostapd_dnsmasq "$wifi_pw"
+  setup_https_if_requested "$web_mode"
+  setup_firewall_nftables_wlan_only
+
+  local lan_ip
+  lan_ip="$(get_iface_ipv4 "${LAN_INTERFACE}")"
+  restrict_sshd_to_lan_ip "$lan_ip"
+
+  step "Abschlussinformationen"
+  local lan_mac ap_mac
+  lan_mac="$(get_iface_mac "${LAN_INTERFACE}")"
+  ap_mac="$(get_iface_mac "${AP_INTERFACE}")"
+
+  log "Fertig."
+
+  echo
+  echo "==================== ZUGANGSDATEN ===================="
+  echo "Hostname (System):      ${HOSTNAME_FQDN}"
+  echo
+  echo "Namensauflösung / Erreichbarkeit:"
+  echo "  - http(s)://fragebogenpi/"
+  echo "      -> nur wenn Router/DNS Hostnamen auflöst"
+  echo "  - http(s)://fragebogenpi.local/"
+  echo "      -> mDNS/Bonjour (empfohlen)"
+  echo "  - http(s)://<IP-Adresse>/"
+  echo "      -> funktioniert immer"
+  echo
+  echo "WLAN SSID:        ${AP_SSID}"
+  echo "WLAN Passwort:    ${wifi_pw}"
+  echo "WLAN IP (Pi):     ${AP_IP}"
+  echo "Webserver (WLAN): http://${AP_IP}/"
+  if [[ "$web_mode" == "https" ]]; then
+    echo "Webserver (WLAN): https://${AP_IP}/  (self-signed Warnung ist normal)"
+  fi
+  echo
+  echo "LAN IP (aktuell): ${lan_ip:-<unbekannt>}"
+  echo "LAN MAC (eth0):   ${lan_mac:-<unbekannt>}"
+  echo "WLAN MAC (wlan0): ${ap_mac:-<unbekannt>}"
+  echo
+  echo "WICHTIG:"
+  echo "  Im Router sollte für '${HOSTNAME_FQDN}' eine feste IP / DHCP-Reservation gesetzt werden,"
+  echo "  damit SSH (nur LAN) dauerhaft erreichbar bleibt und die LAN-IP stabil ist."
+  echo "  Nutze dafür die LAN MAC-Adresse (eth0) von oben."
+  echo
+  echo "Samba Shares (nur LAN/eth0, nicht WLAN):"
+  echo "  \\\\<LAN-IP-des-Pi>\\GDT   -> ${SHARE_GDT}"
+  echo "  \\\\<LAN-IP-des-Pi>\\PDF   -> ${SHARE_PDF}"
+  if [[ "$protect_shares" == "yes" ]]; then
+    echo
+    echo "Samba User:       ${SAMBA_USER}"
+    echo "Samba Passwort:   ${samba_pw}"
+  else
+    echo
+    echo "Samba Zugriff:    anonym (guest), schreibbar"
+  fi
+  echo
+  echo "Hinweis (Variante A):"
+  echo "  Die Share-Verzeichnisse liegen außerhalb des Webroots (${WEBROOT})."
+  echo "  Dadurch sind PDF-Dateien NICHT direkt per HTTP/HTTPS erreichbar,"
+  echo "  PHP (www-data) kann aber weiterhin in ${SHARE_PDF} schreiben."
+  echo "======================================================"
+  echo
+}
+
+main "$@"
