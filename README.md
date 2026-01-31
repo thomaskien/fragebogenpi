@@ -74,15 +74,55 @@ wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/f
 chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
-![screenshot](Screenshot 2026-01-31 at 21.04.02.png)
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2021.04.02.png" alt="drawing" width="700"/>
+
+Im T2med muss man geräte anlegen, die beispieldateien sind runterzuladen z.B. GDTGeraet_Selfie_Konfiguration.json
+
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot 2026-01-31 at 21.29.37.png" alt="drawing" width="800"/>
+
+Das "Programm" ist hier irrelevant, kann aber nicht frei bleiben.
+
+# Bilderstrecke
+
+Standby am Mobilgerät für Selfie:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/9A8AEC1B-1EE7-4F10-817A-ED19C3FB55D8.png" alt="drawing" width="300"/>
+
+Übertragen der Patientendaten für die Zuordnung:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2020.42.41.png" alt="drawing" width="800"/>
+
+Selfie:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/8ECF114B-8403-4448-AA1B-5C730D52FE16.png" alt="drawing" width="300"/>
+
+oder Befund
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/D0ACECB9-47EB-4619-84EF-C2F40E4E724F.png" alt="drawing" width="300"/>
+
+Eingang des Selfies:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2020.43.44.png" alt="drawing" width="800"/>
+
+Eingang des Befunds:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2020.45.40.png" alt="drawing" width="800"/>
+
+Ansicht in der Akte:
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2020.46.29.png" alt="drawing" width="800"/>
 
 
 
 
-FUNKTIONEN:
+
+
+# FUNKTIONEN:
 
 
 # Selfie-Erfassung (fragebogenpi)
+(analog Befunderfassung)
 
 Diese Funktion ermöglicht es, **Patientenfotos (Selfies)** direkt über ein mobiles Endgerät aufzunehmen  
 und **kontrolliert per GDT** an die Praxissoftware zu übergeben.
@@ -95,7 +135,7 @@ Der Workflow ist bewusst **einfach, fehlertolerant und eindeutig**, um Verwechsl
 
 - 📄 Auftragssteuerung **ausschließlich über GDT**
 - 📱 Aufnahme über **mobilen Browser (iOS/Android)**
-- 🖼️ Bild wird **clientseitig skaliert (max. 800 px)**
+- 🖼️ Bild wird **clientseitig skaliert (max. 800 px)** (nur selfie)
 - 📎 Übergabe als **JPEG-Anhang per Antwort-GDT (6310)**
 - 🧹 Automatisches Aufräumen (Auftragsdatei wird gelöscht)
 
