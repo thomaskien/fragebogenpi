@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.2
+# Version: 1.3
 #
 # =========================
 # Changelog (vollständig)
@@ -92,8 +92,16 @@
 #       - Einschränkungen NUR auf wlan0: erlaubt DHCP/DNS/HTTP/HTTPS, alles andere drop
 #       - Forwarding weiterhin komplett gesperrt + ip_forward=0 (kein Routing)
 #   * Installer-UI verbessert:
-#       - Header: "## fragebogenpi vX.Y von Thomas Kienzle"
+#       - Header: "## fragebogenpi v.xxx von Thomas Kienzle"
 #       - Übersichtliche Step-Blöcke mit Markierung und Status
+#
+# - 1.3 (2026-01-31)
+#   * Strategieänderung SSH:
+#       - sshd bleibt "wie normal" (lauscht auf allen Interfaces; KEIN ListenAddress mehr)
+#       - SSH wird ausschließlich per Firewall auf wlan0 blockiert (LAN bleibt frei)
+#   * Neuer Samba-Admin:
+#       - zusätzlicher Samba-User "admin" (Passwort generiert und ausgegeben)
+#       - neuer Samba-Share "WEBROOT" auf /var/www/html (nur für admin, schreib-/lesbar)
 #
 # =========================
 #
@@ -121,7 +129,9 @@ SHARE_BASE="/srv/fragebogenpi"
 SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
 
-SAMBA_USER="fragebogenpi"
+# Samba-User
+SAMBA_USER="fragebogenpi"   # optional (für GDT/PDF, wenn Passwortschutz gewählt)
+ADMIN_USER="admin"          # immer vorhanden für WEBROOT Share
 
 SSL_DIR="/etc/ssl/fragebogenpi"
 SSL_KEY="${SSL_DIR}/fragebogenpi.key"
@@ -133,7 +143,7 @@ AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.2"
+VERSION="1.3"
 STEP_NO=0
 
 banner() {
@@ -263,6 +273,14 @@ print_network_debug() {
   warn "-----------------------------"
 }
 
+ensure_linux_user() {
+  # Erstellt einen Linux-User (ohne Login), falls nicht vorhanden.
+  local u="$1"
+  if ! id -u "$u" >/dev/null 2>&1; then
+    useradd -m -s /usr/sbin/nologin "$u"
+  fi
+}
+
 # -------------------------
 # Installation
 # -------------------------
@@ -310,22 +328,34 @@ setup_share_dirs() {
   log "Erstelle Share-Verzeichnisse außerhalb des Webroots: ${SHARE_BASE}"
   mkdir -p "$SHARE_GDT" "$SHARE_PDF"
 
-  # Ziel: PHP (www-data) muss schreiben können, Samba ebenso.
-  # Wir setzen Owner auf www-data und geben via ACL zusätzliche Sicherheit für neue Dateien/Ordner.
+  # www-data muss schreiben können
   chown -R www-data:www-data "$SHARE_BASE"
   chmod -R 2775 "$SHARE_BASE"
 
-  # ACL: www-data rwx (sollte redundant sein, aber hilft in Misch-Setups)
   setfacl -R -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
   setfacl -R -d -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
 
   ok "Shares liegen außerhalb des Webroots (nicht direkt per Web erreichbar)"
 }
 
+setup_webroot_perms() {
+  step "Webroot Rechte für PHP und Samba-Admin vorbereiten"
+  # Damit PHP (www-data) und Samba-Admin (über force user) sauber schreiben können.
+  mkdir -p "$WEBROOT"
+  chown -R www-data:www-data "$WEBROOT"
+  chmod -R 2775 "$WEBROOT"
+
+  setfacl -R -m u:www-data:rwx "$WEBROOT" || true
+  setfacl -R -d -m u:www-data:rwx "$WEBROOT" || true
+
+  ok "Webroot ist für www-data schreibbar"
+}
+
 setup_samba() {
-  step "Samba konfigurieren (Shares GDT/PDF im LAN)"
+  step "Samba konfigurieren (LAN: GDT/PDF optional, WEBROOT nur admin)"
   local use_auth="$1"          # "yes"|"no"
   local samba_pw="$2"          # wenn use_auth=yes
+  local admin_pw="$3"          # immer
 
   log "Konfiguriere Samba..."
 
@@ -357,6 +387,7 @@ setup_samba() {
    force directory mode = 2775
 EOF
 
+  # ---- GDT/PDF Shares (Variante A) ----
   if [[ "$use_auth" == "no" ]]; then
     cat >> "$smbconf" <<EOF
 
@@ -399,13 +430,28 @@ EOF
 EOF
 
     log "Lege Benutzer '${SAMBA_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
-    if ! id -u "${SAMBA_USER}" >/dev/null 2>&1; then
-      useradd -m -s /usr/sbin/nologin "${SAMBA_USER}"
-    fi
-
+    ensure_linux_user "${SAMBA_USER}"
     (echo "${samba_pw}"; echo "${samba_pw}") | smbpasswd -a -s "${SAMBA_USER}"
     smbpasswd -e "${SAMBA_USER}" >/dev/null 2>&1 || true
   fi
+
+  # ---- WEBROOT Share nur für admin ----
+  cat >> "$smbconf" <<EOF
+
+[WEBROOT]
+   path = ${WEBROOT}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${ADMIN_USER}
+   force user = www-data
+   force group = www-data
+EOF
+
+  log "Lege Admin-Benutzer '${ADMIN_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
+  ensure_linux_user "${ADMIN_USER}"
+  (echo "${admin_pw}"; echo "${admin_pw}") | smbpasswd -a -s "${ADMIN_USER}"
+  smbpasswd -e "${ADMIN_USER}" >/dev/null 2>&1 || true
 
   systemctl enable --now smbd nmbd || true
   systemctl restart smbd nmbd || true
@@ -414,7 +460,6 @@ EOF
 }
 
 configure_nm_unmanage_wlan0() {
-  # NM kann wlan0 umkonfigurieren (Race). Wir setzen wlan0 auf unmanaged.
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
     log "NetworkManager erkannt – setze ${AP_INTERFACE} auf unmanaged (nur AP)..."
     mkdir -p /etc/NetworkManager/conf.d
@@ -524,7 +569,6 @@ EOF
     install_ap_ip_service
   fi
 
-  # Zusätzliche Absicherung: sofort setzen
   ip link set dev "${AP_INTERFACE}" up || true
   ip addr add "${AP_IP}/24" dev "${AP_INTERFACE}" 2>/dev/null || true
 
@@ -544,12 +588,11 @@ setup_ap_hostapd_dnsmasq() {
   local wifi_pw="$1"
 
   log "Konfiguriere WLAN-Access-Point '${AP_SSID}' auf ${AP_INTERFACE}..."
-  # AP-IP muss vorher sitzen
+
   local got_ip
   got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
   [[ "${got_ip:-}" == "$AP_IP" ]] || die "AP-IP fehlt auf ${AP_INTERFACE}. Bitte vorher configure_ap_ip erfolgreich ausführen."
 
-  # hostapd
   local hostapd_conf="/etc/hostapd/hostapd.conf"
   backup_file "$hostapd_conf"
   cat > "$hostapd_conf" <<EOF
@@ -572,7 +615,6 @@ EOF
   backup_file "$hostapd_default"
   sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' "$hostapd_default" || true
 
-  # dnsmasq: DHCP + optional DNS (wenn Port 53 frei)
   local dnsmasq_conf="/etc/dnsmasq.d/fragebogenpi.conf"
   backup_file "$dnsmasq_conf"
 
@@ -662,40 +704,13 @@ setup_https_if_requested() {
   ok "Apache HTTPS aktiv (self-signed)"
 }
 
-restrict_sshd_to_lan_ip() {
-  step "SSH auf LAN beschränken (sshd ListenAddress)"
-  local lan_ip="$1"
-
-  if [[ -z "${lan_ip:-}" ]]; then
-    warn "LAN-IP auf ${LAN_INTERFACE} nicht ermittelbar. SSH-Bindung wird übersprungen."
-    return 0
-  fi
-
-  log "Beschränke SSH auf LAN-IP ${lan_ip}..."
-
-  local sshd_conf="/etc/ssh/sshd_config"
-  backup_file "$sshd_conf"
-
-  sed -i '/^\s*ListenAddress\s\+/d' "$sshd_conf"
-  {
-    echo ""
-    echo "# --- fragebogenpi: SSH nur im LAN ---"
-    echo "ListenAddress ${lan_ip}"
-    echo "# --- /fragebogenpi ---"
-  } >> "$sshd_conf"
-
-  systemctl restart ssh || systemctl restart sshd
-  ok "SSH auf LAN-IP gebunden"
-}
-
 setup_firewall_nftables_wlan_only() {
   step "Firewall: nur WLAN beschränken, LAN unberührt lassen (kein Routing)"
 
   # Ziel:
-  # - LAN: KEINE Filterung/Einschränkung (alles accept)
-  # - WLAN (wlan0): nur DHCP/DNS/HTTP/HTTPS, sonst DROP
-  # - Forwarding: DROP (kein Routing)
-  # - ip_forward: 0
+  # - LAN: keine Filterung (policy accept)
+  # - WLAN: nur DHCP/DNS/HTTP/HTTPS, explizit SSH blocken, sonst drop
+  # - Forwarding: drop (kein Routing)
   local nftconf="/etc/nftables.conf"
   backup_file "$nftconf"
 
@@ -709,8 +724,12 @@ table inet filter {
     type filter hook input priority 0;
     policy accept;
 
-    # WLAN-Isolation: nur DHCP/DNS/HTTP/HTTPS erlauben, alles andere drop
+    # WLAN-Isolation:
+    # - Erlaubt: DHCP, DNS, HTTP/HTTPS
+    # - Blockiert explizit: SSH
+    # - Alles andere auf wlan0: DROP
     iif "${AP_INTERFACE}" ct state established,related accept
+    iif "${AP_INTERFACE}" tcp dport 22 drop
     iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
     iif "${AP_INTERFACE}" udp dport 53 accept
     iif "${AP_INTERFACE}" tcp dport { 80, 443 } accept
@@ -739,7 +758,7 @@ net.ipv6.conf.all.forwarding=0
 EOF
   sysctl --system >/dev/null
 
-  ok "WLAN restriktiv, LAN frei, Routing aus"
+  ok "WLAN restriktiv (inkl. SSH block), LAN frei, Routing aus"
 }
 
 # -------------------------
@@ -755,39 +774,38 @@ main() {
     die "Interface ${AP_INTERFACE} nicht gefunden."
   fi
   if [[ ! -d /sys/class/net/${LAN_INTERFACE} ]]; then
-    warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba/SSH-Bindung könnte abweichen."
+    warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba/Bindung gilt dann evtl. nicht."
   fi
 
   step "Konfiguration abfragen"
-  local wifi_pw
+  local wifi_pw web_mode protect_shares samba_pw admin_pw
   wifi_pw="$(rand_pw)"
-
-  local web_mode
   web_mode="$(ask_choice_http_https)"
 
-  local protect_shares="no"
-  local samba_pw=""
-  if ask_yes_no "Samba-Shares mit Passwort schützen (User '${SAMBA_USER}')?" "y"; then
+  protect_shares="no"
+  samba_pw=""
+  if ask_yes_no "Samba-Shares GDT/PDF mit Passwort schützen (User '${SAMBA_USER}')?" "y"; then
     protect_shares="yes"
     samba_pw="$(rand_pw)"
   fi
+
+  # Admin immer erzeugen (für WEBROOT Share)
+  admin_pw="$(rand_pw)"
   ok "Eingaben übernommen"
 
   install_packages
   set_hostname
   setup_share_dirs
-  setup_samba "$protect_shares" "$samba_pw"
+  setup_webroot_perms
+  setup_samba "$protect_shares" "$samba_pw" "$admin_pw"
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
   setup_https_if_requested "$web_mode"
   setup_firewall_nftables_wlan_only
 
-  local lan_ip
-  lan_ip="$(get_iface_ipv4 "${LAN_INTERFACE}")"
-  restrict_sshd_to_lan_ip "$lan_ip"
-
   step "Abschlussinformationen"
-  local lan_mac ap_mac
+  local lan_ip lan_mac ap_mac
+  lan_ip="$(get_iface_ipv4 "${LAN_INTERFACE}")"
   lan_mac="$(get_iface_mac "${LAN_INTERFACE}")"
   ap_mac="$(get_iface_mac "${AP_INTERFACE}")"
 
@@ -798,12 +816,9 @@ main() {
   echo "Hostname (System):      ${HOSTNAME_FQDN}"
   echo
   echo "Namensauflösung / Erreichbarkeit:"
-  echo "  - http(s)://fragebogenpi/"
-  echo "      -> nur wenn Router/DNS Hostnamen auflöst"
-  echo "  - http(s)://fragebogenpi.local/"
-  echo "      -> mDNS/Bonjour (empfohlen)"
-  echo "  - http(s)://<IP-Adresse>/"
-  echo "      -> funktioniert immer"
+  echo "  - http(s)://fragebogenpi/        -> nur wenn Router/DNS Hostnamen auflöst"
+  echo "  - http(s)://fragebogenpi.local/  -> mDNS/Bonjour (empfohlen)"
+  echo "  - http(s)://<IP-Adresse>/        -> funktioniert immer"
   echo
   echo "WLAN SSID:        ${AP_SSID}"
   echo "WLAN Passwort:    ${wifi_pw}"
@@ -818,26 +833,31 @@ main() {
   echo "WLAN MAC (wlan0): ${ap_mac:-<unbekannt>}"
   echo
   echo "WICHTIG:"
-  echo "  Im Router sollte für '${HOSTNAME_FQDN}' eine feste IP / DHCP-Reservation gesetzt werden,"
-  echo "  damit SSH (nur LAN) dauerhaft erreichbar bleibt und die LAN-IP stabil ist."
+  echo "  Im Router sollte für '${HOSTNAME_FQDN}' eine feste IP / DHCP-Reservation gesetzt werden."
   echo "  Nutze dafür die LAN MAC-Adresse (eth0) von oben."
   echo
   echo "Samba Shares (nur LAN/eth0, nicht WLAN):"
-  echo "  \\\\<LAN-IP-des-Pi>\\GDT   -> ${SHARE_GDT}"
-  echo "  \\\\<LAN-IP-des-Pi>\\PDF   -> ${SHARE_PDF}"
+  echo "  \\\\<LAN-IP-des-Pi>\\GDT      -> ${SHARE_GDT}"
+  echo "  \\\\<LAN-IP-des-Pi>\\PDF      -> ${SHARE_PDF}"
+  echo "  \\\\<LAN-IP-des-Pi>\\WEBROOT  -> ${WEBROOT}"
+  echo
   if [[ "$protect_shares" == "yes" ]]; then
-    echo
-    echo "Samba User:       ${SAMBA_USER}"
-    echo "Samba Passwort:   ${samba_pw}"
+    echo "Samba User (GDT/PDF):   ${SAMBA_USER}"
+    echo "Samba Passwort:         ${samba_pw}"
   else
-    echo
-    echo "Samba Zugriff:    anonym (guest), schreibbar"
+    echo "Samba Zugriff GDT/PDF:  anonym (guest), schreibbar"
   fi
   echo
+  echo "Samba Admin (WEBROOT):  ${ADMIN_USER}"
+  echo "Admin Passwort:         ${admin_pw}"
+  echo
   echo "Hinweis (Variante A):"
-  echo "  Die Share-Verzeichnisse liegen außerhalb des Webroots (${WEBROOT})."
-  echo "  Dadurch sind PDF-Dateien NICHT direkt per HTTP/HTTPS erreichbar,"
-  echo "  PHP (www-data) kann aber weiterhin in ${SHARE_PDF} schreiben."
+  echo "  PDF liegt außerhalb des Webroots: ${SHARE_PDF}"
+  echo "  -> NICHT direkt per HTTP/HTTPS erreichbar, aber PHP (www-data) kann schreiben."
+  echo
+  echo "Hinweis SSH:"
+  echo "  sshd lauscht normal auf allen Interfaces."
+  echo "  Auf WLAN (wlan0) wird SSH per Firewall blockiert; LAN bleibt unberührt."
   echo "======================================================"
   echo
 }
