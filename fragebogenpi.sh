@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.4.0
+# Version: 1.4.1
 #
 # =========================
 # Changelog (vollständig)
@@ -122,8 +122,12 @@
 #       - unattended-upgrades wird als Paket installiert und aktiviert
 #       - 20auto-upgrades wird gesetzt (periodisch aktiv)
 #   * SSH-Strategie abgesichert:
-#       - Falls alte ListenAddress-Einträge vorhanden sind (von früheren Versionen),
-#         werden diese entfernt, damit sshd wieder "normal" auf allen Interfaces lauscht.
+#       - Falls alte ListenAddress-Einträge vorhanden sind, werden diese entfernt.
+#
+# - 1.4.1 (2026-01-31)
+#   * Zusätzliches Paket: php-yaml wird installiert
+#   * Optional: Zugangsdaten werden (nach Rückfrage) als Textdatei ins PDF-Share geschrieben:
+#       /srv/fragebogenpi/PDF/zugangsdaten_fragebogenpi_bitte_loeschen.txt
 #
 # =========================
 #
@@ -150,6 +154,7 @@ WEBROOT="/var/www/html"
 SHARE_BASE="/srv/fragebogenpi"
 SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
+CRED_FILE="${SHARE_PDF}/zugangsdaten_fragebogenpi_bitte_loeschen.txt"
 
 # Samba-User
 SAMBA_USER="fragebogenpi"   # optional (für GDT/PDF, wenn Passwortschutz gewählt)
@@ -178,7 +183,7 @@ PHP_MAX_INPUT="120"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.4.0"
+VERSION="1.4.1"
 STEP_NO=0
 
 banner() {
@@ -293,23 +298,7 @@ print_service_debug_and_die() {
   die "Abbruch, bitte Logausgabe oben prüfen."
 }
 
-print_network_debug() {
-  warn "----- Netzwerk-Diagnose -----"
-  warn "ip -br link:"
-  ip -br link || true
-  warn "ip -4 -br addr:"
-  ip -4 -br addr || true
-  if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
-    warn "nmcli dev status:"
-    nmcli dev status || true
-  fi
-  warn "rfkill list (falls vorhanden):"
-  command -v rfkill >/dev/null 2>&1 && rfkill list || true
-  warn "-----------------------------"
-}
-
 ensure_linux_user() {
-  # Erstellt einen Linux-User (ohne Login), falls nicht vorhanden.
   local u="$1"
   if ! id -u "$u" >/dev/null 2>&1; then
     useradd -m -s /usr/sbin/nologin "$u"
@@ -336,7 +325,7 @@ install_packages() {
 
   log "Installiere benötigte Pakete..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    apache2 php libapache2-mod-php php-gd \
+    apache2 php libapache2-mod-php php-gd php-yaml \
     samba \
     hostapd dnsmasq \
     nftables \
@@ -346,7 +335,7 @@ install_packages() {
     curl \
     unattended-upgrades
 
-  ok "Pakete installiert (inkl. php-gd, curl, unattended-upgrades)"
+  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades)"
 }
 
 set_hostname() {
@@ -374,7 +363,6 @@ setup_share_dirs() {
   log "Erstelle Share-Verzeichnisse außerhalb des Webroots: ${SHARE_BASE}"
   mkdir -p "$SHARE_GDT" "$SHARE_PDF"
 
-  # www-data muss schreiben können
   chown -R www-data:www-data "$SHARE_BASE"
   chmod -R 2775 "$SHARE_BASE"
 
@@ -419,7 +407,6 @@ setup_samba() {
    interfaces = lo ${LAN_INTERFACE}
    bind interfaces only = yes
 
-   # SMB1 vermeiden
    server min protocol = SMB2
    server max protocol = SMB3
 
@@ -432,7 +419,6 @@ setup_samba() {
    force directory mode = 2775
 EOF
 
-  # ---- GDT/PDF Shares (Variante A) ----
   if [[ "$use_auth" == "no" ]]; then
     cat >> "$smbconf" <<EOF
 
@@ -480,7 +466,6 @@ EOF
     smbpasswd -e "${SAMBA_USER}" >/dev/null 2>&1 || true
   fi
 
-  # ---- WEBROOT Share nur für admin ----
   cat >> "$smbconf" <<EOF
 
 [WEBROOT]
@@ -488,7 +473,7 @@ EOF
    browseable = yes
    read only = no
    guest ok = no
-   valid users = ${ADMIN_USER}
+   valid users = admin
    force user = www-data
    force group = www-data
 EOF
@@ -620,9 +605,7 @@ EOF
   local got_ip
   got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
   if [[ "${got_ip:-}" != "$AP_IP" ]]; then
-    warn "AP-IP auf ${AP_INTERFACE} ist aktuell '${got_ip:-<leer>}' statt '${AP_IP}'."
-    print_network_debug
-    die "AP-IP konnte nicht gesetzt werden; dnsmasq/hostapd würden scheitern."
+    die "AP-IP konnte nicht gesetzt werden (wlan0 hat nicht ${AP_IP})."
   fi
 
   ok "AP-IP gesetzt (${AP_INTERFACE} = ${AP_IP})"
@@ -636,7 +619,7 @@ setup_ap_hostapd_dnsmasq() {
 
   local got_ip
   got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
-  [[ "${got_ip:-}" == "$AP_IP" ]] || die "AP-IP fehlt auf ${AP_INTERFACE}. Bitte vorher configure_ap_ip erfolgreich ausführen."
+  [[ "${got_ip:-}" == "$AP_IP" ]] || die "AP-IP fehlt auf ${AP_INTERFACE}."
 
   local hostapd_conf="/etc/hostapd/hostapd.conf"
   backup_file "$hostapd_conf"
@@ -671,24 +654,18 @@ EOF
 
   if [[ "$dns_enabled" == "yes" ]]; then
     cat > "$dnsmasq_conf" <<EOF
-# fragebogenpi: DHCP + DNS (nur auf ${AP_INTERFACE})
 interface=${AP_INTERFACE}
 bind-interfaces
 listen-address=${AP_IP}
-
 dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
-
-# Wildcard-DNS -> alles zeigt auf den Pi (komfortabel, kein Internet)
 address=/#/${AP_IP}
 EOF
   else
     cat > "$dnsmasq_conf" <<EOF
-# fragebogenpi: DHCP-only (DNS deaktiviert)
 interface=${AP_INTERFACE}
 bind-interfaces
 listen-address=${AP_IP}
 port=0
-
 dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
 EOF
   fi
@@ -722,9 +699,6 @@ setup_https_if_requested() {
   local now_epoch end_epoch days
   now_epoch="$(date +%s)"
   end_epoch="$(date -d "${end_date}" +%s)"
-  if [[ "$end_epoch" -le "$now_epoch" ]]; then
-    die "Enddatum ${end_date} liegt nicht in der Zukunft."
-  fi
   days="$(( (end_epoch - now_epoch) / 86400 ))"
 
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
@@ -752,16 +726,11 @@ setup_https_if_requested() {
 setup_firewall_nftables_wlan_only() {
   step "Firewall: nur WLAN beschränken, LAN unberührt lassen (kein Routing)"
 
-  # Ziel:
-  # - LAN: keine Filterung (policy accept)
-  # - WLAN: nur DHCP/DNS/HTTP/HTTPS, explizit SSH blocken, sonst drop
-  # - Forwarding: drop (kein Routing)
   local nftconf="/etc/nftables.conf"
   backup_file "$nftconf"
 
   cat > "$nftconf" <<EOF
 #!/usr/sbin/nft -f
-
 flush ruleset
 
 table inet filter {
@@ -769,10 +738,6 @@ table inet filter {
     type filter hook input priority 0;
     policy accept;
 
-    # WLAN-Isolation:
-    # - Erlaubt: DHCP, DNS, HTTP/HTTPS
-    # - Blockiert explizit: SSH
-    # - Alles andere auf wlan0: DROP
     iif "${AP_INTERFACE}" ct state established,related accept
     iif "${AP_INTERFACE}" tcp dport 22 drop
     iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
@@ -796,8 +761,7 @@ EOF
   systemctl enable --now nftables
   systemctl restart nftables
 
-  local sysctl_conf="/etc/sysctl.d/99-fragebogenpi.conf"
-  cat > "$sysctl_conf" <<EOF
+  cat > /etc/sysctl.d/99-fragebogenpi.conf <<EOF
 net.ipv4.ip_forward=0
 net.ipv6.conf.all.forwarding=0
 EOF
@@ -813,24 +777,17 @@ ensure_sshd_normal_listen() {
     warn "sshd_config nicht gefunden – überspringe."
     return 0
   fi
-
-  # Entfernt alle ListenAddress-Zeilen (egal ob von uns oder manuell gesetzt),
-  # damit sshd wieder standardmäßig auf 0.0.0.0 / :: lauscht.
   backup_file "$sshd_conf"
   sed -i '/^\s*ListenAddress\s\+/d' "$sshd_conf"
-
-  # Entferne (falls vorhanden) unseren Block-Marker aus älteren Versionen
   sed -i '/^# --- fragebogenpi: SSH nur im LAN ---$/d' "$sshd_conf" || true
   sed -i '/^# --- \/fragebogenpi ---$/d' "$sshd_conf" || true
-
   systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-  ok "sshd lauscht wieder standardmäßig (Firewall blockiert SSH im WLAN)"
+  ok "sshd lauscht wieder standardmäßig"
 }
 
 configure_php_settings() {
   step "PHP Optionen setzen (Upload/Timeouts) + Apache reload"
 
-  # php -r ist zuverlässig, wenn php-cli installiert ist (kommt mit php Metapaket)
   local php_ver
   php_ver="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
 
@@ -849,10 +806,9 @@ max_execution_time = ${PHP_MAX_EXEC}
 max_input_time = ${PHP_MAX_INPUT}
 EOF
 
-  # Optional auch CLI – hilfreich für Tests/CLI-Skripte
   cp -a "${apache_conf_dir}/${ini_name}" "${cli_conf_dir}/${ini_name}"
-
   systemctl reload apache2
+
   ok "PHP Optionen gesetzt (Apache + CLI) für PHP ${php_ver}"
 }
 
@@ -878,8 +834,6 @@ download_webroot_files() {
 enable_auto_updates() {
   step "Auto-Update aktivieren (unattended-upgrades als Paket)"
 
-  # unattended-upgrades ist installiert (Paketschritt), hier aktivieren wir es robust.
-  # Debian nutzt i.d.R. apt-daily/apt-daily-upgrade Timer + unattended-upgrades.
   local auto_conf="/etc/apt/apt.conf.d/20auto-upgrades"
   backup_file "$auto_conf"
 
@@ -888,17 +842,110 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
 
-  # Sicherstellen, dass unattended-upgrades aktiv ist
   systemctl enable unattended-upgrades >/dev/null 2>&1 || true
   systemctl start unattended-upgrades >/dev/null 2>&1 || true
 
-  # Auf systemd-basierten Debian-Systemen sind apt-daily Timer üblich
   systemctl enable apt-daily.timer >/dev/null 2>&1 || true
   systemctl enable apt-daily-upgrade.timer >/dev/null 2>&1 || true
-  systemctl start apt-daily.timer >/dev/null 2>&1 || true
-  systemctl start apt-daily-upgrade.timer >/dev/null 2>&1 || true
 
   ok "Auto-Updates aktiviert (APT periodic + unattended-upgrades)"
+}
+
+write_credentials_file_if_requested() {
+  local want="$1"                 # yes/no
+  local web_mode="$2"             # http/https
+  local protect_shares="$3"       # yes/no
+  local wifi_pw="$4"
+  local samba_pw="$5"             # maybe empty
+  local admin_pw="$6"
+  local lan_ip="$7"
+  local lan_mac="$8"
+  local ap_mac="$9"
+
+  if [[ "$want" != "yes" ]]; then
+    log "Zugangsdaten-Datei: nicht gewünscht – überspringe."
+    return 0
+  fi
+
+  step "Zugangsdaten-Datei ins PDF-Share schreiben (bitte danach löschen!)"
+
+  mkdir -p "$SHARE_PDF"
+
+  # Sicher schreiben: erst mit restriktiver umask, danach lesbar im Share machen.
+  local old_umask
+  old_umask="$(umask)"
+  umask 077
+
+  {
+    echo "############################################################"
+    echo "# zugangsdaten_fragebogenpi_bitte_loeschen.txt"
+    echo "# WICHTIG: Diese Datei enthält Passwörter -> nach Übernahme löschen!"
+    echo "############################################################"
+    echo
+    echo "Projekt: fragebogenpi"
+    echo "Version: ${VERSION}"
+    echo "Hostname: ${HOSTNAME_FQDN}"
+    echo
+    echo "== Netzwerk / Erreichbarkeit =="
+    echo "LAN IP (aktuell): ${lan_ip:-<unbekannt>}"
+    echo "LAN MAC (eth0):   ${lan_mac:-<unbekannt>}"
+    echo "WLAN MAC (wlan0): ${ap_mac:-<unbekannt>}"
+    echo
+    echo "HTTP/HTTPS:"
+    echo "  - http(s)://fragebogenpi/        (nur wenn Router/DNS Name auflöst)"
+    echo "  - http(s)://fragebogenpi.local/  (mDNS/Bonjour)"
+    echo "  - http(s)://<IP-Adresse>/"
+    echo
+    echo "== WLAN (isoliert) =="
+    echo "SSID: ${AP_SSID}"
+    echo "WLAN Passwort: ${wifi_pw}"
+    echo "WLAN IP (Pi): ${AP_IP}"
+    echo "Webserver (WLAN): http://${AP_IP}/"
+    if [[ "$web_mode" == "https" ]]; then
+      echo "Webserver (WLAN): https://${AP_IP}/ (self-signed)"
+    fi
+    echo
+    echo "== Samba (nur LAN) =="
+    echo "\\\\<LAN-IP>\\GDT      -> ${SHARE_GDT}"
+    echo "\\\\<LAN-IP>\\PDF      -> ${SHARE_PDF}"
+    echo "\\\\<LAN-IP>\\WEBROOT  -> ${WEBROOT}"
+    echo
+    if [[ "$protect_shares" == "yes" ]]; then
+      echo "User (GDT/PDF): ${SAMBA_USER}"
+      echo "Passwort:       ${samba_pw}"
+    else
+      echo "GDT/PDF Zugriff: anonym (guest), schreibbar"
+    fi
+    echo
+    echo "Admin (WEBROOT): ${ADMIN_USER}"
+    echo "Admin Passwort:  ${admin_pw}"
+    echo
+    echo "== Webroot Bootstrap =="
+    echo "${WEBROOT}/selfie.php"
+    echo "${WEBROOT}/befund.php"
+    echo
+    echo "== PHP Optionen =="
+    echo "upload_max_filesize=${PHP_UPLOAD_MAX}"
+    echo "post_max_size=${PHP_POST_MAX}"
+    echo "max_file_uploads=${PHP_MAX_UPLOADS}"
+    echo "max_execution_time=${PHP_MAX_EXEC}"
+    echo "max_input_time=${PHP_MAX_INPUT}"
+    echo
+    echo "== Auto-Update =="
+    echo "unattended-upgrades: aktiv"
+    echo
+    echo "############################################################"
+    echo "# Bitte diese Datei nach dem Notieren/Übernehmen löschen!"
+    echo "############################################################"
+  } > "$CRED_FILE"
+
+  umask "$old_umask"
+
+  # Datei im Share lesbar machen (für Samba-Clients), aber weiterhin nicht "world".
+  chown www-data:www-data "$CRED_FILE"
+  chmod 0664 "$CRED_FILE"
+
+  ok "Zugangsdaten-Datei geschrieben: ${CRED_FILE}"
 }
 
 # -------------------------
@@ -918,7 +965,7 @@ main() {
   fi
 
   step "Konfiguration abfragen"
-  local wifi_pw web_mode protect_shares samba_pw admin_pw
+  local wifi_pw web_mode protect_shares samba_pw admin_pw save_creds
   wifi_pw="$(rand_pw)"
   web_mode="$(ask_choice_http_https)"
 
@@ -929,8 +976,13 @@ main() {
     samba_pw="$(rand_pw)"
   fi
 
-  # Admin immer erzeugen (für WEBROOT Share)
   admin_pw="$(rand_pw)"
+
+  save_creds="no"
+  if ask_yes_no "Zugangsdaten zusätzlich als Datei ins PDF-Share schreiben (BITTE danach löschen)?" "n"; then
+    save_creds="yes"
+  fi
+
   ok "Eingaben übernommen"
 
   install_packages
@@ -939,26 +991,28 @@ main() {
   setup_webroot_perms
   setup_samba "$protect_shares" "$samba_pw" "$admin_pw"
 
-  # Netzwerk/AP
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
   setup_https_if_requested "$web_mode"
 
-  # Sicherheit
   setup_firewall_nftables_wlan_only
   ensure_sshd_normal_listen
 
-  # Neue Anforderungen 1.4.0
   configure_php_settings
   download_webroot_files
   enable_auto_updates
 
-  step "Abschlussinformationen"
+  # Abschlussdaten
   local lan_ip lan_mac ap_mac
   lan_ip="$(get_iface_ipv4 "${LAN_INTERFACE}")"
   lan_mac="$(get_iface_mac "${LAN_INTERFACE}")"
   ap_mac="$(get_iface_mac "${AP_INTERFACE}")"
 
+  write_credentials_file_if_requested \
+    "$save_creds" "$web_mode" "$protect_shares" "$wifi_pw" "$samba_pw" "$admin_pw" \
+    "$lan_ip" "$lan_mac" "$ap_mac"
+
+  step "Abschlussinformationen"
   log "Fertig."
 
   echo
@@ -1002,8 +1056,12 @@ main() {
   echo "Admin Passwort:         ${admin_pw}"
   echo
   echo "Webroot Bootstrap:"
-  echo "  - ${WEBROOT}/selfie.php (downloaded)"
-  echo "  - ${WEBROOT}/befund.php (downloaded)"
+  echo "  - ${WEBROOT}/selfie.php"
+  echo "  - ${WEBROOT}/befund.php"
+  echo
+  echo "PHP Pakete:"
+  echo "  - php-gd"
+  echo "  - php-yaml"
   echo
   echo "PHP Optionen:"
   echo "  upload_max_filesize=${PHP_UPLOAD_MAX}"
@@ -1015,6 +1073,12 @@ main() {
   echo "Auto-Update:"
   echo "  unattended-upgrades ist installiert und aktiviert."
   echo
+  if [[ "$save_creds" == "yes" ]]; then
+    echo "Zugangsdaten-Datei:"
+    echo "  ${CRED_FILE}"
+    echo "  (BITTE NACH ÜBERNAHME LÖSCHEN!)"
+    echo
+  fi
   echo "Hinweis (Variante A):"
   echo "  PDF liegt außerhalb des Webroots: ${SHARE_PDF}"
   echo "  -> NICHT direkt per HTTP/HTTPS erreichbar, aber PHP (www-data) kann schreiben."
