@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.3
+# Version: 1.4.0
 #
 # =========================
 # Changelog (vollständig)
@@ -103,6 +103,28 @@
 #       - zusätzlicher Samba-User "admin" (Passwort generiert und ausgegeben)
 #       - neuer Samba-Share "WEBROOT" auf /var/www/html (nur für admin, schreib-/lesbar)
 #
+# - 1.4.0 (2026-01-31)
+#   * PHP-Erweiterungen / Uploads:
+#       - Paket php-gd wird installiert
+#       - PHP-Optionen werden gesetzt:
+#           upload_max_filesize=25M
+#           post_max_size=250M
+#           max_file_uploads=30
+#           max_execution_time=120
+#           max_input_time=120
+#       - Umsetzung über eigene Konfigurationsdatei:
+#           /etc/php/<version>/apache2/conf.d/99-fragebogenpi.ini
+#         (zusätzlich auch für CLI: /etc/php/<version>/cli/conf.d/99-fragebogenpi.ini)
+#   * Webroot-Bootstrap:
+#       - selfie.php wird automatisch nach /var/www/html heruntergeladen
+#       - befund.php wird automatisch nach /var/www/html heruntergeladen
+#   * Auto-Update:
+#       - unattended-upgrades wird als Paket installiert und aktiviert
+#       - 20auto-upgrades wird gesetzt (periodisch aktiv)
+#   * SSH-Strategie abgesichert:
+#       - Falls alte ListenAddress-Einträge vorhanden sind (von früheren Versionen),
+#         werden diese entfernt, damit sshd wieder "normal" auf allen Interfaces lauscht.
+#
 # =========================
 #
 set -euo pipefail
@@ -133,17 +155,30 @@ SHARE_PDF="${SHARE_BASE}/PDF"
 SAMBA_USER="fragebogenpi"   # optional (für GDT/PDF, wenn Passwortschutz gewählt)
 ADMIN_USER="admin"          # immer vorhanden für WEBROOT Share
 
+# HTTPS (optional)
 SSL_DIR="/etc/ssl/fragebogenpi"
 SSL_KEY="${SSL_DIR}/fragebogenpi.key"
 SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
 
+# AP IP helper/service
 AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
 AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
+
+# Downloads (Webroot Bootstrap)
+SELFIE_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/selfie.php"
+BEFUND_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/befund.php"
+
+# PHP Settings (gewünscht)
+PHP_UPLOAD_MAX="25M"
+PHP_POST_MAX="250M"
+PHP_MAX_UPLOADS="30"
+PHP_MAX_EXEC="120"
+PHP_MAX_INPUT="120"
 
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.3"
+VERSION="1.4.0"
 STEP_NO=0
 
 banner() {
@@ -281,6 +316,15 @@ ensure_linux_user() {
   fi
 }
 
+ensure_command() {
+  local cmd="$1"
+  local pkg="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    log "Fehlender Befehl '${cmd}' – installiere Paket '${pkg}'..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+  fi
+}
+
 # -------------------------
 # Installation
 # -------------------------
@@ -292,15 +336,17 @@ install_packages() {
 
   log "Installiere benötigte Pakete..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    apache2 php libapache2-mod-php \
+    apache2 php libapache2-mod-php php-gd \
     samba \
     hostapd dnsmasq \
     nftables \
     acl openssl \
     avahi-daemon \
-    python3
+    python3 \
+    curl \
+    unattended-upgrades
 
-  ok "Pakete installiert"
+  ok "Pakete installiert (inkl. php-gd, curl, unattended-upgrades)"
 }
 
 set_hostname() {
@@ -340,7 +386,6 @@ setup_share_dirs() {
 
 setup_webroot_perms() {
   step "Webroot Rechte für PHP und Samba-Admin vorbereiten"
-  # Damit PHP (www-data) und Samba-Admin (über force user) sauber schreiben können.
   mkdir -p "$WEBROOT"
   chown -R www-data:www-data "$WEBROOT"
   chmod -R 2775 "$WEBROOT"
@@ -761,6 +806,101 @@ EOF
   ok "WLAN restriktiv (inkl. SSH block), LAN frei, Routing aus"
 }
 
+ensure_sshd_normal_listen() {
+  step "SSH Strategie: sshd 'wie normal' auf allen Interfaces (ListenAddress entfernen)"
+  local sshd_conf="/etc/ssh/sshd_config"
+  if [[ ! -f "$sshd_conf" ]]; then
+    warn "sshd_config nicht gefunden – überspringe."
+    return 0
+  fi
+
+  # Entfernt alle ListenAddress-Zeilen (egal ob von uns oder manuell gesetzt),
+  # damit sshd wieder standardmäßig auf 0.0.0.0 / :: lauscht.
+  backup_file "$sshd_conf"
+  sed -i '/^\s*ListenAddress\s\+/d' "$sshd_conf"
+
+  # Entferne (falls vorhanden) unseren Block-Marker aus älteren Versionen
+  sed -i '/^# --- fragebogenpi: SSH nur im LAN ---$/d' "$sshd_conf" || true
+  sed -i '/^# --- \/fragebogenpi ---$/d' "$sshd_conf" || true
+
+  systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+  ok "sshd lauscht wieder standardmäßig (Firewall blockiert SSH im WLAN)"
+}
+
+configure_php_settings() {
+  step "PHP Optionen setzen (Upload/Timeouts) + Apache reload"
+
+  # php -r ist zuverlässig, wenn php-cli installiert ist (kommt mit php Metapaket)
+  local php_ver
+  php_ver="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+
+  local apache_conf_dir="/etc/php/${php_ver}/apache2/conf.d"
+  local cli_conf_dir="/etc/php/${php_ver}/cli/conf.d"
+  local ini_name="99-fragebogenpi.ini"
+
+  mkdir -p "$apache_conf_dir" "$cli_conf_dir"
+
+  cat > "${apache_conf_dir}/${ini_name}" <<EOF
+; fragebogenpi custom PHP settings
+upload_max_filesize = ${PHP_UPLOAD_MAX}
+post_max_size = ${PHP_POST_MAX}
+max_file_uploads = ${PHP_MAX_UPLOADS}
+max_execution_time = ${PHP_MAX_EXEC}
+max_input_time = ${PHP_MAX_INPUT}
+EOF
+
+  # Optional auch CLI – hilfreich für Tests/CLI-Skripte
+  cp -a "${apache_conf_dir}/${ini_name}" "${cli_conf_dir}/${ini_name}"
+
+  systemctl reload apache2
+  ok "PHP Optionen gesetzt (Apache + CLI) für PHP ${php_ver}"
+}
+
+download_webroot_files() {
+  step "Webroot Bootstrap: selfie.php und befund.php herunterladen"
+
+  ensure_command curl curl
+
+  local dst_selfie="${WEBROOT}/selfie.php"
+  local dst_befund="${WEBROOT}/befund.php"
+
+  log "Lade selfie.php..."
+  curl -fsSL "$SELFIE_URL" -o "$dst_selfie" || die "Download fehlgeschlagen: selfie.php"
+  log "Lade befund.php..."
+  curl -fsSL "$BEFUND_URL" -o "$dst_befund" || die "Download fehlgeschlagen: befund.php"
+
+  chown www-data:www-data "$dst_selfie" "$dst_befund"
+  chmod 0644 "$dst_selfie" "$dst_befund"
+
+  ok "selfie.php & befund.php liegen im Webroot"
+}
+
+enable_auto_updates() {
+  step "Auto-Update aktivieren (unattended-upgrades als Paket)"
+
+  # unattended-upgrades ist installiert (Paketschritt), hier aktivieren wir es robust.
+  # Debian nutzt i.d.R. apt-daily/apt-daily-upgrade Timer + unattended-upgrades.
+  local auto_conf="/etc/apt/apt.conf.d/20auto-upgrades"
+  backup_file "$auto_conf"
+
+  cat > "$auto_conf" <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+  # Sicherstellen, dass unattended-upgrades aktiv ist
+  systemctl enable unattended-upgrades >/dev/null 2>&1 || true
+  systemctl start unattended-upgrades >/dev/null 2>&1 || true
+
+  # Auf systemd-basierten Debian-Systemen sind apt-daily Timer üblich
+  systemctl enable apt-daily.timer >/dev/null 2>&1 || true
+  systemctl enable apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  systemctl start apt-daily.timer >/dev/null 2>&1 || true
+  systemctl start apt-daily-upgrade.timer >/dev/null 2>&1 || true
+
+  ok "Auto-Updates aktiviert (APT periodic + unattended-upgrades)"
+}
+
 # -------------------------
 # Main
 # -------------------------
@@ -798,10 +938,20 @@ main() {
   setup_share_dirs
   setup_webroot_perms
   setup_samba "$protect_shares" "$samba_pw" "$admin_pw"
+
+  # Netzwerk/AP
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
   setup_https_if_requested "$web_mode"
+
+  # Sicherheit
   setup_firewall_nftables_wlan_only
+  ensure_sshd_normal_listen
+
+  # Neue Anforderungen 1.4.0
+  configure_php_settings
+  download_webroot_files
+  enable_auto_updates
 
   step "Abschlussinformationen"
   local lan_ip lan_mac ap_mac
@@ -850,6 +1000,20 @@ main() {
   echo
   echo "Samba Admin (WEBROOT):  ${ADMIN_USER}"
   echo "Admin Passwort:         ${admin_pw}"
+  echo
+  echo "Webroot Bootstrap:"
+  echo "  - ${WEBROOT}/selfie.php (downloaded)"
+  echo "  - ${WEBROOT}/befund.php (downloaded)"
+  echo
+  echo "PHP Optionen:"
+  echo "  upload_max_filesize=${PHP_UPLOAD_MAX}"
+  echo "  post_max_size=${PHP_POST_MAX}"
+  echo "  max_file_uploads=${PHP_MAX_UPLOADS}"
+  echo "  max_execution_time=${PHP_MAX_EXEC}"
+  echo "  max_input_time=${PHP_MAX_INPUT}"
+  echo
+  echo "Auto-Update:"
+  echo "  unattended-upgrades ist installiert und aktiviert."
   echo
   echo "Hinweis (Variante A):"
   echo "  PDF liegt außerhalb des Webroots: ${SHARE_PDF}"
