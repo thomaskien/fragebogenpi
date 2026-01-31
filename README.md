@@ -74,6 +74,10 @@ wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/f
 chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
+![screenshot](Screenshot 2026-01-31 at 21.04.02.png)
+
+
+
 
 FUNKTIONEN:
 
