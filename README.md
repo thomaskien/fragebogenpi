@@ -9,6 +9,14 @@ Ziel ist:
 - **Patientenfoto für die Kartei**
 - **Befundfotos direkt in die Kartei vom Handy**
 
+
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/3B2759B2-4B6C-4BED-919C-FFDB21ACE07B_4_5005_c.jpeg" alt="drawing" width="300"/>
+
+<img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot 2026-02-01 at 00.28.35.png" alt="drawing" width="800"/>
+
+
+
 Man braucht:
 - **kein teures medizinsoftwarebla für xxxx,xx Euro**
 - einen Raspberry ab version 4
