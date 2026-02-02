@@ -1,47 +1,133 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 1.7
+# Version 2.0
+# Autor: Dr. Thomas Kienzle
+#
+# Changelog (vollstaendig):
+# - 1.7: Format meta + sections (editierbar), ohne hardcoded Top-Felder
+# - 1.8: "Keine ..." Optionen als erste Option (Allergien/Vorerkrankungen/Operationen);
+#        Keine Angaben sollen verloren gehen: alles Angekreuzte/ausgefuellte wird ausgegeben (auch bei Widerspruch)
+# - 1.9: Eigene Vorerkrankungen: Kategorisierung mit Zwischenueberschriften (Header);
+#        Familienanamnese: Prostatakrebs hinzugefuegt
+# - 2.0: Bedingte Anzeige:
+#        * Allergieausweis vorhanden + Frueherer allergischer Schock nur bei vorhandener Allergie
+#          (mind. eine Auswahl ausser "Keine Allergie bekannt")
+#        * Weitere Angaben zu Zaehnen / Zahnarzt nur bei Zahnstatus schlecht / sehr schlecht
+#
+# Hinweis:
+# - Format meta + sections
+# - "Keine ..." Optionen sind als erste Option enthalten (Allergien/Vorerkrankungen/Operationen)
+# - Keine Angaben sollen verloren gehen: alles Angekreuzte/ausgefuellte wird ausgegeben (auch bei Widerspruch)
 
 meta:
   title: "Anamnese"
-  version: "1.7"
+  version: "2.0"
   language: "de"
 
 sections:
 
+  - title: "Allergien"
+    questions:
+      - id: allergie_typen
+        label: "Allergiearten"
+        type: multiselect
+        options:
+          - "Keine Allergie bekannt"
+          - "Pollen"
+          - "Hausstaub"
+          - "Nahrungsmittel"
+          - "Medikamente"
+          - "Chemikalien"
+          - "Tierhaare"
+
+      - id: allergie_details
+        label: "Allergie - genaueres / Reaktionen"
+        type: text
+        multiline: true
+
+      - id: allergieausweis
+        label: "Allergieausweis vorhanden"
+        type: yesno
+        show_if:
+          id: allergie_typen
+          any_selected_except: "Keine Allergie bekannt"
+
+      - id: allergischer_schock
+        label: "Frueherer allergischer Schock"
+        type: yesno
+        show_if:
+          id: allergie_typen
+          any_selected_except: "Keine Allergie bekannt"
+
+
   - title: "Eigene Vorerkrankungen"
     type: checklist
     questions:
+      - { id: vorerkrankung_keine, label: "Keine Vorerkrankungen bekannt" }
+
+      - { type: header, label: "Herz / Kreislauf" }
       - { id: hypertonie, label: "Bluthochdruck" }
       - { id: herzerkrankung, label: "Herzkrankheit" }
+      - { id: vorhofflimmern, label: "Vorhofflimmern / Herzrhythmusstoerung" }
+      - { id: herzinsuffizienz, label: "Herzinsuffizienz" }
+      - { id: herzinfarkt, label: "Herzinfarkt" }
       - { id: schlaganfall, label: "Schlaganfall" }
       - { id: thrombose, label: "Thrombose / Lungenembolie" }
+      - { id: oedeme, label: "Dicke Beine (Oedeme)" }
 
+      - { type: header, label: "Stoffwechsel / Endokrinologie" }
+      - { id: diabetes, label: "Diabetes mellitus" }
+      - { id: fettstoffwechsel, label: "Fettstoffwechselstoerung / Cholesterin" }
+      - { id: schilddruese, label: "Schilddruesenerkrankung" }
+      - { id: laktose, label: "Laktoseintoleranz" }
+
+      - { type: header, label: "Lunge / HNO" }
+      - { id: asthma, label: "Asthma / chronische Bronchitis" }
+      - { id: copd, label: "\"Raucherlunge\" (COPD)" }
+      - { id: schlafapnoe, label: "Schlafapnoe" }
+      - { id: sinusitis, label: "Chronische Nebenhoehlenentzuendung" }
+
+      - { type: header, label: "Leber / Magen / Darm" }
+      - { id: niere, label: "Nierenerkrankung" }
+      - { id: leber, label: "Lebererkrankung / Hepatitis" }
+      - { id: gastritis, label: "Magenschleimhautentzuendung / Gastritis" }
+      - { id: magen_darm, label: "Magen- / Darmerkrankung" }
+      - { id: ced, label: "Morbus Crohn / Colitis ulcerosa" }
+      - { id: zoeliakie, label: "Zoeliakie" }
+
+      - { type: header, label: "Neurologisch" }
+      - { id: epilepsie, label: "Anfallsleiden / Epilepsie" }
+      - { id: migraene, label: "Migraene / chronische Kopfschmerzen" }
+      - { id: polyneuropathie, label: "Polyneuropathie" }
+      - { id: ms, label: "Multiple Sklerose" }
+      - { id: parkinson, label: "Morbus Parkinson" }
+
+      - { type: header, label: "Bewegungsapparat" }
+      - { id: gelenke, label: "Gelenkerkrankung / Rheuma" }
+      - { id: osteoporose, label: "Osteoporose" }
+      - { id: chron_schmerzen, label: "Chronische Schmerzen" }
+
+      - { type: header, label: "Haut / Infektion" }
+      - { id: hautkrankheiten, label: "Hautkrankheiten" }
+      - { id: hiv, label: "HIV-Infektion / AIDS" }
+
+      - { type: header, label: "Urogenital / Gynaekologisch" }
+      - { id: inkontinenz, label: "Inkontinenz" }
+      - { id: prostata, label: "Prostata-Beschwerden / Prostataerkrankung" }
+      - { id: endometriose, label: "Endometriose" }
+
+      - { type: header, label: "Psychisch / Neurodivers" }
+      - { id: psych_allg, label: "Psychische Erkrankungen (Oberbegriff)" }
       - { id: depression, label: "Depression" }
       - { id: panikattacken, label: "Panikattacken" }
       - { id: burnout, label: "Burn-out" }
-      - { id: ptbs, label: "Posttraumatische Belastungsstörung (PTBS)" }
+      - { id: ptbs, label: "Posttraumatische Belastungsstoerung (PTBS)" }
+      - { id: adhs, label: "ADHS" }
 
-      - { id: copd, label: "\"Raucherlunge\" (COPD)" }
-      - { id: asthma, label: "Asthma / chronische Bronchitis" }
-      - { id: diabetes, label: "Blutzuckerkrankheit (Diabetes)" }
-      - { id: fettstoffwechsel, label: "Fettstoffwechselstörung / Cholesterin" }
-      - { id: gicht, label: "Harnsäurestoffwechselstörung / Gicht" }
-      - { id: niere, label: "Nierenerkrankung" }
-      - { id: leber, label: "Leberentzündung" }
-      - { id: magen_darm, label: "Magen- / Darmerkrankung" }
-      - { id: tumor, label: "Tumorerkrankung" }
-      - { id: polyneuropathie, label: "Polyneuropathie" }
-      - { id: gelenke, label: "Gelenkerkrankung / Rheuma" }
-      - { id: hautkrankheiten, label: "Hautkrankheiten" }
-      - { id: schilddruese, label: "Schilddrüsenerkrankung" }
-      - { id: hiv, label: "HIV-Infektion / AIDS" }
-      - { id: epilepsie, label: "Anfallsleiden / Epilepsie" }
-      - { id: inkontinenz, label: "Inkontinenz" }
-      - { id: prostata, label: "Prostata-Beschwerden / Prostataerkrankung" }
+      - { type: header, label: "Sucht" }
       - { id: alkoholkrankheit, label: "Alkoholkrankheit" }
       - { id: drogensucht, label: "Drogensucht" }
-      - { id: allergie, label: "Allergie" }
+
 
   - title: "Weitere Vorerkrankungen / Sonstiges"
     questions:
@@ -50,61 +136,46 @@ sections:
         type: text
         multiline: true
 
-  - title: "Allergien"
-    show_if:
-      id: allergie
-      equals: true
-    questions:
-      - id: allergie_typen
-        label: "Allergiearten"
-        type: multiselect
-        options:
-          - Pollen
-          - Hausstaub
-          - Nahrungsmittel
-          - Medikamente
-          - Chemikalien
-          - Tierhaare
-
-      - id: allergie_details
-        label: "Allergie – genaueres / Reaktionen"
-        type: text
-        multiline: true
-        show_if:
-          id: allergie
-          equals: true
-
-      - id: allergieausweis
-        label: "Allergieausweis vorhanden"
-        type: yesno
-
-      - id: allergischer_schock
-        label: "Früherer allergischer Schock"
-        type: yesno
 
   - title: "Operationen"
     type: checklist
     questions:
-      - { id: op_tumor, label: "Tumoroperation" }
-      - { id: op_galle, label: "Gallenoperation" }
-      - { id: op_blinddarm, label: "Blinddarmoperation" }
-      - { id: op_dickdarm, label: "Dickdarmoperation" }
-      - { id: op_knochen, label: "Knochenbruch" }
-      - { id: op_karpaltunnel, label: "Karpaltunnel" }
-      - { id: op_magen, label: "Magenoperation" }
+      - { id: op_keine, label: "Keine Operationen bekannt" }
+
+      - { id: op_tumor, label: "Tumoroperation (sonstige / allgemein)" }
+      - { id: op_galle, label: "Gallenblase" }
+      - { id: op_blinddarm, label: "Blinddarm" }
+      - { id: op_dickdarm, label: "Dickdarm" }
+      - { id: op_magen, label: "Magen" }
       - { id: op_magenverkleinerung, label: "Magenverkleinerung" }
-      - { id: op_lunge, label: "Lungenoperation" }
-      - { id: op_herzklappe, label: "Herzklappenoperation" }
+
+      - { id: op_herzklappe, label: "Herzklappe" }
       - { id: op_bypass_herz, label: "Bypass Herz" }
       - { id: op_bypass_bein, label: "Bypass Bein" }
-      - { id: op_gehirn, label: "Gehirnoperation" }
-      - { id: op_auge_star, label: "Auge – Star-OP" }
-      - { id: op_auge_sonst, label: "Auge – sonstige Operation" }
+      - { id: op_krampfadern, label: "Krampfadern (Varizen)" }
+
+      - { id: op_lunge, label: "Lunge" }
+      - { id: op_gehirn, label: "Gehirn" }
+
+      - { id: op_prostata, label: "Prostata" }
+
+      - { id: op_knochen, label: "Knochenbruch" }
+      - { id: op_karpaltunnel, label: "Karpaltunnel" }
+
+      - { id: op_auge_star, label: "Auge - Star-OP" }
+      - { id: op_auge_sonst, label: "Auge - sonstige OP" }
+
       - { id: op_ohr, label: "Ohr" }
       - { id: op_nase, label: "Nase" }
       - { id: op_polypen, label: "Polypen" }
       - { id: op_mandeln, label: "Mandeln" }
+
       - { id: op_hautkrebs, label: "Hautkrebs" }
+
+      - { id: op_kaiserschnitt, label: "Kaiserschnitt" }
+      - { id: op_gebaermutter, label: "Gebaermutter-OP" }
+      - { id: op_eierstock, label: "Eierstock-OP" }
+
 
   - title: "Weitere / andere Operationen"
     questions:
@@ -113,35 +184,45 @@ sections:
         type: text
         multiline: true
 
+
   - title: "Blut / Gerinnung"
     type: checklist
     questions:
-      - { id: gerinnungsstoerung, label: "Blutgerinnungsstörung" }
-      - { id: blutverduenner, label: "Ich nehme einen Blutverdünner" }
+      - { id: gerinnungsstoerung, label: "Blutgerinnungsstoerung" }
+      - { id: blutverduenner, label: "Ich nehme einen Blutverduenner" }
 
-  - title: "Familienanamnese"
+
+  - title: "Familienanamnese: Was liegt in der Familie?"
     type: checklist
     questions:
       - { id: fam_hypertonie, label: "Bluthochdruck" }
-      - { id: fam_diabetes, label: "Blutzuckerkrankheit (Diabetes)" }
-      - { id: fam_fett, label: "Fettstoffwechselstörung / Cholesterin" }
+      - { id: fam_diabetes, label: "Diabetes mellitus" }
+      - { id: fam_fett, label: "Fettstoffwechselstoerung / Cholesterin" }
       - { id: fam_herzinfarkt, label: "Herzinfarkt" }
       - { id: fam_schlaganfall, label: "Schlaganfall" }
       - { id: fam_thrombose, label: "Thrombose / Lungenembolie" }
+
+      - { id: fam_demenz, label: "Demenz / Alzheimer" }
       - { id: fam_depression, label: "Depression" }
+      - { id: fam_psych, label: "Psychische Erkrankungen" }
       - { id: fam_suizid, label: "Suizid" }
       - { id: fam_sucht, label: "Suchterkrankung" }
+
+      - { id: fam_darmkrebs, label: "Darmkrebs" }
+      - { id: fam_brustkrebs, label: "Brustkrebs" }
+      - { id: fam_lungenkrebs, label: "Lungenkrebs" }
+      - { id: fam_prostatakrebs, label: "Prostatakrebs" }
+      - { id: fam_andere_krebs, label: "Anderer Krebs" }
+
       - { id: fam_erbkrankheit, label: "Erbkrankheit" }
 
-  - title: "Erbkrankheit – Details"
-    show_if:
-      id: fam_erbkrankheit
-      equals: true
+  - title: "Notizen zur Familienanamnese"
     questions:
-      - id: fam_erbkrankheit_details
-        label: "Bitte angeben"
+      - id: familie_notizen
+        label: "Notizen (z. B. Verwandtschaftsgrad, Alter bei Erkrankung)"
         type: text
         multiline: true
+
 
   - title: "Hilfsmittel"
     questions:
@@ -158,12 +239,16 @@ sections:
         options:
           - "Brille (lesen)"
           - "Brille (fern)"
-          - Lupe
-          - Hörgerät
-          - Stock
-          - Rollator
-          - Rollstuhl
-          - Gebiss
+          - "Lupe"
+          - "Hoergeraet"
+          - "Stock"
+          - "Rollator"
+          - "Rollstuhl"
+          - "Gebiss"
+          - "CPAP-Geraet"
+          - "Einlagen / Orthesen"
+          - "Prothesen"
+          - "Inhalationsgeraet (z. B. Spray)"
 
       - id: hilfsmittel_ausreichend
         label: "Hilfsmittel ausreichend"
@@ -172,7 +257,16 @@ sections:
           id: hilfsmittel_verwendet
           equals: "yes"
 
-  - title: "Zähne"
+      - id: hilfsmittel_notizen
+        label: "Weitere Angaben zu Hilfsmitteln"
+        type: text
+        multiline: true
+        show_if:
+          id: hilfsmittel_verwendet
+          equals: "yes"
+
+
+  - title: "Zaehne"
     questions:
       - id: zaehne_status
         label: "Zahnstatus"
@@ -192,6 +286,15 @@ sections:
         show_if:
           id: zaehne_status
           equals: sehr schlecht
+
+      - id: zaehne_notizen
+        label: "Weitere Angaben zu Zaehnen / Zahnarzt"
+        type: text
+        multiline: true
+        show_if:
+          id: zaehne_status
+          in: [schlecht, sehr schlecht]
+
 
   - title: "Nikotin, Alkohol und Drogen"
     questions:
@@ -228,7 +331,7 @@ sections:
           equals: "yes"
 
       - id: rauchen_rauchpausen_details
-        label: "Rauchpausen – maximale Länge"
+        label: "Rauchpausen - maximale Laenge"
         type: text
         show_if:
           id: raucher
@@ -237,10 +340,10 @@ sections:
       - id: alkohol
         label: "Alkoholkonsum"
         type: choice
-        options: [nein, gelegentlich, täglich]
+        options: [nein, gelegentlich, regelmaessig, taeglich]
 
       - id: alkohol_getraenke_woche
-        label: "Getränke pro Woche"
+        label: "Getraenke pro Woche"
         type: text
         show_if:
           id: alkohol
@@ -253,60 +356,73 @@ sections:
           id: alkohol
           not_equals: nein
 
-      - id: drogen_haeufigkeit
-        label: "Drogen – Häufigkeit"
+      - id: drogenkonsum
+        label: "Drogenkonsum"
         type: choice
-        options: [nein, gelegentlich, regelmäßig, täglich]
+        options: [nein, gelegentlich, regelmaessig, taeglich]
+
+      - id: drogen_frueher
+        label: "Frueherer Konsum (nicht mehr aktuell)"
+        type: yesno
+        show_if:
+          id: drogenkonsum
+          not_equals: nein
 
       - id: drogen
-        label: "Welche Drogen"
+        label: "Welche Substanzen"
         type: multiselect
         show_if:
-          id: drogen_haeufigkeit
+          id: drogenkonsum
           not_equals: nein
         options:
           - Cannabis
           - Kokain
+          - "Amphetamine / Methamphetamin"
+          - "Ecstasy / MDMA"
           - Andere Stimulantien
-          - Psychoaktive Substanzen (z. B. LSD)
           - Benzodiazepine
           - Opioide
-          - Mehrere Substanzen
+          - Ketamin
+          - "GHB / GBL"
+          - "Psychoaktive Substanzen (z. B. LSD)"
+          - "Neue psychoaktive Substanzen (NPS)"
+          - "Medikamente nicht aerztlich verordnet"
+          - "Mehrere Substanzen"
 
       - id: drogen_andere_als_cannabis_geraucht
         label: "Wurden schon einmal andere Drogen als Cannabis geraucht?"
         type: yesno
         show_if:
-          id: drogen_haeufigkeit
+          id: drogenkonsum
           not_equals: nein
 
-      - id: drogen_nasal
-        label: "Nasaler Konsum"
-        type: yesno
+      - id: drogen_konsumform
+        label: "Konsumform"
+        type: multiselect
         show_if:
-          id: drogen_haeufigkeit
+          id: drogenkonsum
           not_equals: nein
-
-      - id: drogen_iv
-        label: "Intravenöser Konsum"
-        type: yesno
-        show_if:
-          id: drogen_haeufigkeit
-          not_equals: nein
+        options:
+          - oral
+          - "rauchen / inhalativ"
+          - nasal
+          - intravenoes
 
       - id: drogen_entzugsbehandlungen
         label: "Anzahl Entzugsbehandlungen (Drogen)"
         type: number
         show_if:
-          id: drogen_haeufigkeit
+          id: drogenkonsum
           not_equals: nein
 
-  - title: "Häufige gesundheitliche Probleme"
+
+  - title: "Haeufige gesundheitliche Probleme"
     questions:
       - id: haeufige_probleme_freitext
-        label: "Bitte ergänzen"
+        label: "Bitte ergaenzen"
         type: text
         multiline: true
+
 
   - title: "Verwandtschaft"
     questions:
