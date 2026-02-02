@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /*
- * anamnesebogen.php v1.3.1
+ * anamnesebogen.php v1.4.0
  * fragebogenpi von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
@@ -32,10 +32,17 @@ declare(strict_types=1);
  * - v1.3.1:
  *   + Choice-Felder (Radio-Gruppen) ohne Default: initial unselektiert (kein automatisch "gut"/erstes Element)
  *   + Backend: fehlende Choice-Auswahl bleibt leer und wird nicht ausgegeben (nur bewusst ausgewaehlte Inhalte)
+ * - v1.4.0:
+ *   + UI: Unterueberschriften/Headers innerhalb checklist-Sections (YAML question type: "header") werden angezeigt
+ *   + show_if erweitert:
+ *       * "in": einblenden, wenn abh. Feldwert in einer Liste enthalten ist (z. B. zaehne_status in [schlecht, sehr schlecht])
+ *       * "any_selected_except": einblenden, wenn bei multiselect mind. eine Option ausgewaehlt ist, die NICHT dem Ausnahme-String entspricht
+ *         (z. B. Allergie-Details nur, wenn nicht nur "Keine Allergie bekannt" ausgewaehlt ist)
+ *   + Client (JS) und Server (cond_ok + Output-Logik) konsistent erweitert, ohne bestehende equals/not_equals Logik zu brechen
  */
 
 $APP_FOOTER  = 'fragebogenpi von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.3.1 (anamnesebogen.php)';
+$APP_VERSION = 'v1.4.0 (anamnesebogen.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -253,13 +260,15 @@ function yaml_ascii_walk($v) {
 }
 
 // show_if: robust fuer bool und "yes"/"no"
+// NEU: in, any_selected_except
 function cond_ok(array $answers, ?array $cond): bool {
     if (!$cond) return true;
     $id = (string)($cond['id'] ?? '');
     if ($id === '') return true;
     $val = $answers[$id] ?? null;
 
-    $eq = $cond['equals'] ?? null;
+    // Kompatibilitaet: bool <-> yes/no
+    $eq  = $cond['equals'] ?? null;
     $neq = $cond['not_equals'] ?? null;
 
     if (is_bool($val)) {
@@ -276,6 +285,33 @@ function cond_ok(array $answers, ?array $cond): bool {
 
     if (array_key_exists('equals', $cond)) return $val === $eq;
     if (array_key_exists('not_equals', $cond)) return $val !== $neq;
+
+    // NEU: in: Wert muss in Liste sein
+    if (array_key_exists('in', $cond)) {
+        $lst = $cond['in'];
+        if (!is_array($lst)) $lst = [];
+        // fuer Sicherheit: ASCII-only wie sonst
+        $norm = ascii_only(clean_utf8_text((string)$val, 200));
+        foreach ($lst as $x) {
+            $x = ascii_only(clean_utf8_text((string)$x, 200));
+            if ($x !== '' && $norm === $x) return true;
+        }
+        return false;
+    }
+
+    // NEU: any_selected_except (multiselect)
+    if (array_key_exists('any_selected_except', $cond)) {
+        $except = ascii_only(clean_utf8_text((string)$cond['any_selected_except'], 200));
+        if (!is_array($val)) return false;
+        foreach ($val as $opt) {
+            $opt = ascii_only(clean_utf8_text((string)$opt, 200));
+            if ($opt === '') continue;
+            if ($except === '') return true;
+            if ($opt !== $except) return true;
+        }
+        return false;
+    }
+
     return true;
 }
 
@@ -304,6 +340,11 @@ function section_bullets(array $section, array $answers): array {
     if ($type === 'checklist') {
         foreach ($questions as $q) {
             if (!is_array($q)) continue;
+
+            // Header in checklist: NICHT in GDT-Ausgabe (nur UI)
+            $qType = (string)($q['type'] ?? '');
+            if ($qType === 'header') continue;
+
             $id = (string)($q['id'] ?? '');
             $label = (string)($q['label'] ?? '');
             if ($id === '' || $label === '') continue;
@@ -406,7 +447,7 @@ function parse_float_de(string $s): ?float {
     $s = trim($s);
     if ($s === '') return null;
     $s = str_replace(',', '.', $s);
-    $s = preg_replace('/[^0-9.]/', '', $s) ?? '';
+    $s = preg_replace('/[^0-9.]/', '', $s) ?? $s;
     if ($s === '' || $s === '.') return null;
     return (float)$s;
 }
@@ -493,6 +534,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($secType === 'checklist') {
             foreach ($questions as $q) {
                 if (!is_array($q)) continue;
+
+                // Header hat kein id -> ueberspringen (nur UI)
+                $qType = (string)($q['type'] ?? '');
+                if ($qType === 'header') continue;
+
                 $id = (string)($q['id'] ?? '');
                 if ($id === '') continue;
                 $answers[$id] = !empty($rawQ[$id]);
@@ -693,6 +739,16 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
     .check input { width:22px; height:22px; flex:0 0 auto; }
     .check span { font-size:1.05rem; overflow-wrap:anywhere; }
 
+    /* v1.4.0: Header innerhalb checklist */
+    .checkHeader{
+      grid-column: 1 / -1;
+      padding: 8px 10px 0 6px;
+      margin-top: 4px;
+      font-weight: 900;
+      font-size: 1.05rem;
+      color:#222;
+    }
+
     .radioRow{
       display:grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -787,6 +843,10 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
                 $secAttr .= ' data-show-op="equals" data-show-val="' . h((string)$secShow['equals']) . '"';
             } elseif (array_key_exists('not_equals', $secShow)) {
                 $secAttr .= ' data-show-op="not_equals" data-show-val="' . h((string)$secShow['not_equals']) . '"';
+            } elseif (array_key_exists('in', $secShow)) {
+                $secAttr .= ' data-show-op="in" data-show-val="' . h(json_encode(array_values((array)$secShow['in']), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '"';
+            } elseif (array_key_exists('any_selected_except', $secShow)) {
+                $secAttr .= ' data-show-op="any_selected_except" data-show-val="' . h((string)$secShow['any_selected_except']) . '"';
             }
         }
       ?>
@@ -797,8 +857,17 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
             <div class="checkgrid">
               <?php foreach ($questions as $q) {
                 if (!is_array($q)) continue;
-                $id = (string)($q['id'] ?? '');
+
+                $qType = (string)($q['type'] ?? '');
                 $label = (string)($q['label'] ?? '');
+
+                // v1.4.0: Header innerhalb checklist anzeigen
+                if ($qType === 'header') {
+                  if ($label !== '') echo '<div class="checkHeader">'.h(ascii_only($label)).'</div>';
+                  continue;
+                }
+
+                $id = (string)($q['id'] ?? '');
                 if ($id === '' || $label === '') continue;
               ?>
                 <label class="check" data-qwrap="1" data-qid="<?php echo h($id); ?>">
@@ -824,6 +893,10 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
                       $wrapAttr .= ' data-show-op="equals" data-show-val="' . h((string)$show['equals']) . '"';
                   } elseif (array_key_exists('not_equals', $show)) {
                       $wrapAttr .= ' data-show-op="not_equals" data-show-val="' . h((string)$show['not_equals']) . '"';
+                  } elseif (array_key_exists('in', $show)) {
+                      $wrapAttr .= ' data-show-op="in" data-show-val="' . h(json_encode(array_values((array)$show['in']), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '"';
+                  } elseif (array_key_exists('any_selected_except', $show)) {
+                      $wrapAttr .= ' data-show-op="any_selected_except" data-show-val="' . h((string)$show['any_selected_except']) . '"';
                   }
               }
 
@@ -919,23 +992,41 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
       statusEl.style.color = isError ? "#d00" : "#333";
     }
 
+    // Liefert fuer multiselect explizit das Array der selektierten Werte.
+    // Fuer checklist (single checkbox) true/false.
+    // Fuer choice/yesno string.
     function getAnswerValue(qid) {
+      // checklist: q[id]
       var cb = formEl.querySelector('input[type="checkbox"][name="q['+CSS.escape(qid)+']"]');
       if (cb) return cb.checked ? true : false;
 
+      // multiselect: q[id][]
       var cbs = formEl.querySelectorAll('input[type="checkbox"][name="q['+CSS.escape(qid)+'][]"]');
       if (cbs && cbs.length) {
-        var any = false;
-        cbs.forEach(function(x){ if (x.checked) any = true; });
-        return any ? "selected" : "";
+        var vals = [];
+        cbs.forEach(function(x){
+          if (x.checked) vals.push(x.value || "");
+        });
+        return vals;
       }
 
+      // radios
       var r = formEl.querySelector('input[type="radio"][name="q['+CSS.escape(qid)+']"]:checked');
       if (r) return r.value;
 
+      // text/number
       var t = formEl.querySelector('[name="q['+CSS.escape(qid)+']"]');
       if (t) return (t.value || "");
       return "";
+    }
+
+    function parseJsonArrayMaybe(s) {
+      if (!s) return null;
+      try {
+        var v = JSON.parse(s);
+        if (Array.isArray(v)) return v;
+      } catch(e) {}
+      return null;
     }
 
     function applyShowIf() {
@@ -948,8 +1039,26 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
         var cur = getAnswerValue(depId);
         var show = true;
 
-        if (op === 'equals') show = (String(cur) === String(val));
-        else if (op === 'not_equals') show = (String(cur) !== String(val));
+        if (op === 'equals') {
+          show = (String(cur) === String(val));
+        } else if (op === 'not_equals') {
+          show = (String(cur) !== String(val));
+        } else if (op === 'in') {
+          var lst = parseJsonArrayMaybe(val) || [];
+          show = (lst.map(String).indexOf(String(cur)) !== -1);
+        } else if (op === 'any_selected_except') {
+          // cur muss Array sein (multiselect)
+          var except = String(val || "");
+          show = false;
+          if (Array.isArray(cur)) {
+            for (var i=0;i<cur.length;i++){
+              var x = String(cur[i] || "");
+              if (!x) continue;
+              if (!except) { show = true; break; }
+              if (x !== except) { show = true; break; }
+            }
+          }
+        }
 
         el.classList.toggle('hidden', !show);
       });
@@ -963,8 +1072,25 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
         var cur = getAnswerValue(depId);
         var show = true;
 
-        if (op === 'equals') show = (String(cur) === String(val));
-        else if (op === 'not_equals') show = (String(cur) !== String(val));
+        if (op === 'equals') {
+          show = (String(cur) === String(val));
+        } else if (op === 'not_equals') {
+          show = (String(cur) !== String(val));
+        } else if (op === 'in') {
+          var lst = parseJsonArrayMaybe(val) || [];
+          show = (lst.map(String).indexOf(String(cur)) !== -1);
+        } else if (op === 'any_selected_except') {
+          var except = String(val || "");
+          show = false;
+          if (Array.isArray(cur)) {
+            for (var i=0;i<cur.length;i++){
+              var x = String(cur[i] || "");
+              if (!x) continue;
+              if (!except) { show = true; break; }
+              if (x !== except) { show = true; break; }
+            }
+          }
+        }
 
         el.classList.toggle('hidden', !show);
       });
