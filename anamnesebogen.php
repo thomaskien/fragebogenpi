@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /*
- * anamnesebogen.php v1.4.0
+ * anamnesebogen.php v1.4.4
  * fragebogenpi von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
@@ -35,14 +35,30 @@ declare(strict_types=1);
  * - v1.4.0:
  *   + UI: Unterueberschriften/Headers innerhalb checklist-Sections (YAML question type: "header") werden angezeigt
  *   + show_if erweitert:
- *       * "in": einblenden, wenn abh. Feldwert in einer Liste enthalten ist (z. B. zaehne_status in [schlecht, sehr schlecht])
+ *       * "in": einblenden, wenn abh. Feldwert in einer Liste enthalten ist
  *       * "any_selected_except": einblenden, wenn bei multiselect mind. eine Option ausgewaehlt ist, die NICHT dem Ausnahme-String entspricht
- *         (z. B. Allergie-Details nur, wenn nicht nur "Keine Allergie bekannt" ausgewaehlt ist)
  *   + Client (JS) und Server (cond_ok + Output-Logik) konsistent erweitert, ohne bestehende equals/not_equals Logik zu brechen
+ * - v1.4.1:
+ *   + x.concept Fix: 0193/3000 in der Antwortdatei jetzt EXKLUSIV:
+ *       * Wenn Request 3000 enthaelt -> Ausgabe NUR 3000 (auch wenn 0193 zusaetzlich vorhanden waere)
+ *       * Sonst, wenn Request 0193 enthaelt -> Ausgabe NUR 0193
+ * - v1.4.2:
+ *   + x.concept Fix zusaetzlich: Wenn 3000 verwendet wird, wird Feld 6200 (ANA1) NICHT geschrieben,
+ *     da x.concept diese Kombination offenbar ablehnt. Bei 0193 bleibt 6200/6201 unveraendert.
+ * - v1.4.3:
+ *   + x.concept/GDT-Server Workaround: Wenn 3000 verwendet wird, wird am DATEIENDE zusaetzlich die Zeile
+ *       01380006310  (8000=6310)
+ *     geschrieben, weil der Import sonst erst beim naechsten Auftrag anlaeuft (Trigger/Ende-Quirk).
+ * - v1.4.4:
+ *   + Erweiterter Workaround (3000-Fall): Datei endet nun exakt mit:
+ *       01041211
+ *       01380006310
+ *       01041211
+ *     (Satzende, dann nochmal Satzart, dann nochmal Satzende) – entspricht dem von dir verifizierten Import-Trigger.
  */
 
 $APP_FOOTER  = 'fragebogenpi von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.4.0 (anamnesebogen.php)';
+$APP_VERSION = 'v1.4.4 (anamnesebogen.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -84,13 +100,11 @@ function ascii_only(string $s): string {
     ];
     $s = strtr($s, $map);
 
-    // optional: diakritische Zeichen entfernen (falls vorhanden)
     if (function_exists('iconv')) {
         $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
         if ($tmp !== false && $tmp !== '') $s = $tmp;
     }
 
-    // final clamp to printable ASCII
     $s = preg_replace('/[^\x20-\x7E]/', '?', $s) ?? $s;
     return $s;
 }
@@ -132,7 +146,7 @@ function json_out(int $code, array $payload): void {
 }
 
 /**
- * GDT-Zeile: Laenge beinhaltet CRLF (2 Bytes), wie in der funktionierenden x.concept-Datei.
+ * GDT-Zeile: Laenge beinhaltet CRLF (2 Bytes).
  * len = 3 (Laengenfeld) + strlen(field4+value) + 2 (CRLF)
  */
 function gdt_line(string $field4, string $value): string {
@@ -159,12 +173,10 @@ function parse_gdt(string $path): array {
 }
 
 function write_gdt_file(string $path, array $lines): void {
-    // CRLF schreiben
     $joined = implode("\r\n", $lines) . "\r\n";
     $totalBytes = strlen($joined);
     $total6 = str_pad((string)$totalBytes, 6, '0', STR_PAD_LEFT);
 
-    // 8100 anpassen
     foreach ($lines as $i => $line) {
         $rest = substr($line, 3);
         $field = substr($rest, 0, 4);
@@ -193,7 +205,6 @@ function write_gdt_file(string $path, array $lines): void {
 }
 
 function to_ascii_wrapped_lines(string $s, int $maxBytes, string $firstPrefix = '', string $nextPrefix = ''): array {
-    // erst sauber machen, dann ASCII-only
     $s = clean_utf8_text($s, 5000);
     $s = ascii_only($s);
 
@@ -221,7 +232,6 @@ function to_ascii_wrapped_lines(string $s, int $maxBytes, string $firstPrefix = 
             continue;
         }
 
-        // einzelnes sehr langes Wort: hart abschneiden
         $out[] = substr($prefix . $w, 0, $maxBytes);
         $isFirst = false;
         $cur = '';
@@ -232,7 +242,6 @@ function to_ascii_wrapped_lines(string $s, int $maxBytes, string $firstPrefix = 
         $out[] = $prefix3 . $cur;
     }
 
-    // final clamp
     foreach ($out as &$line) $line = ascii_only($line);
     return $out;
 }
@@ -259,15 +268,13 @@ function yaml_ascii_walk($v) {
     return $v;
 }
 
-// show_if: robust fuer bool und "yes"/"no"
-// NEU: in, any_selected_except
+// show_if: robust fuer bool und "yes"/"no" + in + any_selected_except
 function cond_ok(array $answers, ?array $cond): bool {
     if (!$cond) return true;
     $id = (string)($cond['id'] ?? '');
     if ($id === '') return true;
     $val = $answers[$id] ?? null;
 
-    // Kompatibilitaet: bool <-> yes/no
     $eq  = $cond['equals'] ?? null;
     $neq = $cond['not_equals'] ?? null;
 
@@ -286,11 +293,9 @@ function cond_ok(array $answers, ?array $cond): bool {
     if (array_key_exists('equals', $cond)) return $val === $eq;
     if (array_key_exists('not_equals', $cond)) return $val !== $neq;
 
-    // NEU: in: Wert muss in Liste sein
     if (array_key_exists('in', $cond)) {
         $lst = $cond['in'];
         if (!is_array($lst)) $lst = [];
-        // fuer Sicherheit: ASCII-only wie sonst
         $norm = ascii_only(clean_utf8_text((string)$val, 200));
         foreach ($lst as $x) {
             $x = ascii_only(clean_utf8_text((string)$x, 200));
@@ -299,7 +304,6 @@ function cond_ok(array $answers, ?array $cond): bool {
         return false;
     }
 
-    // NEU: any_selected_except (multiselect)
     if (array_key_exists('any_selected_except', $cond)) {
         $except = ascii_only(clean_utf8_text((string)$cond['any_selected_except'], 200));
         if (!is_array($val)) return false;
@@ -340,8 +344,6 @@ function section_bullets(array $section, array $answers): array {
     if ($type === 'checklist') {
         foreach ($questions as $q) {
             if (!is_array($q)) continue;
-
-            // Header in checklist: NICHT in GDT-Ausgabe (nur UI)
             $qType = (string)($q['type'] ?? '');
             if ($qType === 'header') continue;
 
@@ -385,7 +387,6 @@ function section_bullets(array $section, array $answers): array {
 
         if ($qType === 'choice') {
             $v = ascii_only(clean_utf8_text((string)$val, 200));
-            // IMPORTANT: unselektiert bleibt leer -> keine Ausgabe
             if ($v === '' || $v === 'nein' || $v === 'normal' || $v === 'konstant') continue;
             $bullets[] = $label . ': ' . $v;
             continue;
@@ -452,9 +453,7 @@ function parse_float_de(string $s): ?float {
     return (float)$s;
 }
 
-function ymd_today(): string {
-    return date('Ymd');
-}
+function ymd_today(): string { return date('Ymd'); }
 
 // ----------------- dir checks -----------------
 if (!is_dir($dirGdt)) @mkdir($dirGdt, 0775, true);
@@ -488,19 +487,23 @@ $req8316   = $reqFields['8316'] ?? '';
 $ans8315 = ($req8316 !== '') ? $req8316 : $DEFAULT_8315;
 $ans8316 = ($req8315 !== '') ? $req8315 : $DEFAULT_8316;
 
-// 0193 Prioritaet: wenn im Request vorhanden -> nutzen, sonst 3000
+// 0193/3000 exklusiv (3000 hat Vorrang, wenn vorhanden)
 $req0193 = $reqFields['0193'] ?? '';
-$use0193 = ($req0193 !== '') ? $req0193 : $patId3000;
+$use3000_only = ($patId3000 !== '');
+$use0193_only = (!$use3000_only && $req0193 !== '');
 
-// optional meta aus Request wie in Referenz (wenn vorhanden)
-$req4109 = $reqFields['4109'] ?? ''; // Datum
-$req4104 = $reqFields['4104'] ?? ''; // Zeit o.a.
+$ans3000 = $use3000_only ? $patId3000 : '';
+$ans0193 = $use0193_only ? $req0193 : '';
+
+// optional meta aus Request
+$req4109 = $reqFields['4109'] ?? '';
+$req4104 = $reqFields['4104'] ?? '';
 
 // ----------------- POST -----------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$hasRequest) json_out(409, ['status'=>'error','message'=>'Keine Auftrags-GDT gefunden ('.$REQUEST_GDT_NAME.').']);
-    if ($use0193 === '' && $patId3000 === '') json_out(422, ['status'=>'error','message'=>'Weder 0193 noch 3000 in der Auftrags-GDT vorhanden']);
+    if ($ans3000 === '' && $ans0193 === '') json_out(422, ['status'=>'error','message'=>'Weder 3000 noch 0193 in der Auftrags-GDT vorhanden']);
 
     if (($_POST['action'] ?? '') === 'abort') {
         $deleted = @unlink($requestPath);
@@ -510,12 +513,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $yaml = yaml_load_or_die_ascii($YAML_PATH);
     if (isset($yaml['__error'])) json_out(500, ['status'=>'error','message'=>$yaml['__error'],'yaml'=>$YAML_PATH]);
 
-    // hardcoded top fields (ASCII-only)
+    // hardcoded top fields
     $height = ascii_only(clean_utf8_text((string)($_POST['height_cm'] ?? ''), 10));
     $weight = ascii_only(clean_utf8_text((string)($_POST['weight_kg'] ?? ''), 10));
-    $phone1 = ascii_only(clean_utf8_text((string)($_POST['phone1'] ?? ''), 70)); // 3626
-    $phone2 = ascii_only(clean_utf8_text((string)($_POST['phone2'] ?? ''), 70)); // 3618
-    $email  = ascii_only(clean_utf8_text((string)($_POST['email']  ?? ''), 70)); // 3619
+    $phone1 = ascii_only(clean_utf8_text((string)($_POST['phone1'] ?? ''), 70));
+    $phone2 = ascii_only(clean_utf8_text((string)($_POST['phone2'] ?? ''), 70));
+    $email  = ascii_only(clean_utf8_text((string)($_POST['email']  ?? ''), 70));
 
     // parse YAML-driven answers
     $rawQ = $_POST['q'] ?? [];
@@ -534,8 +537,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($secType === 'checklist') {
             foreach ($questions as $q) {
                 if (!is_array($q)) continue;
-
-                // Header hat kein id -> ueberspringen (nur UI)
                 $qType = (string)($q['type'] ?? '');
                 if ($qType === 'header') continue;
 
@@ -570,12 +571,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($type === 'derived') continue;
 
-            // IMPORTANT: Wenn choice unselektiert ist, ist es nicht im POST -> bleibt '' (keine Ausgabe)
             $answers[$id] = ascii_only(clean_utf8_text((string)($rawQ[$id] ?? ''), 600));
         }
     }
 
-    // derive packyears: floor((cigs/day / 20) * years), min 1 if any >0
+    // derive packyears
     $isSmoker = (($answers['raucher'] ?? 'no') === 'yes');
     $cigs = parse_float_de((string)($answers['rauchen_zigaretten_tag'] ?? ''));
     $yrs  = parse_float_de((string)($answers['rauchen_jahre'] ?? ''));
@@ -603,50 +603,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $lines6228 = array_merge($lines6228, build_6228_blocks($yaml, $answers, $MAX_6228_BYTES));
 
-    // Compose answer GDT 6310 (x.concept-safe)
+    // Compose answer GDT 6310
     $lines = [];
     $lines[] = gdt_line('8000', '6310');
     $lines[] = gdt_line('8100', '000000'); // wird unten korrigiert
-    $lines[] = gdt_line('9218', '02.00');  // wie Referenzdatei
+    $lines[] = gdt_line('9218', '02.00');
 
-    // 0193 (x.concept) + 3000 (T2med), beide vorhanden wenn moeglich
-    if ($use0193 !== '') $lines[] = gdt_line('0193', $use0193);
-    if ($patId3000 !== '') $lines[] = gdt_line('3000', $patId3000);
+    // EXKLUSIV: entweder 3000 ODER 0193
+    if ($ans3000 !== '') {
+        $lines[] = gdt_line('3000', $ans3000);
+    } elseif ($ans0193 !== '') {
+        $lines[] = gdt_line('0193', $ans0193);
+    }
 
-    // Kennfeld + Name/Datum
     $lines[] = gdt_line('8402', $kennfeld);
     if ($nachname !== '') $lines[] = gdt_line('3101', ascii_only($nachname));
     if ($vorname  !== '') $lines[] = gdt_line('3102', ascii_only($vorname));
     $raw3103 = $reqFields['3103'] ?? '';
     if ($raw3103 !== '') $lines[] = gdt_line('3103', $raw3103);
 
-    // IDs / Sender-Empfaenger (alte Variante beibehalten)
     $lines[] = gdt_line('8315', $ans8315);
     $lines[] = gdt_line('8316', $ans8316);
 
-    // optionale Meta aus Request wie in Referenz
     if ($req4109 !== '') $lines[] = gdt_line('4109', $req4109);
     if ($req4104 !== '') $lines[] = gdt_line('4104', $req4104);
 
-    // Koerpermasse + Kontakt (ASCII)
     if ($height !== '') $lines[] = gdt_line('3622', $height);
     if ($weight !== '') $lines[] = gdt_line('3623', $weight);
     if ($phone1 !== '') $lines[] = gdt_line('3626', $phone1);
     if ($phone2 !== '') $lines[] = gdt_line('3618', $phone2);
     if ($email  !== '') $lines[] = gdt_line('3619', $email);
 
-    // Absenderkennung
-    $lines[] = gdt_line('6200', ascii_only($ANSWER_6200));
+    // Absenderkennung:
+    // bei 3000 darf 6200 NICHT geschrieben werden (x.concept)
+    if ($ans0193 !== '') {
+        $lines[] = gdt_line('6200', ascii_only($ANSWER_6200));
+    }
     $lines[] = gdt_line('6201', ascii_only($ANSWER_6201));
 
-    // Text
     foreach ($lines6228 as $l) $lines[] = $l;
 
-    // wie Referenz: zweites Datum (heute) kurz vor Satzende
     $lines[] = gdt_line('4109', ymd_today());
 
-    // Satzende wie Referenzdatei (4121)
+    // Satzende (normal)
     $lines[] = gdt_line('4121', '1');
+
+    // v1.4.4 Workaround: bei 3000 am ENDE nochmal 8000=6310 und nochmal 4121=1
+    // -> exakt: 01041211 / 01380006310 / 01041211
+    if ($ans3000 !== '') {
+        $lines[] = gdt_line('8000', '6310');
+        $lines[] = gdt_line('4121', '1');
+    }
 
     $outGdtPath = rtrim($dirGdt, '/') . '/' . $OUT_GDT_NAME;
     write_gdt_file($outGdtPath, $lines);
@@ -660,8 +667,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'request_gdt'     => $REQUEST_GDT_NAME,
         'request_deleted' => $deleted,
         'contact_changed' => (count($chgBullets) > 0),
-        'id_0193_used'    => $use0193,
-        'id_3000'         => $patId3000,
+        'id_0193_used'    => $ans0193,
+        'id_3000_used'    => $ans3000,
         'packyears'       => (string)($answers['_packyears_text'] ?? ''),
     ]);
 }
@@ -739,7 +746,6 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
     .check input { width:22px; height:22px; flex:0 0 auto; }
     .check span { font-size:1.05rem; overflow-wrap:anywhere; }
 
-    /* v1.4.0: Header innerhalb checklist */
     .checkHeader{
       grid-column: 1 / -1;
       padding: 8px 10px 0 6px;
@@ -861,7 +867,6 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
                 $qType = (string)($q['type'] ?? '');
                 $label = (string)($q['label'] ?? '');
 
-                // v1.4.0: Header innerhalb checklist anzeigen
                 if ($qType === 'header') {
                   if ($label !== '') echo '<div class="checkHeader">'.h(ascii_only($label)).'</div>';
                   continue;
@@ -922,11 +927,9 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
               <?php } elseif ($qType === 'choice' && is_array($opts)) { ?>
                   <label><?php echo h(ascii_only($label)); ?></label>
                   <div class="radioRow">
-                    <?php
-                      // v1.3.1 IMPORTANT: KEIN Default fuer choice -> nichts "checked"
-                      foreach ($opts as $opt) {
-                        $opt = (string)$opt;
-                        if ($opt === '') continue;
+                    <?php foreach ($opts as $opt) {
+                      $opt = (string)$opt;
+                      if ($opt === '') continue;
                     ?>
                       <label class="radioPill">
                         <input type="radio" name="q[<?php echo h($id); ?>]" value="<?php echo h(ascii_only($opt)); ?>" />
@@ -992,29 +995,20 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
       statusEl.style.color = isError ? "#d00" : "#333";
     }
 
-    // Liefert fuer multiselect explizit das Array der selektierten Werte.
-    // Fuer checklist (single checkbox) true/false.
-    // Fuer choice/yesno string.
     function getAnswerValue(qid) {
-      // checklist: q[id]
       var cb = formEl.querySelector('input[type="checkbox"][name="q['+CSS.escape(qid)+']"]');
       if (cb) return cb.checked ? true : false;
 
-      // multiselect: q[id][]
       var cbs = formEl.querySelectorAll('input[type="checkbox"][name="q['+CSS.escape(qid)+'][]"]');
       if (cbs && cbs.length) {
         var vals = [];
-        cbs.forEach(function(x){
-          if (x.checked) vals.push(x.value || "");
-        });
+        cbs.forEach(function(x){ if (x.checked) vals.push(x.value || ""); });
         return vals;
       }
 
-      // radios
       var r = formEl.querySelector('input[type="radio"][name="q['+CSS.escape(qid)+']"]:checked');
       if (r) return r.value;
 
-      // text/number
       var t = formEl.querySelector('[name="q['+CSS.escape(qid)+']"]');
       if (t) return (t.value || "");
       return "";
@@ -1022,10 +1016,7 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 
     function parseJsonArrayMaybe(s) {
       if (!s) return null;
-      try {
-        var v = JSON.parse(s);
-        if (Array.isArray(v)) return v;
-      } catch(e) {}
+      try { var v = JSON.parse(s); if (Array.isArray(v)) return v; } catch(e) {}
       return null;
     }
 
@@ -1039,15 +1030,12 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
         var cur = getAnswerValue(depId);
         var show = true;
 
-        if (op === 'equals') {
-          show = (String(cur) === String(val));
-        } else if (op === 'not_equals') {
-          show = (String(cur) !== String(val));
-        } else if (op === 'in') {
+        if (op === 'equals') show = (String(cur) === String(val));
+        else if (op === 'not_equals') show = (String(cur) !== String(val));
+        else if (op === 'in') {
           var lst = parseJsonArrayMaybe(val) || [];
           show = (lst.map(String).indexOf(String(cur)) !== -1);
         } else if (op === 'any_selected_except') {
-          // cur muss Array sein (multiselect)
           var except = String(val || "");
           show = false;
           if (Array.isArray(cur)) {
@@ -1072,11 +1060,9 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
         var cur = getAnswerValue(depId);
         var show = true;
 
-        if (op === 'equals') {
-          show = (String(cur) === String(val));
-        } else if (op === 'not_equals') {
-          show = (String(cur) !== String(val));
-        } else if (op === 'in') {
+        if (op === 'equals') show = (String(cur) === String(val));
+        else if (op === 'not_equals') show = (String(cur) !== String(val));
+        else if (op === 'in') {
           var lst = parseJsonArrayMaybe(val) || [];
           show = (lst.map(String).indexOf(String(cur)) !== -1);
         } else if (op === 'any_selected_except') {
