@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.4.1
+# Version: 1.5.0
 #
 # =========================
 # Changelog (vollständig)
@@ -115,9 +115,6 @@
 #       - Umsetzung über eigene Konfigurationsdatei:
 #           /etc/php/<version>/apache2/conf.d/99-fragebogenpi.ini
 #         (zusätzlich auch für CLI: /etc/php/<version>/cli/conf.d/99-fragebogenpi.ini)
-#   * Webroot-Bootstrap:
-#       - selfie.php wird automatisch nach /var/www/html heruntergeladen
-#       - befund.php wird automatisch nach /var/www/html heruntergeladen
 #   * Auto-Update:
 #       - unattended-upgrades wird als Paket installiert und aktiviert
 #       - 20auto-upgrades wird gesetzt (periodisch aktiv)
@@ -128,6 +125,20 @@
 #   * Zusätzliches Paket: php-yaml wird installiert
 #   * Optional: Zugangsdaten werden (nach Rückfrage) als Textdatei ins PDF-Share geschrieben:
 #       /srv/fragebogenpi/PDF/zugangsdaten_fragebogenpi_bitte_loeschen.txt
+#
+# - 1.5.0 (2026-02-05)
+#   * Bootstrap-Download umgestellt:
+#       - Dateien werden NICHT mehr einzeln (selfie.php/befund.php) hardcodiert,
+#         sondern aus der Bootstrap-Liste geladen:
+#           https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/bootstrap
+#       - Die Liste enthält relative Dateinamen (relativ zur Bootstrap-Datei selbst),
+#         die ins Webroot heruntergeladen werden (inkl. Unterverzeichnisse).
+#       - Leere Zeilen und Kommentare (#...) werden ignoriert.
+#       - Pfad-Traversal (.. oder absolute Pfade) wird blockiert.
+#   * Bestehende Installation erkannt:
+#       - Wenn /srv/fragebogenpi existiert, fragt das Script:
+#           1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet alles neu ein)
+#           2) Nur Webroot-Update (nur Bootstrap-Dateien aktualisieren; überschreibt alte Dateien)
 #
 # =========================
 #
@@ -169,9 +180,8 @@ SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
 AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
 AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
 
-# Downloads (Webroot Bootstrap)
-SELFIE_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/selfie.php"
-BEFUND_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/befund.php"
+# Bootstrap-Dateiliste (relative Dateinamen)
+BOOTSTRAP_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/bootstrap"
 
 # PHP Settings (gewünscht)
 PHP_UPLOAD_MAX="25M"
@@ -183,7 +193,7 @@ PHP_MAX_INPUT="120"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.4.1"
+VERSION="1.5.0"
 STEP_NO=0
 
 banner() {
@@ -266,6 +276,23 @@ ask_choice_http_https() {
   done
 }
 
+ask_choice_existing_install() {
+  local answer=""
+  echo
+  echo "[fragebogenpi] Es wurde eine bestehende Installation gefunden: ${SHARE_BASE}"
+  echo "Was soll ich tun?"
+  echo "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)"
+  echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)"
+  while true; do
+    read -r -p "Auswahl [1/2]: " answer
+    case "$answer" in
+      1) echo "full"; return 0 ;;
+      2) echo "webroot"; return 0 ;;
+      *) echo "Bitte 1 oder 2 eingeben." ;;
+    esac
+  done
+}
+
 get_iface_ipv4() {
   local iface="$1"
   ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true
@@ -314,10 +341,22 @@ ensure_command() {
   fi
 }
 
+sanitize_relpath_or_die() {
+  # Erlaubt: relative Pfade ohne .. und ohne führenden /
+  # Blockiert: "..", "/abs", "\0", leere Strings
+  local p="$1"
+  [[ -n "$p" ]] || die "Bootstrap-Liste enthält eine leere Zeile nach Trimming (sollte nicht passieren)."
+  [[ "$p" != /* ]] || die "Unsicherer Pfad in Bootstrap-Liste (absolut): '$p'"
+  [[ "$p" != *$'\0'* ]] || die "Unsicherer Pfad in Bootstrap-Liste (NUL): '$p'"
+  if echo "$p" | grep -Eq '(^|/)\.\.(/|$)'; then
+    die "Unsicherer Pfad in Bootstrap-Liste (..): '$p'"
+  fi
+}
+
 # -------------------------
 # Installation
 # -------------------------
-install_packages() {
+install_packages_full() {
   step "System aktualisieren und Pakete installieren"
   log "Paketlisten aktualisieren & System upgraden..."
   apt-get update -y
@@ -336,6 +375,13 @@ install_packages() {
     unattended-upgrades
 
   ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades)"
+}
+
+install_packages_webroot_only() {
+  step "Minimal: Tools für Webroot-Update sicherstellen"
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y curl
+  ok "curl ist verfügbar"
 }
 
 set_hostname() {
@@ -473,7 +519,7 @@ EOF
    browseable = yes
    read only = no
    guest ok = no
-   valid users = admin
+   valid users = ${ADMIN_USER}
    force user = www-data
    force group = www-data
 EOF
@@ -604,9 +650,7 @@ EOF
 
   local got_ip
   got_ip="$(get_iface_ipv4 "${AP_INTERFACE}")"
-  if [[ "${got_ip:-}" != "$AP_IP" ]]; then
-    die "AP-IP konnte nicht gesetzt werden (wlan0 hat nicht ${AP_IP})."
-  fi
+  [[ "${got_ip:-}" == "$AP_IP" ]] || die "AP-IP konnte nicht gesetzt werden; wlan0 hat '${got_ip:-<leer>}' statt '${AP_IP}'."
 
   ok "AP-IP gesetzt (${AP_INTERFACE} = ${AP_IP})"
 }
@@ -812,25 +856,6 @@ EOF
   ok "PHP Optionen gesetzt (Apache + CLI) für PHP ${php_ver}"
 }
 
-download_webroot_files() {
-  step "Webroot Bootstrap: selfie.php und befund.php herunterladen"
-
-  ensure_command curl curl
-
-  local dst_selfie="${WEBROOT}/selfie.php"
-  local dst_befund="${WEBROOT}/befund.php"
-
-  log "Lade selfie.php..."
-  curl -fsSL "$SELFIE_URL" -o "$dst_selfie" || die "Download fehlgeschlagen: selfie.php"
-  log "Lade befund.php..."
-  curl -fsSL "$BEFUND_URL" -o "$dst_befund" || die "Download fehlgeschlagen: befund.php"
-
-  chown www-data:www-data "$dst_selfie" "$dst_befund"
-  chmod 0644 "$dst_selfie" "$dst_befund"
-
-  ok "selfie.php & befund.php liegen im Webroot"
-}
-
 enable_auto_updates() {
   step "Auto-Update aktivieren (unattended-upgrades als Paket)"
 
@@ -849,6 +874,60 @@ EOF
   systemctl enable apt-daily-upgrade.timer >/dev/null 2>&1 || true
 
   ok "Auto-Updates aktiviert (APT periodic + unattended-upgrades)"
+}
+
+download_bootstrap_files_to_webroot() {
+  step "Webroot Bootstrap: Dateiliste laden und Dateien herunterladen"
+
+  ensure_command curl curl
+
+  local base_url
+  base_url="$(echo "$BOOTSTRAP_URL" | sed 's#^\(.*\)/[^/]*$#\1#')"
+
+  log "Lade Bootstrap-Liste:"
+  log "  ${BOOTSTRAP_URL}"
+
+  local tmp_list
+  tmp_list="$(mktemp)"
+  trap 'rm -f "$tmp_list"' EXIT
+
+  curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_list" || die "Download fehlgeschlagen: bootstrap"
+
+  local count_total=0
+  local count_skipped=0
+  local count_ok=0
+
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    # trim
+    local line
+    line="$(echo "$raw" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+
+    # ignore empty + comments
+    if [[ -z "$line" ]] || [[ "$line" == \#* ]]; then
+      count_skipped=$((count_skipped+1))
+      continue
+    fi
+
+    count_total=$((count_total+1))
+
+    sanitize_relpath_or_die "$line"
+
+    local url="${base_url}/${line}"
+    local dst="${WEBROOT}/${line}"
+    local dst_dir
+    dst_dir="$(dirname "$dst")"
+    mkdir -p "$dst_dir"
+
+    log "Download: ${line}"
+    curl -fsSL "$url" -o "$dst" || die "Download fehlgeschlagen: ${url}"
+
+    chown www-data:www-data "$dst" || true
+    chmod 0644 "$dst" || true
+
+    count_ok=$((count_ok+1))
+  done < "$tmp_list"
+
+  ok "Bootstrap abgeschlossen: ${count_ok} Datei(en) geladen (Kommentare/leer: ${count_skipped})"
 }
 
 write_credentials_file_if_requested() {
@@ -871,7 +950,6 @@ write_credentials_file_if_requested() {
 
   mkdir -p "$SHARE_PDF"
 
-  # Sicher schreiben: erst mit restriktiver umask, danach lesbar im Share machen.
   local old_umask
   old_umask="$(umask)"
   umask 077
@@ -920,9 +998,9 @@ write_credentials_file_if_requested() {
     echo "Admin (WEBROOT): ${ADMIN_USER}"
     echo "Admin Passwort:  ${admin_pw}"
     echo
-    echo "== Webroot Bootstrap =="
-    echo "${WEBROOT}/selfie.php"
-    echo "${WEBROOT}/befund.php"
+    echo "== Bootstrap =="
+    echo "Quelle: ${BOOTSTRAP_URL}"
+    echo "Hinweis: Dateien wurden ins Webroot geladen (ggf. Unterverzeichnisse)."
     echo
     echo "== PHP Optionen =="
     echo "upload_max_filesize=${PHP_UPLOAD_MAX}"
@@ -941,9 +1019,8 @@ write_credentials_file_if_requested() {
 
   umask "$old_umask"
 
-  # Datei im Share lesbar machen (für Samba-Clients), aber weiterhin nicht "world".
-  chown www-data:www-data "$CRED_FILE"
-  chmod 0664 "$CRED_FILE"
+  chown www-data:www-data "$CRED_FILE" || true
+  chmod 0664 "$CRED_FILE" || true
 
   ok "Zugangsdaten-Datei geschrieben: ${CRED_FILE}"
 }
@@ -964,6 +1041,36 @@ main() {
     warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba/Bindung gilt dann evtl. nicht."
   fi
 
+  local mode="full"
+  if [[ -d "${SHARE_BASE}" ]]; then
+    mode="$(ask_choice_existing_install)"
+  fi
+
+  # ------------------------------------------------------
+  # Modus 2: Nur Webroot-Update (Bootstrap-Dateien)
+  # ------------------------------------------------------
+  if [[ "$mode" == "webroot" ]]; then
+    step "Modus: Nur Webroot-Update"
+    log "Es werden NUR die Bootstrap-Dateien ins Webroot geladen."
+    log "Netzwerk/Samba/Firewall/Passwörter bleiben unverändert."
+
+    install_packages_webroot_only
+    setup_webroot_perms
+    download_bootstrap_files_to_webroot
+
+    step "Abschluss (Webroot-Update)"
+    echo
+    echo "Webroot-Update abgeschlossen."
+    echo "Quelle (Bootstrap): ${BOOTSTRAP_URL}"
+    echo "Ziel (Webroot):     ${WEBROOT}"
+    echo "Hinweis: Bestehende Dateien wurden überschrieben."
+    echo
+    exit 0
+  fi
+
+  # ------------------------------------------------------
+  # Modus 1: Vollinstallation / Neu-Konfiguration
+  # ------------------------------------------------------
   step "Konfiguration abfragen"
   local wifi_pw web_mode protect_shares samba_pw admin_pw save_creds
   wifi_pw="$(rand_pw)"
@@ -985,7 +1092,7 @@ main() {
 
   ok "Eingaben übernommen"
 
-  install_packages
+  install_packages_full
   set_hostname
   setup_share_dirs
   setup_webroot_perms
@@ -999,7 +1106,7 @@ main() {
   ensure_sshd_normal_listen
 
   configure_php_settings
-  download_webroot_files
+  download_bootstrap_files_to_webroot
   enable_auto_updates
 
   # Abschlussdaten
@@ -1055,9 +1162,9 @@ main() {
   echo "Samba Admin (WEBROOT):  ${ADMIN_USER}"
   echo "Admin Passwort:         ${admin_pw}"
   echo
-  echo "Webroot Bootstrap:"
-  echo "  - ${WEBROOT}/selfie.php"
-  echo "  - ${WEBROOT}/befund.php"
+  echo "Bootstrap:"
+  echo "  Quelle: ${BOOTSTRAP_URL}"
+  echo "  Ziel:   ${WEBROOT} (inkl. Unterverzeichnisse, falls gelistet)"
   echo
   echo "PHP Pakete:"
   echo "  - php-gd"
