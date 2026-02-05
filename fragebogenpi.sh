@@ -1,30 +1,63 @@
 #!/usr/bin/env bash
 #
 # fragebogenpi.sh
-# Projekt: fragebogenpi
+# Projekt: fragebogenpi.de
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.1
+# Version: 1.6.0
 #
 # =========================
 # Changelog (vollständig)
 # =========================
 #
 # - 1.0 (2026-01-31)
-#   * Initiale Version (Apache+PHP, Samba GDT/PDF, hostapd+dnsmasq, WLAN isoliert, nftables)
+#   * Initiale Version
+#   * Interaktives Installationsscript für Raspberry Pi OS
+#   * Installation und Konfiguration von:
+#       - Apache Webserver + PHP
+#       - Samba (2 Shares: GDT, PDF)
+#       - hostapd + dnsmasq (isoliertes WLAN)
+#   * WLAN-Access-Point "fragebogenpi" (wlan0)
+#       - Eigenes Subnetz
+#       - KEIN Routing ins LAN oder Internet
+#       - Zugriff ausschließlich auf lokalen Webserver
+#   * nftables-Firewall:
+#       - wlan0: nur HTTP/HTTPS erlaubt
+#       - SMB & SSH auf wlan0 gesperrt
+#       - Forwarding vollständig deaktiviert
+#   * Samba:
+#       - Optional anonymer Zugriff oder Passwortschutz
+#       - Optionaler User "fragebogenpi"
+#       - Shares schreib-/lesbar
+#       - SMB ausschließlich über eth0
+#   * Webserver:
+#       - HTTP oder optional HTTPS
+#       - Self-signed Zertifikat gültig bis 2050
+#   * Konsistente Dateirechte:
+#       - www-data schreibberechtigt (PHP-Verarbeitung vorbereitet)
 #
 # - 1.1 (2026-01-31)
-#   * Hostname "fragebogenpi", mDNS (avahi), Abschlussausgabe IP/MAC, Hinweis feste IP im Router
+#   * Hostname wird systemweit gesetzt auf "fragebogenpi"
+#   * avahi-daemon aktiviert (mDNS / Bonjour)
+#       - Erreichbarkeit über "fragebogenpi.local"
+#   * Erweiterte Abschlussausgabe:
+#       - Anzeige WLAN-Zugangsdaten
+#       - Anzeige aktueller LAN-IP
+#       - Anzeige MAC-Adressen (eth0 / wlan0)
+#   * Hinweis zur empfohlenen DHCP-Reservation im Router
 #
 # - 1.1.1 (2026-01-31)
-#   * Klarstellung Erreichbarkeit: fragebogenpi / fragebogenpi.local / IP
+#   * Klarstellung zur Erreichbarkeit:
+#       - "fragebogenpi" nur bei funktionierender Router/DNS-Auflösung
+#       - "fragebogenpi.local" via mDNS (empfohlen)
+#       - IP-Adresse immer gültig
 #
 # - 1.1.2 (2026-01-31)
 #   * Bugfix: Passwort-Generator robust (kein EXIT=141 bei pipefail)
-#   * apt-get upgrade vor Paketinstallation
+#   * apt-get upgrade vor Paketinstallation ergänzt
 #
 # - 1.1.3 (2026-01-31)
-#   * dhcpcd optional: AP-IP robust (NetworkManager unmanaged + systemd oneshot wenn nötig)
+#   * dhcpcd optional: AP-IP robuster (NetworkManager unmanaged + systemd oneshot wenn nötig)
 #
 # - 1.1.4 (2026-01-31)
 #   * dnsmasq robust: Port 53 belegt -> DHCP-only (port=0)
@@ -43,7 +76,7 @@
 #
 # - 1.3 (2026-01-31)
 #   * SSH-Strategie: sshd "normal", Block nur per Firewall im WLAN
-#   * Samba Admin + WEBROOT share
+#   * Samba Admin + WEBROOT share (restricted)
 #
 # - 1.4.0 (2026-01-31)
 #   * php-gd, PHP Limits via 99-fragebogenpi.ini (apache2+cli)
@@ -62,10 +95,23 @@
 #       2) Nur Webroot-Update (überschreibt Dateien)
 #
 # - 1.5.1 (2026-02-05)
-#   * Fix: Moduswahl-Menü wird zuverlässig angezeigt (TTY-gebundene Ein-/Ausgabe über /dev/tty)
-#   * Neu: am Anfang optional Systembenutzer 'admin' (SSH-Login + sudo) mit Passwort
-#   * Neu: am Ende interaktives Anlegen beliebig vieler Samba-Benutzer (Loop "noch einer?")
-#       - Samba-User sind Systemuser (standardmäßig ohne Shell: /usr/sbin/nologin)
+#   * Fix: Menüs/Fragen zuverlässig sichtbar (TTY-gebundene Ein-/Ausgabe über /dev/tty)
+#   * Samba-User: Systemuser ohne Login-Shell (kein SSH), nur admin soll SSH
+#
+# - 1.6.0 (2026-02-05)
+#   * Projekt umbenannt: "fragebogenpi.de" (Header/Logs)
+#   * Bugfix Reihenfolge: ERSTE Frage ist jetzt immer Update vs. Vollinstallation (falls bestehende Installation erkannt)
+#   * Admin-User:
+#       - optionaler Systembenutzer "admin" (SSH-Login + sudo) – nur dieser soll SSH haben
+#       - Passwortwahl: selbst eingeben (keine Ausgabe) ODER generieren (Ausgabe)
+#       - admin bekommt Zugriff aufs Webroot (lokal via SSH und via Samba, wenn WEBROOT-Share aktiv)
+#   * Samba-User:
+#       - Passwortwahl je User: selbst eingeben (keine Ausgabe) ODER generieren (Ausgabe)
+#       - Hinweistext: anonymer Zugriff kann unter Windows/Gruppenrichtlinien blockiert sein
+#   * WEBROOT Share:
+#       - Rückfrage: WEBROOT über Samba für alle (Gast) schreibbar? (nicht empfohlen, Default N)
+#       - Wenn "Ja": guest ok = yes, writeable, force user/group = www-data (einfach & robust)
+#   * Bootstrap-Liste: akzeptiert jetzt auch "./datei.php" (wird normalisiert zu "datei.php")
 #
 # =========================
 set -euo pipefail
@@ -73,9 +119,10 @@ set -euo pipefail
 # -------------------------
 # Konfiguration (Defaults)
 # -------------------------
-AP_SSID="fragebogenpi"
+PROJECT_NAME="fragebogenpi.de"
 HOSTNAME_FQDN="fragebogenpi"
 
+AP_SSID="fragebogenpi"
 AP_INTERFACE="wlan0"
 LAN_INTERFACE="eth0"
 
@@ -92,42 +139,38 @@ SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
 CRED_FILE="${SHARE_PDF}/zugangsdaten_fragebogenpi_bitte_loeschen.txt"
 
-# Standard-Namen
 DEFAULT_SAMBA_USER="fragebogenpi"
-DEFAULT_ADMIN_USER="admin"   # optional als Systemuser mit SSH/sudo
+ADMIN_USER="admin"
 
-# HTTPS (optional)
 SSL_DIR="/etc/ssl/fragebogenpi"
 SSL_KEY="${SSL_DIR}/fragebogenpi.key"
 SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
 
-# AP IP helper/service
 AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
 AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
 
-# Bootstrap-Dateiliste (relative Dateinamen)
 BOOTSTRAP_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/bootstrap"
 
-# PHP Settings (gewünscht)
 PHP_UPLOAD_MAX="25M"
 PHP_POST_MAX="250M"
 PHP_MAX_UPLOADS="30"
 PHP_MAX_EXEC="120"
 PHP_MAX_INPUT="120"
 
+VERSION="1.6.0"
+STEP_NO=0
+TTY="/dev/tty"
+
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.1"
-STEP_NO=0
-
-log()  { echo -e "[fragebogenpi] $*"; }
-warn() { echo -e "[fragebogenpi][WARN] $*" >&2; }
-die()  { echo -e "[fragebogenpi][ERROR] $*" >&2; exit 1; }
+log()  { echo -e "[${PROJECT_NAME}] $*"; }
+warn() { echo -e "[${PROJECT_NAME}][WARN] $*" >&2; }
+die()  { echo -e "[${PROJECT_NAME}][ERROR] $*" >&2; exit 1; }
 
 banner() {
   echo
-  echo "## fragebogenpi v${VERSION} von Thomas Kienzle"
+  echo "## ${PROJECT_NAME} v${VERSION} von Thomas Kienzle"
   echo "##"
   echo "## Starte installation..."
   echo
@@ -144,13 +187,12 @@ step() {
 ok() { echo "[OK] $*"; }
 
 # -------------------------
-# TTY Helper (robust für sudo/umleitungen)
+# TTY Helper (robust)
 # -------------------------
-TTY="/dev/tty"
-tty_out() { printf "%b" "$*" >"$TTY"; }
+tty_out()   { printf "%b" "$*" >"$TTY"; }
 tty_outln() { printf "%b\n" "$*" >"$TTY"; }
+
 tty_read() {
-  # usage: tty_read "Prompt: " varname
   local prompt="$1"
   local __varname="$2"
   local __val=""
@@ -159,48 +201,29 @@ tty_read() {
   printf -v "$__varname" "%s" "$__val"
 }
 
-tty_read_choice() {
-  # usage: tty_read_choice "Prompt" "default" varname
+tty_read_silent() {
   local prompt="$1"
-  local def="$2"
-  local __varname="$3"
+  local __varname="$2"
   local __val=""
   tty_out "$prompt"
+  stty -echo <"$TTY"
   IFS= read -r __val <"$TTY"
-  __val="${__val:-$def}"
+  stty echo <"$TTY"
+  tty_outln ""
   printf -v "$__varname" "%s" "$__val"
 }
 
-# -------------------------
-# Helper
-# -------------------------
-require_root() {
-  [[ "${EUID}" -eq 0 ]] || die "Bitte als root ausführen: sudo bash fragebogenpi.sh"
-}
-
-rand_pw() {
-  python3 - <<'PY'
-import secrets
-alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-print("".join(secrets.choice(alphabet) for _ in range(16)), end="")
-PY
-}
-
-backup_file() {
-  local f="$1"
-  [[ -f "$f" ]] && cp -a "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
-}
-
 ask_yes_no_tty() {
-  # returns 0 for yes, 1 for no
   local prompt="$1"
   local def="$2"  # y/n
   local ans=""
   while true; do
     if [[ "$def" == "y" ]]; then
-      tty_read_choice "$prompt [Y/n]: " "Y" ans
+      tty_read "${prompt} [Y/n]: " ans
+      ans="${ans:-Y}"
     else
-      tty_read_choice "$prompt [y/N]: " "N" ans
+      tty_read "${prompt} [y/N]: " ans
+      ans="${ans:-N}"
     fi
     case "${ans,,}" in
       y|yes) return 0 ;;
@@ -225,7 +248,7 @@ ask_choice_http_https_tty() {
 ask_choice_existing_install_tty() {
   local ans=""
   tty_outln ""
-  tty_outln "[fragebogenpi] Es wurde eine bestehende Installation gefunden: ${SHARE_BASE}"
+  tty_outln "[${PROJECT_NAME}] Bestehende Installation gefunden: ${SHARE_BASE}"
   tty_outln "Was soll ich tun?"
   tty_outln "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)"
   tty_outln "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)"
@@ -239,19 +262,42 @@ ask_choice_existing_install_tty() {
   done
 }
 
-get_iface_ipv4() {
-  local iface="$1"
-  ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true
+ask_password_mode_tty() {
+  # outputs: "manual" or "gen"
+  local ans=""
+  tty_outln ""
+  tty_outln "Passwort-Optionen:"
+  tty_outln "  1) Passwort selbst eingeben (keine Ausgabe; sinnvoll bei Windows-Usern)"
+  tty_outln "  2) Passwort generieren lassen (wird ausgegeben)"
+  while true; do
+    tty_read "Auswahl [1/2]: " ans
+    case "$ans" in
+      1) echo "manual"; return 0 ;;
+      2) echo "gen"; return 0 ;;
+      *) tty_outln "Bitte 1 oder 2 eingeben." ;;
+    esac
+  done
 }
 
-get_iface_mac() {
-  local iface="$1"
-  cat "/sys/class/net/${iface}/address" 2>/dev/null || true
+# -------------------------
+# Helper
+# -------------------------
+require_root() { [[ "${EUID}" -eq 0 ]] || die "Bitte als root ausführen: sudo bash fragebogenpi.sh"; }
+
+rand_pw() {
+  python3 - <<'PY'
+import secrets
+alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+print("".join(secrets.choice(alphabet) for _ in range(16)), end="")
+PY
 }
 
-systemd_unit_exists() {
-  systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx "$1"
-}
+backup_file() { local f="$1"; [[ -f "$f" ]] && cp -a "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"; }
+
+get_iface_ipv4() { local i="$1"; ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true; }
+get_iface_mac()  { local i="$1"; cat "/sys/class/net/${i}/address" 2>/dev/null || true; }
+
+systemd_unit_exists() { systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx "$1"; }
 
 port_in_use() {
   local port="$1"
@@ -268,8 +314,7 @@ print_service_debug_and_die() {
   die "Abbruch, bitte Logausgabe oben prüfen."
 }
 
-ensure_linux_user() {
-  # default: nologin system user (für Samba ok, kein SSH)
+ensure_linux_user_nologin() {
   local u="$1"
   if ! id -u "$u" >/dev/null 2>&1; then
     useradd -m -s /usr/sbin/nologin "$u"
@@ -277,25 +322,31 @@ ensure_linux_user() {
 }
 
 ensure_system_admin_user() {
-  # admin user with shell + sudo
   local u="$1"
   local pw="$2"
-
   if id -u "$u" >/dev/null 2>&1; then
-    # existiert: nur sicherstellen, dass sudo stimmt
     usermod -aG sudo "$u" || true
+    # Shell nicht erzwingen, falls bewusst anders – aber typischerweise bash:
+    chsh -s /bin/bash "$u" >/dev/null 2>&1 || true
   else
     useradd -m -s /bin/bash "$u"
     usermod -aG sudo "$u" || true
   fi
-
   echo "${u}:${pw}" | chpasswd
 }
 
 ensure_command() {
-  local cmd="$1"
-  local pkg="$2"
+  local cmd="$1" pkg="$2"
   command -v "$cmd" >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+}
+
+normalize_relpath() {
+  # akzeptiert "./foo" und macht "foo"
+  local p="$1"
+  while [[ "$p" == ./* ]]; do
+    p="${p#./}"
+  done
+  echo "$p"
 }
 
 sanitize_relpath_or_die() {
@@ -308,7 +359,7 @@ sanitize_relpath_or_die() {
 }
 
 # -------------------------
-# Installation (Pakete)
+# Packages
 # -------------------------
 install_packages_full() {
   step "System aktualisieren und Pakete installieren"
@@ -338,7 +389,7 @@ install_packages_webroot_only() {
 }
 
 # -------------------------
-# System Setup
+# System
 # -------------------------
 set_hostname() {
   step "Hostname setzen und mDNS aktivieren"
@@ -377,6 +428,9 @@ setup_webroot_perms() {
   ok "Webroot vorbereitet: ${WEBROOT}"
 }
 
+# -------------------------
+# Samba
+# -------------------------
 setup_samba_base_config() {
   local smbconf="/etc/samba/smb.conf"
   backup_file "$smbconf"
@@ -384,7 +438,7 @@ setup_samba_base_config() {
   cat > "$smbconf" <<EOF
 [global]
    workgroup = WORKGROUP
-   server string = fragebogenpi samba server
+   server string = ${PROJECT_NAME} samba server
    security = user
    map to guest = Bad User
    guest account = nobody
@@ -430,7 +484,7 @@ EOF
 
 append_samba_shares_auth() {
   local smbconf="/etc/samba/smb.conf"
-  local userlist="$1" # space-separated users for GDT/PDF
+  local userlist="$1"
   cat >> "$smbconf" <<EOF
 
 [GDT]
@@ -453,9 +507,8 @@ append_samba_shares_auth() {
 EOF
 }
 
-append_samba_webroot_share() {
+append_samba_webroot_share_admin_only() {
   local smbconf="/etc/samba/smb.conf"
-  local webroot_users="$1"
   cat >> "$smbconf" <<EOF
 
 [WEBROOT]
@@ -463,7 +516,21 @@ append_samba_webroot_share() {
    browseable = yes
    read only = no
    guest ok = no
-   valid users = ${webroot_users}
+   valid users = ${ADMIN_USER}
+   force user = www-data
+   force group = www-data
+EOF
+}
+
+append_samba_webroot_share_guest() {
+  local smbconf="/etc/samba/smb.conf"
+  cat >> "$smbconf" <<EOF
+
+[WEBROOT]
+   path = ${WEBROOT}
+   browseable = yes
+   read only = no
+   guest ok = yes
    force user = www-data
    force group = www-data
 EOF
@@ -474,6 +541,16 @@ restart_samba() {
   systemctl restart smbd nmbd || true
 }
 
+set_samba_password() {
+  local user="$1"
+  local pw="$2"
+  (echo "$pw"; echo "$pw") | smbpasswd -a -s "$user"
+  smbpasswd -e "$user" >/dev/null 2>&1 || true
+}
+
+# -------------------------
+# Network/AP
+# -------------------------
 configure_nm_unmanage_wlan0() {
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
     log "NetworkManager erkannt – setze ${AP_INTERFACE} auf unmanaged..."
@@ -729,6 +806,9 @@ ensure_sshd_normal_listen() {
   ok "sshd Standard-Listen"
 }
 
+# -------------------------
+# PHP + Updates + Bootstrap
+# -------------------------
 configure_php_settings() {
   step "PHP Optionen setzen (Upload/Timeouts)"
   local php_ver
@@ -780,9 +860,7 @@ download_bootstrap_files_to_webroot() {
   log "Lade Bootstrap-Liste: ${BOOTSTRAP_URL}"
   curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_list" || die "Download fehlgeschlagen: bootstrap"
 
-  local count_ok=0
-  local count_skip=0
-
+  local count_ok=0 count_skip=0
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     local line
     line="$(echo "$raw" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
@@ -791,6 +869,7 @@ download_bootstrap_files_to_webroot() {
       continue
     fi
 
+    line="$(normalize_relpath "$line")"
     sanitize_relpath_or_die "$line"
 
     local url="${base_url}/${line}"
@@ -807,8 +886,11 @@ download_bootstrap_files_to_webroot() {
   ok "Bootstrap: ${count_ok} Datei(en) geladen (skip: ${count_skip})"
 }
 
+# -------------------------
+# Credentials file (optional)
+# -------------------------
 write_credentials_file_if_requested() {
-  local want="$1" web_mode="$2" protect_shares="$3" wifi_pw="$4" samba_pw="$5" admin_pw="$6" lan_ip="$7" lan_mac="$8" ap_mac="$9"
+  local want="$1" web_mode="$2" protect_shares="$3" wifi_pw="$4" samba_user_pw="$5" admin_pw_display="$6" lan_ip="$7" lan_mac="$8" ap_mac="$9"
   [[ "$want" == "yes" ]] || { log "Zugangsdaten-Datei: nicht gewünscht."; return 0; }
 
   step "Zugangsdaten-Datei ins PDF-Share schreiben (bitte danach löschen!)"
@@ -824,7 +906,7 @@ write_credentials_file_if_requested() {
     echo "# WICHTIG: Diese Datei enthält Passwörter -> nach Übernahme löschen!"
     echo "############################################################"
     echo
-    echo "Projekt: fragebogenpi"
+    echo "Projekt: ${PROJECT_NAME}"
     echo "Version: ${VERSION}"
     echo "Hostname: ${HOSTNAME_FQDN}"
     echo
@@ -844,13 +926,16 @@ write_credentials_file_if_requested() {
     echo "\\\\<LAN-IP>\\WEBROOT -> ${WEBROOT}"
     echo
     if [[ "$protect_shares" == "yes" ]]; then
-      echo "Samba User (GDT/PDF): ${DEFAULT_SAMBA_USER}"
-      echo "Samba Passwort: ${samba_pw}"
+      echo "Default Samba User (GDT/PDF): ${DEFAULT_SAMBA_USER}"
+      [[ -n "$samba_user_pw" ]] && echo "Default Samba Passwort: ${samba_user_pw}"
+      [[ -z "$samba_user_pw" ]] && echo "Default Samba Passwort: (manuell gesetzt, keine Ausgabe)"
     else
       echo "GDT/PDF Zugriff: anonym (guest), schreibbar"
     fi
     echo
-    echo "Admin Passwort (falls admin-user angelegt): ${admin_pw}"
+    echo "Admin User (SSH + sudo): ${ADMIN_USER}"
+    [[ -n "$admin_pw_display" ]] && echo "Admin Passwort: ${admin_pw_display}"
+    [[ -z "$admin_pw_display" ]] && echo "Admin Passwort: (manuell gesetzt, keine Ausgabe)"
     echo
     echo "Bootstrap Quelle: ${BOOTSTRAP_URL}"
     echo
@@ -875,44 +960,56 @@ write_credentials_file_if_requested() {
 }
 
 # -------------------------
-# Samba Users loop (am Ende)
+# Samba Users loop (Ende)
 # -------------------------
 create_samba_users_loop() {
   step "Samba-Benutzer anlegen (optional)"
-
-  if ! ask_yes_no_tty "Sollen Samba-Benutzer angelegt werden?" "y"; then
-    log "Keine Samba-Benutzer angelegt."
+  if ! ask_yes_no_tty "Sollen weitere Samba-Benutzer angelegt werden?" "n"; then
+    log "Keine zusätzlichen Samba-Benutzer angelegt."
     return 0
   fi
 
-  local created_summary=()
+  local summary=()
   while true; do
     local u=""
     tty_read "Samba-Benutzername: " u
     u="$(echo "$u" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
     [[ -n "$u" ]] || { tty_outln "Bitte einen Namen eingeben."; continue; }
 
-    local pw
-    pw="$(rand_pw)"
+    ensure_linux_user_nologin "$u"
 
-    # Systemuser (standardmäßig nologin) ist für Samba notwendig
-    ensure_linux_user "$u"
-    (echo "$pw"; echo "$pw") | smbpasswd -a -s "$u"
-    smbpasswd -e "$u" >/dev/null 2>&1 || true
+    local mode pw pw_display=""
+    mode="$(ask_password_mode_tty)"
+    if [[ "$mode" == "manual" ]]; then
+      tty_outln "Hinweis: Anonymer Zugriff kann in Windows/Gruppenrichtlinien blockiert sein."
+      tty_outln "Manuelles Passwort ist oft sinnvoll, wenn es identisch zum Windows-Login sein soll."
+      tty_read_silent "Passwort für '${u}': " pw
+      tty_read_silent "Passwort wiederholen: " pw2
+      [[ "$pw" == "$pw2" ]] || { tty_outln "Passwörter stimmen nicht überein."; continue; }
+      set_samba_password "$u" "$pw"
+      pw_display=""  # keine Ausgabe
+    else
+      pw="$(rand_pw)"
+      set_samba_password "$u" "$pw"
+      pw_display="$pw"
+    fi
 
-    created_summary+=("$u:$pw")
+    if [[ -n "$pw_display" ]]; then
+      summary+=("$u:$pw_display")
+    else
+      summary+=("$u:(manuell, keine Ausgabe)")
+    fi
 
-    tty_outln "[OK] Samba-Benutzer angelegt: $u (Passwort wird am Ende ausgegeben)"
+    tty_outln "[OK] Samba-Benutzer angelegt: $u"
 
     if ! ask_yes_no_tty "Noch einen Samba-Benutzer anlegen?" "n"; then
       break
     fi
   done
 
-  # Ausgabe der erzeugten User
   echo
   echo "==================== SAMBA-BENUTZER ==================="
-  for entry in "${created_summary[@]}"; do
+  for entry in "${summary[@]}"; do
     echo "User: ${entry%%:*}   Passwort: ${entry#*:}"
   done
   echo "======================================================="
@@ -925,33 +1022,24 @@ create_samba_users_loop() {
 main() {
   require_root
   banner
-  log "Starte Setup 'fragebogenpi' (v${VERSION})..."
+  log "Starte Setup '${PROJECT_NAME}' (v${VERSION})..."
 
   [[ -d /sys/class/net/${AP_INTERFACE} ]] || die "Interface ${AP_INTERFACE} nicht gefunden."
   if [[ ! -d /sys/class/net/${LAN_INTERFACE} ]]; then
     warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba bind gilt dann evtl. nicht."
   fi
 
-  # Optionaler System-Admin am Anfang
-  local create_admin="no"
-  local admin_pw=""
-  if ask_yes_no_tty "Soll ein Systembenutzer '${DEFAULT_ADMIN_USER}' für SSH-Login mit sudo-Rechten angelegt werden?" "y"; then
-    create_admin="yes"
-    admin_pw="$(rand_pw)"
-    step "Systembenutzer '${DEFAULT_ADMIN_USER}' anlegen (SSH + sudo)"
-    ensure_system_admin_user "${DEFAULT_ADMIN_USER}" "${admin_pw}"
-    ok "Systembenutzer '${DEFAULT_ADMIN_USER}' angelegt/aktualisiert (sudo). Passwort wird am Ende angezeigt."
-  fi
-
-  # Bestehende Installation?
+  # 1) ERSTE Frage: Update vs Voll (nur wenn bestehende Installation erkannt)
   local mode="full"
   if [[ -d "${SHARE_BASE}" ]]; then
     mode="$(ask_choice_existing_install_tty)"
   fi
 
-  # Webroot-only
+  # Webroot-only Mode: minimal, KEINE User/Passwort/Firewall/Netzwerk-Änderungen
   if [[ "$mode" == "webroot" ]]; then
     step "Modus: Nur Webroot-Update"
+    log "Es werden NUR die Bootstrap-Dateien ins Webroot geladen."
+    log "Netzwerk/Samba/Firewall/Passwörter bleiben unverändert."
     install_packages_webroot_only
     setup_webroot_perms
     download_bootstrap_files_to_webroot
@@ -965,53 +1053,92 @@ main() {
     exit 0
   fi
 
-  # Vollmodus Fragen
+  # Vollmodus: Fragen
   step "Konfiguration abfragen"
-  local wifi_pw web_mode protect_shares samba_pw save_creds
+
+  # Admin user (nur dieser soll SSH haben)
+  local admin_pw_mode admin_pw admin_pw_display=""
+  tty_outln ""
+  tty_outln "Admin-User '${ADMIN_USER}' (SSH-Login + sudo) wird empfohlen."
+  admin_pw_mode="$(ask_password_mode_tty)"
+  if [[ "$admin_pw_mode" == "manual" ]]; then
+    tty_read_silent "Passwort für '${ADMIN_USER}': " admin_pw
+    tty_read_silent "Passwort wiederholen: " admin_pw2
+    [[ "$admin_pw" == "$admin_pw2" ]] || die "Admin-Passwörter stimmen nicht überein."
+    admin_pw_display=""  # keine Ausgabe
+  else
+    admin_pw="$(rand_pw)"
+    admin_pw_display="$admin_pw"
+  fi
+
+  local wifi_pw web_mode protect_shares default_samba_pw_mode default_samba_pw default_samba_pw_display=""
   wifi_pw="$(rand_pw)"
   web_mode="$(ask_choice_http_https_tty)"
 
+  tty_outln ""
+  tty_outln "Hinweis: Anonymer Samba-Zugriff (Guest) kann je nach Windows/Gruppenrichtlinien blockiert sein."
+  tty_outln "Wenn Windows zickt: besser Benutzer anlegen (ggf. Passwort identisch zum Windows-Login)."
+
   protect_shares="no"
-  samba_pw=""
-  if ask_yes_no_tty "Samba-Shares GDT/PDF mit Passwort schützen (Default-User '${DEFAULT_SAMBA_USER}')?" "y"; then
+  if ask_yes_no_tty "Samba-Shares GDT/PDF mit Passwort schützen?" "y"; then
     protect_shares="yes"
-    samba_pw="$(rand_pw)"
+    default_samba_pw_mode="$(ask_password_mode_tty)"
+    ensure_linux_user_nologin "${DEFAULT_SAMBA_USER}"
+    if [[ "$default_samba_pw_mode" == "manual" ]]; then
+      tty_read_silent "Passwort für '${DEFAULT_SAMBA_USER}': " default_samba_pw
+      tty_read_silent "Passwort wiederholen: " default_samba_pw2
+      [[ "$default_samba_pw" == "$default_samba_pw2" ]] || die "Passwörter stimmen nicht überein."
+      default_samba_pw_display=""  # keine Ausgabe
+    else
+      default_samba_pw="$(rand_pw)"
+      default_samba_pw_display="$default_samba_pw"
+    fi
   fi
 
-  save_creds="no"
+  # WEBROOT Samba "für alle"?
+  local webroot_guest="no"
+  if ask_yes_no_tty "Soll das Samba-Share WEBROOT für alle (Gast) schreibbar sein? (nicht empfohlen)" "n"; then
+    webroot_guest="yes"
+  fi
+
+  # Zugangsdaten-Datei?
+  local save_creds="no"
   if ask_yes_no_tty "Zugangsdaten zusätzlich als Datei ins PDF-Share schreiben (BITTE danach löschen)?" "n"; then
     save_creds="yes"
   fi
+
   ok "Eingaben übernommen"
 
   # Setup
   install_packages_full
+
+  step "Admin-User anlegen (SSH + sudo)"
+  ensure_system_admin_user "${ADMIN_USER}" "${admin_pw}"
+  # Samba-Passwort für admin setzen (für WEBROOT admin-only)
+  ensure_linux_user_nologin "${ADMIN_USER}" || true  # falls useradd bereits existiert, harmless
+  set_samba_password "${ADMIN_USER}" "${admin_pw}" || true
+  ok "Admin-User '${ADMIN_USER}' ist vorhanden und hat sudo (Passwort: ${admin_pw_display:-manuell gesetzt})"
+
   set_hostname
   setup_share_dirs
   setup_webroot_perms
 
-  step "Samba Grundkonfiguration + Shares"
+  step "Samba konfigurieren"
   setup_samba_base_config
+
   if [[ "$protect_shares" == "yes" ]]; then
-    # Default user für GDT/PDF sicherstellen (System user nologin)
-    ensure_linux_user "${DEFAULT_SAMBA_USER}"
-    (echo "${samba_pw}"; echo "${samba_pw}") | smbpasswd -a -s "${DEFAULT_SAMBA_USER}"
-    smbpasswd -e "${DEFAULT_SAMBA_USER}" >/dev/null 2>&1 || true
+    set_samba_password "${DEFAULT_SAMBA_USER}" "${default_samba_pw}"
     append_samba_shares_auth "${DEFAULT_SAMBA_USER}"
   else
     append_samba_shares_anonymous
   fi
 
-  # WEBROOT Share: nur admin, falls admin angelegt wurde; sonst erstmal keiner (sicherer Default)
-  if [[ "$create_admin" == "yes" ]]; then
-    # admin existiert als System user (mit shell) -> kann auch Samba nutzen
-    (echo "${admin_pw}"; echo "${admin_pw}") | smbpasswd -a -s "${DEFAULT_ADMIN_USER}" || true
-    smbpasswd -e "${DEFAULT_ADMIN_USER}" >/dev/null 2>&1 || true
-    append_samba_webroot_share "${DEFAULT_ADMIN_USER}"
+  if [[ "$webroot_guest" == "yes" ]]; then
+    append_samba_webroot_share_guest
   else
-    # Kein admin user -> WEBROOT share nicht anbieten
-    warn "Kein System-Admin angelegt -> WEBROOT Share wird NICHT freigegeben."
+    append_samba_webroot_share_admin_only
   fi
+
   restart_samba
   ok "Samba läuft (nur LAN/eth0)"
 
@@ -1026,7 +1153,7 @@ main() {
   download_bootstrap_files_to_webroot
   enable_auto_updates
 
-  # Am Ende: weitere Samba User optional (Loop)
+  # Ende: weitere Samba user
   create_samba_users_loop
   restart_samba
 
@@ -1037,12 +1164,13 @@ main() {
   ap_mac="$(get_iface_mac "${AP_INTERFACE}")"
 
   write_credentials_file_if_requested \
-    "$save_creds" "$web_mode" "$protect_shares" "$wifi_pw" "$samba_pw" "$admin_pw" \
+    "$save_creds" "$web_mode" "$protect_shares" "$wifi_pw" "${default_samba_pw_display:-}" "${admin_pw_display:-}" \
     "$lan_ip" "$lan_mac" "$ap_mac"
 
   step "Abschlussinformationen"
   echo
   echo "==================== ZUGANGSDATEN ===================="
+  echo "Projekt:               ${PROJECT_NAME}"
   echo "Hostname (System):      ${HOSTNAME_FQDN}"
   echo
   echo "Namensauflösung / Erreichbarkeit:"
@@ -1052,7 +1180,7 @@ main() {
   echo
   echo "WLAN SSID:        ${AP_SSID}"
   echo "WLAN Passwort:    ${wifi_pw}"
-  echo 이해 "WLAN IP (Pi):     ${AP_IP}"
+  echo "WLAN IP (Pi):     ${AP_IP}"
   echo "Webserver (WLAN): http://${AP_IP}/"
   [[ "$web_mode" == "https" ]] && echo "Webserver (WLAN): https://${AP_IP}/  (self-signed Warnung ist normal)"
   echo
@@ -1067,18 +1195,23 @@ main() {
   echo "Samba Shares (nur LAN/eth0, nicht WLAN):"
   echo "  \\\\<LAN-IP-des-Pi>\\GDT      -> ${SHARE_GDT}"
   echo "  \\\\<LAN-IP-des-Pi>\\PDF      -> ${SHARE_PDF}"
-  [[ "$create_admin" == "yes" ]] && echo "  \\\\<LAN-IP-des-Pi>\\WEBROOT  -> ${WEBROOT}"
+  echo "  \\\\<LAN-IP-des-Pi>\\WEBROOT  -> ${WEBROOT}"
   echo
   if [[ "$protect_shares" == "yes" ]]; then
     echo "Default Samba User (GDT/PDF): ${DEFAULT_SAMBA_USER}"
-    echo "Default Samba Passwort:       ${samba_pw}"
+    echo "Default Samba Passwort:       ${default_samba_pw_display:-manuell gesetzt (keine Ausgabe)}"
   else
     echo "GDT/PDF Zugriff: anonym (guest), schreibbar"
   fi
   echo
-  if [[ "$create_admin" == "yes" ]]; then
-    echo "System-Admin (SSH + sudo):    ${DEFAULT_ADMIN_USER}"
-    echo "Admin Passwort:               ${admin_pw}"
+  echo "Admin User (SSH + sudo):      ${ADMIN_USER}"
+  echo "Admin Passwort:               ${admin_pw_display:-manuell gesetzt (keine Ausgabe)}"
+  echo
+  echo "WEBROOT Share:"
+  if [[ "$webroot_guest" == "yes" ]]; then
+    echo "  -> für alle im LAN als Gast schreibbar (nicht empfohlen)"
+  else
+    echo "  -> nur '${ADMIN_USER}' (empfohlen)"
   fi
   echo
   echo "Bootstrap:"
