@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /*
- * anamnesebogen.php v1.4.5
+ * anamnesebogen.php v1.4.6
  * fragebogenpi.de von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
@@ -34,34 +34,29 @@ declare(strict_types=1);
  *   + Backend: fehlende Choice-Auswahl bleibt leer und wird nicht ausgegeben (nur bewusst ausgewaehlte Inhalte)
  * - v1.4.0:
  *   + UI: Unterueberschriften/Headers innerhalb checklist-Sections (YAML question type: "header") werden angezeigt
- *   + show_if erweitert:
- *       * "in": einblenden, wenn abh. Feldwert in einer Liste enthalten ist
- *       * "any_selected_except": einblenden, wenn bei multiselect mind. eine Option ausgewaehlt ist, die NICHT dem Ausnahme-String entspricht
- *   + Client (JS) und Server (cond_ok + Output-Logik) konsistent erweitert, ohne bestehende equals/not_equals Logik zu brechen
+ *   + show_if erweitert: "in" und "any_selected_except" (Client+Server konsistent)
  * - v1.4.1:
- *   + x.concept Fix: 0193/3000 in der Antwortdatei jetzt EXKLUSIV:
- *       * Wenn Request 3000 enthaelt -> Ausgabe NUR 3000 (auch wenn 0193 zusaetzlich vorhanden waere)
- *       * Sonst, wenn Request 0193 enthaelt -> Ausgabe NUR 0193
+ *   + x.concept Fix: 0193/3000 in der Antwortdatei jetzt EXKLUSIV (3000 hat Vorrang)
  * - v1.4.2:
  *   + x.concept Fix zusaetzlich: Wenn 3000 verwendet wird, wird Feld 6200 (ANA1) NICHT geschrieben
  * - v1.4.3:
- *   + x.concept/GDT-Server Workaround: Wenn 3000 verwendet wird, wird am DATEIENDE zusaetzlich 8000=6310 geschrieben
+ *   + Workaround: Wenn 3000 verwendet wird, zusaetzliches 8000=6310 am Dateiende
  * - v1.4.4:
- *   + Erweiterter Workaround (3000-Fall): Datei endet nun exakt mit:
+ *   + Erweiterter Workaround (3000-Fall): Datei endet mit:
  *       01041211
  *       01380006310
  *       01041211
  * - v1.4.5:
- *   + Umlaut-Fix:
- *       * Request kann Umlaute enthalten: UI-Anzeige transliteriert sauber (z.B. "Moller" -> "Moeller" statt "Mller")
- *       * Antwort-GDT: Request-Felder (z.B. 3101/3102/3103) werden BYTEGENAU wie in der Auftragsdatei ausgegeben
- *         (keine ASCII-Only-Umwandlung mehr fuer diese Felder), damit der Import akzeptiert wird.
+ *   + Umlaut-Fix: Request fuer UI sauber transliterieren; Antwort-GDT Request-Felder bytegenau ausgeben
  *   + Projektname: fragebogenpi.de
- *   + Web-App Modus fuer iPad: Meta-Tags/Viewport erweitert (Design sonst unveraendert)
+ *   + Web-App Modus fuer iPad (Meta-Tags/Viewport), Design sonst unveraendert
+ * - v1.4.6:
+ *   + UI: mehr Abstand oben im WebApp-Modus (safe-area + padding-top)
+ *   + GDT: x.concept Workaround-Zeilen (zus. 4121/8000/4121) als Konfigurationsoption schaltbar, Default AUS
  */
 
 $APP_FOOTER  = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.4.5 (anamnesebogen.php)';
+$APP_VERSION = 'v1.4.6 (anamnesebogen.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -88,19 +83,20 @@ $UI_TITLE = 'Anamnese (iPad)';
 // Maximale Laenge pro 6228-Zeile (ASCII/CP437-safe Bytes):
 $MAX_6228_BYTES = 70;
 
+// ------------------------------------------------------------
+// KONFIG: x.concept Workaround am Ende bei 3000?
+// Default AUS, weil T2med diese Zusatzzeilen nicht mag.
+// Wenn du x.concept einsetzt -> hier auf true setzen.
+// ------------------------------------------------------------
+$ENABLE_XCONCEPT_3000_END_WORKAROUND = false;
+
 // ----------------- helpers -----------------
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 function is_valid_utf8(string $s): bool {
-    // preg_match('//u', ...) ist ein gaengiger UTF-8-Check in PHP
     return $s === '' ? true : (bool)@preg_match('//u', $s);
 }
 
-/**
- * Versucht, Request-Bytes fuer die UI nach UTF-8 zu bringen.
- * - Wenn bereits UTF-8: unveraendert
- * - Sonst: best effort (CP437, ISO-8859-1)
- */
 function req_to_utf8_for_ui(string $raw): string {
     if ($raw === '') return '';
     if (is_valid_utf8($raw)) return $raw;
@@ -111,39 +107,26 @@ function req_to_utf8_for_ui(string $raw): string {
             if ($tmp !== false && $tmp !== '') return $tmp;
         }
     }
-
-    // fallback: hart als UTF-8 behandeln (kann ? ergeben)
     return $raw;
 }
 
-/**
- * Fuer die Anzeige: sauber transliterieren (Moeller, Mueller, etc.).
- * Wichtig: NUR UI! NICHT fuer die Antwort-GDT.
- */
 function translit_for_ui(string $raw): string {
     $s = req_to_utf8_for_ui($raw);
-
-    // explizite deutsche Umlaute zuerst (damit nicht "Mller" entsteht)
     $map = [
         'Ä'=>'Ae','Ö'=>'Oe','Ü'=>'Ue','ä'=>'ae','ö'=>'oe','ü'=>'ue','ß'=>'ss',
         '’'=>"'","´"=>"'","`"=>"'","“"=>'"',"”"=>'"',"„"=>'"',"–"=>'-',"—"=>'-',"…"=>'...',
     ];
     $s = strtr($s, $map);
 
-    // danach optional generische Transliteration (Akzente etc.)
     if (function_exists('iconv')) {
         $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
         if ($tmp !== false && $tmp !== '') $s = $tmp;
     }
 
-    // final clamp fuer UI: druckbar halten (aber nicht mehr aggressiv wie frueher)
     $s = preg_replace('/[^\x20-\x7E]/', '?', $s) ?? $s;
     return $s;
 }
 
-/**
- * ASCII-Only fuer Inhalte, die wirklich ASCII sein sollen (YAML/UI Labels / 6228 / etc.).
- */
 function ascii_only(string $s): string {
     $map = [
         'Ä'=>'Ae','Ö'=>'Oe','Ü'=>'Ue','ä'=>'ae','ö'=>'oe','ü'=>'ue','ß'=>'ss',
@@ -179,16 +162,10 @@ function clean_utf8_text(string $s, int $maxLen = 200): string {
     return $s;
 }
 
-/**
- * Request-Werte fuer die Antwort-GDT: BYTEGENAU beibehalten, nur Zeilenumbrueche entfernen.
- * (Wichtig fuer "exakt wie in der Anforderungsdatei".)
- */
 function req_value_passthrough(string $s, int $maxLen = 200): string {
-    // CR/LF/TAB raus, sonst kann eine Zeile kaputt gehen
     $s = str_replace(["\r", "\n", "\t"], ' ', $s);
     $s = preg_replace('/\s+/', ' ', $s) ?? $s;
     $s = trim($s);
-    // laengenlimit (bytes) – verhindert Ausreisser
     if (strlen($s) > $maxLen) $s = substr($s, 0, $maxLen);
     return $s;
 }
@@ -210,10 +187,6 @@ function json_out(int $code, array $payload): void {
     exit;
 }
 
-/**
- * GDT-Zeile: Laenge beinhaltet CRLF (2 Bytes).
- * len = 3 (Laengenfeld) + strlen(field4+value) + 2 (CRLF)
- */
 function gdt_line(string $field4, string $value): string {
     $rest = $field4 . $value;
     $len  = 3 + strlen($rest) + 2; // +CRLF
@@ -333,7 +306,6 @@ function yaml_ascii_walk($v) {
     return $v;
 }
 
-// show_if: robust fuer bool und "yes"/"no" + in + any_selected_except
 function cond_ok(array $answers, ?array $cond): bool {
     if (!$cond) return true;
     $id = (string)($cond['id'] ?? '');
@@ -531,15 +503,14 @@ $requestPath = rtrim($dirGdt, '/') . '/' . $REQUEST_GDT_NAME;
 $hasRequest  = is_file($requestPath);
 $reqFields   = $hasRequest ? parse_gdt($requestPath) : [];
 
-// RAW (bytegenau) aus Request:
 $vorname_raw  = $reqFields['3102'] ?? '';
 $nachname_raw = $reqFields['3101'] ?? '';
 $gebdat_raw   = $reqFields['3103'] ?? '';
 
-// UI (transliteriert):
+// UI
 $vorname_ui  = translit_for_ui($vorname_raw);
 $nachname_ui = translit_for_ui($nachname_raw);
-$gebdat_ui   = format_gebdat(req_to_utf8_for_ui($gebdat_raw)); // UI-formatierung nutzt digits
+$gebdat_ui   = format_gebdat(req_to_utf8_for_ui($gebdat_raw));
 
 $displayName_ui = trim(trim($vorname_ui . ' ' . $nachname_ui));
 if ($displayName_ui === '') $displayName_ui = '—';
@@ -558,7 +529,7 @@ $req8316   = $reqFields['8316'] ?? '';
 $ans8315 = ($req8316 !== '') ? $req8316 : $DEFAULT_8315;
 $ans8316 = ($req8315 !== '') ? $req8315 : $DEFAULT_8316;
 
-// 0193/3000 exklusiv (3000 hat Vorrang, wenn vorhanden)
+// 0193/3000 exklusiv (3000 hat Vorrang)
 $req0193 = $reqFields['0193'] ?? '';
 $use3000_only = ($patId3000 !== '');
 $use0193_only = (!$use3000_only && $req0193 !== '');
@@ -566,7 +537,7 @@ $use0193_only = (!$use3000_only && $req0193 !== '');
 $ans3000 = $use3000_only ? $patId3000 : '';
 $ans0193 = $use0193_only ? $req0193 : '';
 
-// optional meta aus Request
+// optional meta
 $req4109 = $reqFields['4109'] ?? '';
 $req4104 = $reqFields['4104'] ?? '';
 
@@ -660,7 +631,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $answers['_packyears_text'] = '';
     }
 
-    // Build 6228 lines: contact updates first if changed
+    // Build 6228 lines
     $lines6228 = [];
 
     $chgBullets = [];
@@ -677,7 +648,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Compose answer GDT 6310
     $lines = [];
     $lines[] = gdt_line('8000', '6310');
-    $lines[] = gdt_line('8100', '000000'); // wird unten korrigiert
+    $lines[] = gdt_line('8100', '000000');
     $lines[] = gdt_line('9218', '02.00');
 
     // EXKLUSIV: entweder 3000 ODER 0193
@@ -687,47 +658,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lines[] = gdt_line('0193', $ans0193);
     }
 
-    // Kennfeld
     $lines[] = gdt_line('8402', $kennfeld);
 
-    // Name/Datum: BYTEGENAU wie in der Request-Datei (keine ASCII-Only-Umwandlung!)
+    // Request-Felder bytegenau
     if ($nachname_raw !== '') $lines[] = gdt_line('3101', req_value_passthrough($nachname_raw, 120));
     if ($vorname_raw  !== '') $lines[] = gdt_line('3102', req_value_passthrough($vorname_raw, 120));
     if ($gebdat_raw   !== '') $lines[] = gdt_line('3103', req_value_passthrough($gebdat_raw, 40));
 
-    // IDs / Sender-Empfaenger
     $lines[] = gdt_line('8315', $ans8315);
     $lines[] = gdt_line('8316', $ans8316);
 
-    // optionale Meta aus Request
     if ($req4109 !== '') $lines[] = gdt_line('4109', $req4109);
     if ($req4104 !== '') $lines[] = gdt_line('4104', $req4104);
 
-    // Koerpermasse + Kontakt (ASCII)
     if ($height !== '') $lines[] = gdt_line('3622', $height);
     if ($weight !== '') $lines[] = gdt_line('3623', $weight);
     if ($phone1 !== '') $lines[] = gdt_line('3626', $phone1);
     if ($phone2 !== '') $lines[] = gdt_line('3618', $phone2);
     if ($email  !== '') $lines[] = gdt_line('3619', $email);
 
-    // Absenderkennung:
-    // bei 3000 darf 6200 NICHT geschrieben werden (x.concept)
+    // Absenderkennung: bei 3000 darf 6200 NICHT geschrieben werden
     if ($ans0193 !== '') {
         $lines[] = gdt_line('6200', ascii_only($ANSWER_6200));
     }
     $lines[] = gdt_line('6201', ascii_only($ANSWER_6201));
 
-    // Text
     foreach ($lines6228 as $l) $lines[] = $l;
 
-    // Datum heute kurz vor Satzende
     $lines[] = gdt_line('4109', ymd_today());
-
-    // Satzende (normal)
     $lines[] = gdt_line('4121', '1');
 
-    // Workaround: bei 3000 am ENDE nochmal 8000=6310 und nochmal 4121=1
-    if ($ans3000 !== '') {
+    // OPTIONAL: Workaround nur wenn explizit aktiviert UND 3000-Fall
+    if ($ENABLE_XCONCEPT_3000_END_WORKAROUND && $ans3000 !== '') {
         $lines[] = gdt_line('8000', '6310');
         $lines[] = gdt_line('4121', '1');
     }
@@ -747,6 +709,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'id_0193_used'    => $ans0193,
         'id_3000_used'    => $ans3000,
         'packyears'       => (string)($answers['_packyears_text'] ?? ''),
+        'xconcept_workaround' => ($ENABLE_XCONCEPT_3000_END_WORKAROUND && $ans3000 !== ''),
     ]);
 }
 
@@ -766,7 +729,14 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
   <title><?php echo h(ascii_only($UI_TITLE)); ?></title>
   <style>
     :root { --maxw: 520px; }
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background:#f2f2f7; margin:0; padding:20px; text-align:center; }
+    /* mehr Abstand oben (safe-area) fuer WebApp */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background:#f2f2f7;
+      margin:0;
+      padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 20px 20px;
+      text-align:center;
+    }
     .card { background:#fff; border-radius:14px; padding:16px; box-shadow:0 6px 18px rgba(0,0,0,0.06); margin:0 auto; max-width:var(--maxw); }
     .patient { font-size: 2.3rem; font-weight: 900; margin: 4px 0 10px 0; }
     .hint { font-size:1rem; color:#555; line-height:1.4; }
@@ -809,7 +779,13 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 
   <style>
     :root { --maxw: 780px; }
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background:#f2f2f7; margin:0; padding:20px; }
+    /* mehr Abstand oben (safe-area) fuer WebApp */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background:#f2f2f7;
+      margin:0;
+      padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 20px 20px;
+    }
     .card { background:#fff; border-radius:14px; padding:16px; box-shadow:0 6px 18px rgba(0,0,0,0.06); margin:0 auto; max-width:var(--maxw); }
     .patient { font-size: 2.0rem; font-weight: 900; margin: 0 0 6px 0; }
     .sub { color:#444; margin:0 0 12px 0; line-height:1.35; }
