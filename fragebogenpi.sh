@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.1
+# Version: 1.5.2
 #
 # =========================
 # Changelog (vollständig)
@@ -152,6 +152,11 @@
 #       - Nach Ausgabe aller Zugangsdaten optionale Rückfrage zum Löschen eines Systembenutzers (Default nein, Default-User "pi")
 #       - Reboot wird am Ende geplant (10 Sekunden); optionales userdel -r ist der letzte Schritt
 #
+# - 1.5.2 (2026-02-05)
+#   * Bugfix UI: Auswahlmenü bei bestehender Installation zeigt wieder erklärende Zeilen (stderr statt stdout)
+#   * Bugfix UI: Manuelle Passwort-Eingabe erzeugt keine zusätzlichen Leerzeilen mehr
+#   * Bugfix Bootstrap: falscher NUL-Check entfernt; CRLF-Zeilenenden werden robust getrimmt
+#
 # =========================
 #
 set -euo pipefail
@@ -205,7 +210,7 @@ PHP_MAX_INPUT="120"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.1"
+VERSION="1.5.2"
 STEP_NO=0
 
 banner() {
@@ -290,17 +295,18 @@ ask_choice_http_https() {
 
 ask_choice_existing_install() {
   local answer=""
-  echo
-  echo "[fragebogenpi] Es wurde eine bestehende Installation gefunden: ${SHARE_BASE}"
-  echo "Was soll ich tun?"
-  echo "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)"
-  echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)"
+  echo >&2
+  echo "[fragebogenpi] Es wurde eine bestehende Installation gefunden: ${SHARE_BASE}" >&2
+  echo "Hinweis: Auswahl 2 überschreibt Dateien im Webroot (Programme/Bootstrap), sonst nichts." >&2
+  echo "Was soll ich tun?" >&2
+  echo "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)" >&2
+  echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)" >&2
   while true; do
     read -r -p "Auswahl [1/2]: " answer
     case "$answer" in
       1) echo "full"; return 0 ;;
       2) echo "webroot"; return 0 ;;
-      *) echo "Bitte 1 oder 2 eingeben." ;;
+      *) echo "Bitte 1 oder 2 eingeben." >&2 ;;
     esac
   done
 }
@@ -310,7 +316,6 @@ ask_password_twice() {
   local p1="" p2=""
   while true; do
     read -r -s -p "${prompt}: " p1
-    echo
     read -r -s -p "${prompt} (Wiederholung): " p2
     echo
     [[ -n "$p1" ]] || { echo "Passwort darf nicht leer sein."; continue; }
@@ -378,11 +383,10 @@ ensure_command() {
 
 sanitize_relpath_or_die() {
   # Erlaubt: relative Pfade ohne .. und ohne führenden /
-  # Blockiert: "..", "/abs", "\0", leere Strings
+  # Blockiert: "..", "/abs", leere Strings
   local p="$1"
   [[ -n "$p" ]] || die "Bootstrap-Liste enthält eine leere Zeile nach Trimming (sollte nicht passieren)."
   [[ "$p" != /* ]] || die "Unsicherer Pfad in Bootstrap-Liste (absolut): '$p'"
-  [[ "$p" != *$'\0'* ]] || die "Unsicherer Pfad in Bootstrap-Liste (NUL): '$p'"
   if echo "$p" | grep -Eq '(^|/)\.\.(/|$)'; then
     die "Unsicherer Pfad in Bootstrap-Liste (..): '$p'"
   fi
@@ -955,9 +959,9 @@ download_bootstrap_files_to_webroot() {
   local count_ok=0
 
   while IFS= read -r raw || [[ -n "$raw" ]]; do
-    # trim
+    # trim + CRLF entfernen
     local line
-    line="$(echo "$raw" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+    line="$(echo "$raw" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
 
     # ignore empty + comments
     if [[ -z "$line" ]] || [[ "$line" == \#* ]]; then
@@ -1198,7 +1202,7 @@ main() {
   # Zusätzliche Windows-/Samba-User (für Gruppenrichtlinien etc.)
   local extra_users_csv=""
   read -r -p "Zusätzliche Windows-/Samba-User anlegen? (Leer=keine, Trennung per Leerzeichen): " extra_users_csv
-  extra_users_csv="$(echo "$extra_users_csv" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+  extra_users_csv="$(echo "$extra_users_csv" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
 
   declare -a EXTRA_USERS_PW=()
   declare -a EXTRA_USERS_MODE=() # "generated"|"manual"
@@ -1365,7 +1369,7 @@ main() {
   if ask_yes_no "Soll ein bestehender Systembenutzer gelöscht werden?" "n"; then
     read -r -p "Benutzername zum Löschen [pi]: " del_user
     del_user="${del_user:-pi}"
-    del_user="$(echo "$del_user" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+    del_user="$(echo "$del_user" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
 
     if [[ -z "$del_user" ]]; then
       warn "Leerer Benutzername – überspringe Löschung."
