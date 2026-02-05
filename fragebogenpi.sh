@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.4
+# Version: 1.5.5
 #
 # =========================
 # Changelog (vollständig)
@@ -167,6 +167,13 @@
 #   * Bugfix User-Löschung: wenn User in Benutzung, wird Löschung auf nächsten Boot verschoben (systemd oneshot)
 #   * Bugfix Bootstrap: tmp_list cleanup trap von EXIT auf RETURN (kein "unbound variable" bei set -u)
 #
+# - 1.5.5 (2026-02-05)
+#   * Bugfix Netzwerk/Internet: nftables.conf wird nicht mehr global "flush ruleset" verwenden
+#       - Stattdessen eigene Tabelle "inet fragebogenpi" mit Regeln nur für wlan0
+#       - LAN (eth0) bleibt vollständig unberührt -> Pi behält Internet-Konnektivität
+#   * Bugfix WLAN-AP Stabilität: hostapd erhält country_code=DE + 802.11d/n (reduziert Assoziations-/Handshake-Probleme)
+#   * sysctl-Anwendung konservativer: keine globale "sysctl --system" mehr (nur die zwei Forwarding-Keys werden gesetzt)
+#
 # =========================
 #
 set -euo pipefail
@@ -222,10 +229,13 @@ DELETE_USER_MARKER="/etc/fragebogenpi/delete_user"
 DELETE_USER_HELPER="/usr/local/sbin/fragebogenpi-delete-user.sh"
 DELETE_USER_SERVICE="/etc/systemd/system/fragebogenpi-delete-user.service"
 
+# WLAN country (hostapd)
+WIFI_COUNTRY="DE"
+
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.4"
+VERSION="1.5.5"
 STEP_NO=0
 
 banner() {
@@ -483,9 +493,10 @@ install_packages_full() {
     python3 \
     curl \
     unattended-upgrades \
-    sudo
+    sudo \
+    iw
 
-  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo)"
+  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw)"
 }
 
 install_packages_webroot_only() {
@@ -803,6 +814,10 @@ setup_ap_hostapd_dnsmasq() {
   cat > "$hostapd_conf" <<EOF
 interface=${AP_INTERFACE}
 driver=nl80211
+country_code=${WIFI_COUNTRY}
+ieee80211d=1
+ieee80211n=1
+
 ssid=${AP_SSID}
 hw_mode=g
 channel=6
@@ -847,12 +862,13 @@ dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
 EOF
   fi
 
-  systemctl enable --now dnsmasq || true
-  systemctl restart dnsmasq || print_service_debug_and_die "dnsmasq.service"
-
+  # Reihenfolge konservativ: erst hostapd, dann dnsmasq (DHCP) – AP muss stabil stehen
   systemctl unmask hostapd >/dev/null 2>&1 || true
   systemctl enable --now hostapd || true
   systemctl restart hostapd || print_service_debug_and_die "hostapd.service"
+
+  systemctl enable --now dnsmasq || true
+  systemctl restart dnsmasq || print_service_debug_and_die "dnsmasq.service"
 
   ok "AP/DHCP aktiv"
 }
@@ -906,11 +922,12 @@ setup_firewall_nftables_wlan_only() {
   local nftconf="/etc/nftables.conf"
   backup_file "$nftconf"
 
+  # 1.5.5: KEIN "flush ruleset" mehr -> vermeidet Nebenwirkungen/Internetverlust.
+  # Wir definieren eine eigene Tabelle mit Base-Chains. Regeln greifen nur auf wlan0.
   cat > "$nftconf" <<EOF
 #!/usr/sbin/nft -f
-flush ruleset
 
-table inet filter {
+table inet fragebogenpi {
   chain input {
     type filter hook input priority 0;
     policy accept;
@@ -925,7 +942,11 @@ table inet filter {
 
   chain forward {
     type filter hook forward priority 0;
-    policy drop;
+    policy accept;
+
+    # Kein Routing zwischen WLAN und anderen Interfaces
+    iif "${AP_INTERFACE}" drop
+    oif "${AP_INTERFACE}" drop
   }
 
   chain output {
@@ -938,11 +959,13 @@ EOF
   systemctl enable --now nftables
   systemctl restart nftables
 
+  # ip_forward aus (kein Routing) – konservativ anwenden (kein sysctl --system)
   cat > /etc/sysctl.d/99-fragebogenpi.conf <<EOF
 net.ipv4.ip_forward=0
 net.ipv6.conf.all.forwarding=0
 EOF
-  sysctl --system >/dev/null
+  sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
+  sysctl -w net.ipv6.conf.all.forwarding=0 >/dev/null 2>&1 || true
 
   ok "WLAN restriktiv (inkl. SSH block), LAN frei, Routing aus"
 }
@@ -1022,7 +1045,7 @@ download_bootstrap_files_to_webroot() {
 
   local tmp_list
   tmp_list="$(mktemp)"
-  # Bugfix 1.5.4: RETURN statt EXIT (tmp_list ist local; bei EXIT wäre es "unbound" mit set -u)
+  # tmp_list ist local -> RETURN statt EXIT (sonst set -u / unbound in manchen Fällen)
   trap 'rm -f "$tmp_list"' RETURN
 
   curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_list" || die "Download fehlgeschlagen: bootstrap"
