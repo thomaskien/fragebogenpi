@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi.de
 # Autor: Thomas Kienzle
 #
-# Version: 1.6.1
+# Version: 1.6.2
 #
 # =========================
 # Changelog (vollständig)
@@ -62,11 +62,14 @@
 #
 # - 1.6.1 (2026-02-05)
 #   * Fix Aussperren: Admin wird NICHT mehr versehentlich zu nologin gemacht
-#   * SSH-safe Ablauf: nftables wird erst NACH der Zugangsdaten-Ausgabe aktiviert
-#     (so bricht eine laufende SSH-Session erst ganz am Ende ab; danach Reboot)
-#   * Abschluss: nach Zugangsdaten-Block zusätzliche Rückfrage: bestehenden Systemuser löschen?
-#     Default "nein", vorgeschlagener Benutzername "pi"
-#   * Am Ende wird ein Reboot durchgeführt
+#   * SSH-safe Ablauf: nftables erst NACH Zugangsdaten-Ausgabe aktivieren; danach Reboot
+#   * Nach Zugangsdaten: Rückfrage "User löschen?" (Default nein, Vorschlag "pi")
+#   * Reboot am Ende
+#
+# - 1.6.2 (2026-02-05)
+#   * Bugfix: Heredoc-Schreibvorgänge robust gemacht (umgeht TTY/stty-Effekte)
+#       - Konfigdateien werden nun via `tee` geschrieben statt `cat > file <<EOF`
+#   * Safety: stty wird beim Exit/Interrupt zuverlässig zurückgesetzt (trap)
 #
 # =========================
 
@@ -89,14 +92,13 @@ AP_NETMASK="255.255.255.0"
 
 WEBROOT="/var/www/html"
 
-# Shares außerhalb des Webroots
 SHARE_BASE="/srv/fragebogenpi"
 SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
 CRED_FILE="${SHARE_PDF}/zugangsdaten_fragebogenpi_bitte_loeschen.txt"
 
-DEFAULT_SAMBA_USER="fragebogenpi"  # Default-User für GDT/PDF (wenn Passwortschutz)
-ADMIN_USER="admin"                 # einziger User, der SSH haben soll
+DEFAULT_SAMBA_USER="fragebogenpi"
+ADMIN_USER="admin"
 
 SSL_DIR="/etc/ssl/fragebogenpi"
 SSL_KEY="${SSL_DIR}/fragebogenpi.key"
@@ -107,19 +109,15 @@ AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
 
 BOOTSTRAP_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/bootstrap"
 
-# PHP Settings (gewünscht)
 PHP_UPLOAD_MAX="25M"
 PHP_POST_MAX="250M"
 PHP_MAX_UPLOADS="30"
 PHP_MAX_EXEC="120"
 PHP_MAX_INPUT="120"
 
-VERSION="1.6.1"
+VERSION="1.6.2"
 STEP_NO=0
 TTY="/dev/tty"
-
-# Merker: in der nächsten Version soll Auto-Update als Paket installiert werden (unattended-upgrades ist bereits Paket)
-# (Info bleibt hier als Kommentar, Implementierung folgt in einem späteren Release.)
 
 # -------------------------
 # Logging / UI
@@ -147,7 +145,7 @@ step() {
 ok() { echo "[OK] $*"; }
 
 # -------------------------
-# TTY Helpers (damit Menüs immer sichtbar sind)
+# TTY Helpers
 # -------------------------
 tty_out()   { printf "%b" "$*" >"$TTY"; }
 tty_outln() { printf "%b\n" "$*" >"$TTY"; }
@@ -166,16 +164,16 @@ tty_read_silent() {
   local __varname="$2"
   local __val=""
   tty_out "$prompt"
-  stty -echo <"$TTY"
-  IFS= read -r __val <"$TTY"
-  stty echo <"$TTY"
+  stty -echo <"$TTY" || true
+  IFS= read -r __val <"$TTY" || true
+  stty echo <"$TTY" || true
   tty_outln ""
   printf -v "$__varname" "%s" "$__val"
 }
 
 ask_yes_no_tty() {
   local prompt="$1"
-  local def="$2"  # y/n
+  local def="$2"
   local ans=""
   while true; do
     if [[ "$def" == "y" ]]; then
@@ -239,6 +237,14 @@ ask_password_mode_tty() {
 }
 
 # -------------------------
+# Trap: stty zurücksetzen
+# -------------------------
+cleanup_tty() {
+  stty echo <"$TTY" >/dev/null 2>&1 || true
+}
+trap cleanup_tty EXIT INT TERM
+
+# -------------------------
 # Helper
 # -------------------------
 require_root() { [[ "${EUID}" -eq 0 ]] || die "Bitte als root ausführen: sudo bash fragebogenpi.sh"; }
@@ -278,10 +284,8 @@ ensure_linux_user_nologin() {
 }
 
 ensure_system_admin_user() {
-  # Admin: SSH + sudo + Shell
   local u="$1"
   local pw="$2"
-
   if id -u "$u" >/dev/null 2>&1; then
     usermod -aG sudo "$u" || true
     usermod -s /bin/bash "$u" || true
@@ -294,9 +298,7 @@ ensure_system_admin_user() {
 
 normalize_relpath() {
   local p="$1"
-  while [[ "$p" == ./* ]]; do
-    p="${p#./}"
-  done
+  while [[ "$p" == ./* ]]; do p="${p#./}"; done
   echo "$p"
 }
 
@@ -307,6 +309,16 @@ sanitize_relpath_or_die() {
   if echo "$p" | grep -Eq '(^|/)\.\.(/|$)'; then
     die "Unsicherer Pfad in Bootstrap-Liste (..): '$p'"
   fi
+}
+
+# Robust schreiben: via tee (umgeht heredoc->cat/TTY-Effekte)
+write_file_tee() {
+  local path="$1"
+  shift
+  mkdir -p "$(dirname "$path")"
+  backup_file "$path"
+  # Inhalt kommt über STDIN, Funktion erwartet bereits eine Heredoc-Weiterleitung beim Aufruf.
+  tee "$path" >/dev/null
 }
 
 # -------------------------
@@ -351,11 +363,9 @@ set_hostname() {
     echo "${HOSTNAME_FQDN}" > /etc/hostname
     hostname "${HOSTNAME_FQDN}" || true
   fi
-
   if ! grep -qE "127\.0\.1\.1\s+${HOSTNAME_FQDN}\b" /etc/hosts; then
     echo "127.0.1.1 ${HOSTNAME_FQDN}" >> /etc/hosts
   fi
-
   systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
   systemctl restart avahi-daemon >/dev/null 2>&1 || true
   ok "Hostname/mDNS konfiguriert"
@@ -386,9 +396,7 @@ setup_webroot_perms() {
 # -------------------------
 setup_samba_base_config() {
   local smbconf="/etc/samba/smb.conf"
-  backup_file "$smbconf"
-
-  cat > "$smbconf" <<EOF
+  write_file_tee "$smbconf" <<EOF
 [global]
    workgroup = WORKGROUP
    server string = ${PROJECT_NAME} samba server
@@ -396,7 +404,6 @@ setup_samba_base_config() {
    map to guest = Bad User
    guest account = nobody
 
-   # SMB nur im LAN anbieten
    interfaces = lo ${LAN_INTERFACE}
    bind interfaces only = yes
 
@@ -507,10 +514,8 @@ set_samba_password() {
 configure_nm_unmanage_wlan0() {
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
     log "NetworkManager erkannt – setze ${AP_INTERFACE} auf unmanaged..."
-    mkdir -p /etc/NetworkManager/conf.d
     local nmconf="/etc/NetworkManager/conf.d/99-fragebogenpi-unmanage-${AP_INTERFACE}.conf"
-    backup_file "$nmconf"
-    cat > "$nmconf" <<EOF
+    write_file_tee "$nmconf" <<EOF
 [keyfile]
 unmanaged-devices=interface-name:${AP_INTERFACE}
 EOF
@@ -523,16 +528,13 @@ EOF
 install_ap_ip_helper() {
   mkdir -p "$(dirname "$AP_IP_HELPER")"
   backup_file "$AP_IP_HELPER"
-
   cat > "$AP_IP_HELPER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 AP_INTERFACE="${AP_INTERFACE}"
 AP_IP="${AP_IP}"
 
-if command -v rfkill >/dev/null 2>&1; then
-  rfkill unblock wifi || true
-fi
+command -v rfkill >/dev/null 2>&1 && rfkill unblock wifi || true
 
 for i in {1..20}; do
   [[ -d "/sys/class/net/\${AP_INTERFACE}" ]] && break
@@ -553,8 +555,7 @@ EOF
 
 install_ap_ip_service() {
   install_ap_ip_helper
-  backup_file "$AP_IP_SERVICE"
-  cat > "$AP_IP_SERVICE" <<EOF
+  write_file_tee "$AP_IP_SERVICE" <<EOF
 [Unit]
 Description=fragebogenpi: set static AP IP on ${AP_INTERFACE}
 After=NetworkManager.service systemd-udev-settle.service
@@ -569,7 +570,6 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-
   systemctl daemon-reload
   systemctl enable --now fragebogenpi-ap-ip.service >/dev/null 2>&1 || true
   systemctl restart fragebogenpi-ap-ip.service >/dev/null 2>&1 || print_service_debug_and_die "fragebogenpi-ap-ip.service"
@@ -611,9 +611,7 @@ setup_ap_hostapd_dnsmasq() {
   step "WLAN Access Point (hostapd) + DHCP (dnsmasq) konfigurieren"
   local wifi_pw="$1"
 
-  local hostapd_conf="/etc/hostapd/hostapd.conf"
-  backup_file "$hostapd_conf"
-  cat > "$hostapd_conf" <<EOF
+  write_file_tee "/etc/hostapd/hostapd.conf" <<EOF
 interface=${AP_INTERFACE}
 driver=nl80211
 ssid=${AP_SSID}
@@ -629,16 +627,13 @@ wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 EOF
 
-  local hostapd_default="/etc/default/hostapd"
-  backup_file "$hostapd_default"
-  sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' "$hostapd_default" || true
+  backup_file "/etc/default/hostapd"
+  sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd || true
 
-  local dnsmasq_conf="/etc/dnsmasq.d/fragebogenpi.conf"
-  backup_file "$dnsmasq_conf"
-
+  local dnsconf="/etc/dnsmasq.d/fragebogenpi.conf"
   if port_in_use 53; then
     warn "Port 53 belegt -> dnsmasq DHCP-only."
-    cat > "$dnsmasq_conf" <<EOF
+    write_file_tee "$dnsconf" <<EOF
 interface=${AP_INTERFACE}
 bind-interfaces
 listen-address=${AP_IP}
@@ -646,7 +641,7 @@ port=0
 dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
 EOF
   else
-    cat > "$dnsmasq_conf" <<EOF
+    write_file_tee "$dnsconf" <<EOF
 interface=${AP_INTERFACE}
 bind-interfaces
 listen-address=${AP_IP}
@@ -704,14 +699,11 @@ setup_https_if_requested() {
 }
 
 # -------------------------
-# Firewall (wird absichtlich erst am Ende aktiviert)
+# Firewall (erst am Ende aktivieren)
 # -------------------------
 write_firewall_config_only() {
   step "Firewall-Konfiguration schreiben (Aktivierung erfolgt erst ganz am Ende)"
-  local nftconf="/etc/nftables.conf"
-  backup_file "$nftconf"
-
-  cat > "$nftconf" <<EOF
+  write_file_tee "/etc/nftables.conf" <<EOF
 #!/usr/sbin/nft -f
 flush ruleset
 
@@ -720,7 +712,6 @@ table inet filter {
     type filter hook input priority 0;
     policy accept;
 
-    # WLAN strikt: nur DHCP/DNS/HTTP/HTTPS
     iif "${AP_INTERFACE}" ct state established,related accept
     iif "${AP_INTERFACE}" tcp dport 22 drop
     iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
@@ -741,7 +732,7 @@ table inet filter {
 }
 EOF
 
-  cat > /etc/sysctl.d/99-fragebogenpi.conf <<EOF
+  write_file_tee "/etc/sysctl.d/99-fragebogenpi.conf" <<EOF
 net.ipv4.ip_forward=0
 net.ipv6.conf.all.forwarding=0
 EOF
@@ -763,9 +754,8 @@ ensure_sshd_normal_listen() {
   if [[ -f "$sshd_conf" ]]; then
     backup_file "$sshd_conf"
     sed -i '/^\s*ListenAddress\s\+/d' "$sshd_conf"
-    # KEIN restart hier: kann laufende SSH-Sessions trennen. Wir rebooten am Ende sowieso.
   fi
-  ok "sshd_config bereinigt (ListenAddress entfernt, Restart/Reboot später)"
+  ok "sshd_config bereinigt (Restart/Reboot später)"
 }
 
 # -------------------------
@@ -780,7 +770,8 @@ configure_php_settings() {
   local ini_name="99-fragebogenpi.ini"
 
   mkdir -p "$apache_conf_dir" "$cli_conf_dir"
-  cat > "${apache_conf_dir}/${ini_name}" <<EOF
+  local path="${apache_conf_dir}/${ini_name}"
+  write_file_tee "$path" <<EOF
 ; ${PROJECT_NAME} custom PHP settings
 upload_max_filesize = ${PHP_UPLOAD_MAX}
 post_max_size = ${PHP_POST_MAX}
@@ -788,16 +779,14 @@ max_file_uploads = ${PHP_MAX_UPLOADS}
 max_execution_time = ${PHP_MAX_EXEC}
 max_input_time = ${PHP_MAX_INPUT}
 EOF
-  cp -a "${apache_conf_dir}/${ini_name}" "${cli_conf_dir}/${ini_name}"
+  cp -a "$path" "${cli_conf_dir}/${ini_name}"
   systemctl reload apache2 >/dev/null 2>&1 || true
   ok "PHP Settings gesetzt"
 }
 
 enable_auto_updates() {
   step "Auto-Update aktivieren (unattended-upgrades)"
-  local auto_conf="/etc/apt/apt.conf.d/20auto-upgrades"
-  backup_file "$auto_conf"
-  cat > "$auto_conf" <<'EOF'
+  write_file_tee "/etc/apt/apt.conf.d/20auto-upgrades" <<'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
@@ -810,7 +799,7 @@ EOF
 
 download_bootstrap_files_to_webroot() {
   step "Webroot Bootstrap: Dateiliste laden und Dateien herunterladen"
-  command -v curl >/dev/null 2>&1 || apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y curl
+  command -v curl >/dev/null 2>&1 || { apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y curl; }
 
   local base_url
   base_url="$(echo "$BOOTSTRAP_URL" | sed 's#^\(.*\)/[^/]*$#\1#')"
@@ -826,18 +815,15 @@ download_bootstrap_files_to_webroot() {
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     local line
     line="$(echo "$raw" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-
     if [[ -z "$line" ]] || [[ "$line" == \#* ]]; then
       count_skip=$((count_skip+1))
       continue
     fi
-
     line="$(normalize_relpath "$line")"
     sanitize_relpath_or_die "$line"
 
     local url="${base_url}/${line}"
     local dst="${WEBROOT}/${line}"
-
     mkdir -p "$(dirname "$dst")"
     log "Download: ${line}"
     curl -fsSL "$url" -o "$dst" || die "Download fehlgeschlagen: ${url}"
@@ -935,9 +921,8 @@ write_credentials_file_if_requested() {
 }
 
 # -------------------------
-# Samba Users loop (Ende)
+# Samba Users loop
 # -------------------------
-# Global: sammelt Textblock zur späteren Ausgabe
 SMB_USERS_BLOCK=""
 
 append_smb_user_line() {
@@ -987,7 +972,7 @@ create_samba_users_loop() {
 }
 
 # -------------------------
-# Delete User prompt (am Ende, nach Zugangsdaten)
+# Delete User prompt
 # -------------------------
 maybe_delete_existing_user() {
   echo
@@ -1004,14 +989,12 @@ maybe_delete_existing_user() {
     warn "root wird nicht gelöscht."
     return 0
   fi
-
   if ! id -u "$u" >/dev/null 2>&1; then
     warn "Benutzer '${u}' existiert nicht."
     return 0
   fi
 
   step "Lösche Benutzer '${u}' (inkl. Home-Verzeichnis)"
-  # Samba-User entfernen (falls vorhanden), dann Systemuser
   smbpasswd -x "$u" >/dev/null 2>&1 || true
   userdel -r "$u" >/dev/null 2>&1 || true
   ok "Benutzer '${u}' gelöscht (soweit möglich)."
@@ -1030,7 +1013,7 @@ main() {
     warn "Interface ${LAN_INTERFACE} nicht gefunden (LAN). Samba bind gilt dann evtl. nicht."
   fi
 
-  # 1) ERSTE Frage: bei bestehender Installation -> Update vs Full
+  # Erste Frage: vorhandene Installation?
   local mode="full"
   if [[ -d "${SHARE_BASE}" ]]; then
     mode="$(ask_choice_existing_install_tty)"
@@ -1053,10 +1036,9 @@ main() {
     exit 0
   fi
 
-  # Vollinstallation: Fragen
   step "Konfiguration abfragen"
 
-  # Admin (SSH + sudo) Passwort: manuell oder generiert
+  # Admin-Passwort
   local admin_pw_mode admin_pw admin_pw_display
   tty_outln ""
   tty_outln "Admin-User '${ADMIN_USER}' (SSH-Login + sudo) wird angelegt."
@@ -1097,7 +1079,7 @@ main() {
     fi
   fi
 
-  # WEBROOT Share als Gast schreibbar?
+  # WEBROOT Share für alle per Samba?
   local webroot_guest="no"
   if ask_yes_no_tty "Soll das Samba-Share WEBROOT für alle (Gast) schreibbar sein? (nicht empfohlen)" "n"; then
     webroot_guest="yes"
@@ -1111,7 +1093,6 @@ main() {
 
   ok "Eingaben übernommen"
 
-  # Setup
   install_packages_full
   set_hostname
   setup_share_dirs
@@ -1119,7 +1100,6 @@ main() {
 
   step "Admin-User anlegen (SSH + sudo)"
   ensure_system_admin_user "${ADMIN_USER}" "${admin_pw}"
-  # Optional: Admin auch als Samba-User aktivieren (für WEBROOT admin-only)
   set_samba_password "${ADMIN_USER}" "${admin_pw}" >/dev/null 2>&1 || true
   append_smb_user_line "${ADMIN_USER}" "${admin_pw_display}"
   ok "Admin '${ADMIN_USER}' angelegt"
@@ -1149,15 +1129,12 @@ main() {
   setup_https_if_requested "$web_mode"
 
   ensure_sshd_normal_listen
-
   configure_php_settings
   download_bootstrap_files_to_webroot
   enable_auto_updates
 
-  # Firewall-Konfig schreiben (aber NICHT aktivieren, damit du bis zur Ausgabe nicht aussperrst)
   write_firewall_config_only
 
-  # zusätzliche Samba-User am Ende
   create_samba_users_loop
   restart_samba
 
@@ -1167,13 +1144,11 @@ main() {
   lan_mac="$(get_iface_mac "${LAN_INTERFACE}")"
   ap_mac="$(get_iface_mac "${AP_INTERFACE}")"
 
-  # Zugangsdaten-Datei (optional) – inkl. SMB-User Block
   write_credentials_file_if_requested \
     "$save_creds" "$web_mode" "$protect_shares" "$wifi_pw" "$default_smb_pw_display" "$admin_pw_display" \
     "$lan_ip" "$lan_mac" "$ap_mac" \
     "$SMB_USERS_BLOCK"
 
-  # Abschlussausgabe (inkl. SMB-User Block)
   step "Abschlussinformationen"
   echo
   echo "==================== ZUGANGSDATEN ===================="
@@ -1203,13 +1178,6 @@ main() {
   echo "  \\\\<LAN-IP-des-Pi>\\GDT      -> ${SHARE_GDT}"
   echo "  \\\\<LAN-IP-des-Pi>\\PDF      -> ${SHARE_PDF}"
   echo "  \\\\<LAN-IP-des-Pi>\\WEBROOT  -> ${WEBROOT}"
-  echo
-  echo "GDT/PDF Zugriff:"
-  if [[ "$protect_shares" == "yes" ]]; then
-    echo "  - Passwortschutz aktiv (Default-User: ${DEFAULT_SAMBA_USER})"
-  else
-    echo "  - anonym (guest), schreibbar"
-  fi
   echo
   echo "WEBROOT Share:"
   if [[ "$webroot_guest" == "yes" ]]; then
@@ -1248,13 +1216,9 @@ main() {
   echo "======================================================"
   echo
 
-  # Nach der Ausgabe: User löschen?
   maybe_delete_existing_user
-
-  # Firewall erst ganz am Ende aktivieren (damit du die Ausgabe sicher siehst)
   activate_firewall_now
 
-  # Am Ende rebooten
   step "Reboot"
   log "System wird jetzt neu gestartet..."
   systemctl reboot
