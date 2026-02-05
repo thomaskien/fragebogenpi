@@ -2,8 +2,8 @@
 declare(strict_types=1);
 
 /*
- * anamnesebogen.php v1.4.4
- * fragebogenpi von Dr. Thomas Kienzle 2026
+ * anamnesebogen.php v1.4.5
+ * fragebogenpi.de von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
  * - v1.0:
@@ -43,22 +43,25 @@ declare(strict_types=1);
  *       * Wenn Request 3000 enthaelt -> Ausgabe NUR 3000 (auch wenn 0193 zusaetzlich vorhanden waere)
  *       * Sonst, wenn Request 0193 enthaelt -> Ausgabe NUR 0193
  * - v1.4.2:
- *   + x.concept Fix zusaetzlich: Wenn 3000 verwendet wird, wird Feld 6200 (ANA1) NICHT geschrieben,
- *     da x.concept diese Kombination offenbar ablehnt. Bei 0193 bleibt 6200/6201 unveraendert.
+ *   + x.concept Fix zusaetzlich: Wenn 3000 verwendet wird, wird Feld 6200 (ANA1) NICHT geschrieben
  * - v1.4.3:
- *   + x.concept/GDT-Server Workaround: Wenn 3000 verwendet wird, wird am DATEIENDE zusaetzlich die Zeile
- *       01380006310  (8000=6310)
- *     geschrieben, weil der Import sonst erst beim naechsten Auftrag anlaeuft (Trigger/Ende-Quirk).
+ *   + x.concept/GDT-Server Workaround: Wenn 3000 verwendet wird, wird am DATEIENDE zusaetzlich 8000=6310 geschrieben
  * - v1.4.4:
  *   + Erweiterter Workaround (3000-Fall): Datei endet nun exakt mit:
  *       01041211
  *       01380006310
  *       01041211
- *     (Satzende, dann nochmal Satzart, dann nochmal Satzende) – entspricht dem von dir verifizierten Import-Trigger.
+ * - v1.4.5:
+ *   + Umlaut-Fix:
+ *       * Request kann Umlaute enthalten: UI-Anzeige transliteriert sauber (z.B. "Moller" -> "Moeller" statt "Mller")
+ *       * Antwort-GDT: Request-Felder (z.B. 3101/3102/3103) werden BYTEGENAU wie in der Auftragsdatei ausgegeben
+ *         (keine ASCII-Only-Umwandlung mehr fuer diese Felder), damit der Import akzeptiert wird.
+ *   + Projektname: fragebogenpi.de
+ *   + Web-App Modus fuer iPad: Meta-Tags/Viewport erweitert (Design sonst unveraendert)
  */
 
-$APP_FOOTER  = 'fragebogenpi von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.4.4 (anamnesebogen.php)';
+$APP_FOOTER  = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
+$APP_VERSION = 'v1.4.5 (anamnesebogen.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -88,10 +91,58 @@ $MAX_6228_BYTES = 70;
 // ----------------- helpers -----------------
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
+function is_valid_utf8(string $s): bool {
+    // preg_match('//u', ...) ist ein gaengiger UTF-8-Check in PHP
+    return $s === '' ? true : (bool)@preg_match('//u', $s);
+}
+
 /**
- * ASCII-Only: Umlaute/Unicode "aufloesen".
- * - spezifisch: ae/oe/ue/ss
- * - danach: alles ausser ASCII druckbar -> '?'
+ * Versucht, Request-Bytes fuer die UI nach UTF-8 zu bringen.
+ * - Wenn bereits UTF-8: unveraendert
+ * - Sonst: best effort (CP437, ISO-8859-1)
+ */
+function req_to_utf8_for_ui(string $raw): string {
+    if ($raw === '') return '';
+    if (is_valid_utf8($raw)) return $raw;
+
+    if (function_exists('iconv')) {
+        foreach (['CP437', 'ISO-8859-1', 'Windows-1252'] as $enc) {
+            $tmp = @iconv($enc, 'UTF-8//IGNORE', $raw);
+            if ($tmp !== false && $tmp !== '') return $tmp;
+        }
+    }
+
+    // fallback: hart als UTF-8 behandeln (kann ? ergeben)
+    return $raw;
+}
+
+/**
+ * Fuer die Anzeige: sauber transliterieren (Moeller, Mueller, etc.).
+ * Wichtig: NUR UI! NICHT fuer die Antwort-GDT.
+ */
+function translit_for_ui(string $raw): string {
+    $s = req_to_utf8_for_ui($raw);
+
+    // explizite deutsche Umlaute zuerst (damit nicht "Mller" entsteht)
+    $map = [
+        'Ä'=>'Ae','Ö'=>'Oe','Ü'=>'Ue','ä'=>'ae','ö'=>'oe','ü'=>'ue','ß'=>'ss',
+        '’'=>"'","´"=>"'","`"=>"'","“"=>'"',"”"=>'"',"„"=>'"',"–"=>'-',"—"=>'-',"…"=>'...',
+    ];
+    $s = strtr($s, $map);
+
+    // danach optional generische Transliteration (Akzente etc.)
+    if (function_exists('iconv')) {
+        $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+        if ($tmp !== false && $tmp !== '') $s = $tmp;
+    }
+
+    // final clamp fuer UI: druckbar halten (aber nicht mehr aggressiv wie frueher)
+    $s = preg_replace('/[^\x20-\x7E]/', '?', $s) ?? $s;
+    return $s;
+}
+
+/**
+ * ASCII-Only fuer Inhalte, die wirklich ASCII sein sollen (YAML/UI Labels / 6228 / etc.).
  */
 function ascii_only(string $s): string {
     $map = [
@@ -125,6 +176,20 @@ function clean_utf8_text(string $s, int $maxLen = 200): string {
         if ($fixed !== false) $s = $fixed;
     }
 
+    return $s;
+}
+
+/**
+ * Request-Werte fuer die Antwort-GDT: BYTEGENAU beibehalten, nur Zeilenumbrueche entfernen.
+ * (Wichtig fuer "exakt wie in der Anforderungsdatei".)
+ */
+function req_value_passthrough(string $s, int $maxLen = 200): string {
+    // CR/LF/TAB raus, sonst kann eine Zeile kaputt gehen
+    $s = str_replace(["\r", "\n", "\t"], ' ', $s);
+    $s = preg_replace('/\s+/', ' ', $s) ?? $s;
+    $s = trim($s);
+    // laengenlimit (bytes) – verhindert Ausreisser
+    if (strlen($s) > $maxLen) $s = substr($s, 0, $maxLen);
     return $s;
 }
 
@@ -167,7 +232,7 @@ function parse_gdt(string $path): array {
         $rest  = substr($line, 3);
         $field = substr($rest, 0, 4);
         $value = substr($rest, 4);
-        $fields[$field] = $value;
+        $fields[$field] = $value; // raw bytes beibehalten
     }
     return $fields;
 }
@@ -466,12 +531,18 @@ $requestPath = rtrim($dirGdt, '/') . '/' . $REQUEST_GDT_NAME;
 $hasRequest  = is_file($requestPath);
 $reqFields   = $hasRequest ? parse_gdt($requestPath) : [];
 
-$vorname  = $reqFields['3102'] ?? '';
-$nachname = $reqFields['3101'] ?? '';
-$gebdat   = format_gebdat($reqFields['3103'] ?? '');
+// RAW (bytegenau) aus Request:
+$vorname_raw  = $reqFields['3102'] ?? '';
+$nachname_raw = $reqFields['3101'] ?? '';
+$gebdat_raw   = $reqFields['3103'] ?? '';
 
-$displayName = trim(trim($vorname . ' ' . $nachname));
-if ($displayName === '') $displayName = '—';
+// UI (transliteriert):
+$vorname_ui  = translit_for_ui($vorname_raw);
+$nachname_ui = translit_for_ui($nachname_raw);
+$gebdat_ui   = format_gebdat(req_to_utf8_for_ui($gebdat_raw)); // UI-formatierung nutzt digits
+
+$displayName_ui = trim(trim($vorname_ui . ' ' . $nachname_ui));
+if ($displayName_ui === '') $displayName_ui = '—';
 
 $reqEmail   = $reqFields['3619'] ?? '';
 $reqPhone1  = $reqFields['3626'] ?? '';
@@ -616,18 +687,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lines[] = gdt_line('0193', $ans0193);
     }
 
+    // Kennfeld
     $lines[] = gdt_line('8402', $kennfeld);
-    if ($nachname !== '') $lines[] = gdt_line('3101', ascii_only($nachname));
-    if ($vorname  !== '') $lines[] = gdt_line('3102', ascii_only($vorname));
-    $raw3103 = $reqFields['3103'] ?? '';
-    if ($raw3103 !== '') $lines[] = gdt_line('3103', $raw3103);
 
+    // Name/Datum: BYTEGENAU wie in der Request-Datei (keine ASCII-Only-Umwandlung!)
+    if ($nachname_raw !== '') $lines[] = gdt_line('3101', req_value_passthrough($nachname_raw, 120));
+    if ($vorname_raw  !== '') $lines[] = gdt_line('3102', req_value_passthrough($vorname_raw, 120));
+    if ($gebdat_raw   !== '') $lines[] = gdt_line('3103', req_value_passthrough($gebdat_raw, 40));
+
+    // IDs / Sender-Empfaenger
     $lines[] = gdt_line('8315', $ans8315);
     $lines[] = gdt_line('8316', $ans8316);
 
+    // optionale Meta aus Request
     if ($req4109 !== '') $lines[] = gdt_line('4109', $req4109);
     if ($req4104 !== '') $lines[] = gdt_line('4104', $req4104);
 
+    // Koerpermasse + Kontakt (ASCII)
     if ($height !== '') $lines[] = gdt_line('3622', $height);
     if ($weight !== '') $lines[] = gdt_line('3623', $weight);
     if ($phone1 !== '') $lines[] = gdt_line('3626', $phone1);
@@ -641,15 +717,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $lines[] = gdt_line('6201', ascii_only($ANSWER_6201));
 
+    // Text
     foreach ($lines6228 as $l) $lines[] = $l;
 
+    // Datum heute kurz vor Satzende
     $lines[] = gdt_line('4109', ymd_today());
 
     // Satzende (normal)
     $lines[] = gdt_line('4121', '1');
 
-    // v1.4.4 Workaround: bei 3000 am ENDE nochmal 8000=6310 und nochmal 4121=1
-    // -> exakt: 01041211 / 01380006310 / 01041211
+    // Workaround: bei 3000 am ENDE nochmal 8000=6310 und nochmal 4121=1
     if ($ans3000 !== '') {
         $lines[] = gdt_line('8000', '6310');
         $lines[] = gdt_line('4121', '1');
@@ -681,7 +758,10 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta http-equiv="refresh" content="3" />
   <title><?php echo h(ascii_only($UI_TITLE)); ?></title>
   <style>
@@ -696,7 +776,7 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
 </head>
 <body>
   <div class="card">
-    <div class="patient"><?php echo h(ascii_only($displayName)); ?></div>
+    <div class="patient"><?php echo h($displayName_ui); ?></div>
     <div class="hint">
       Warte auf Auftrags-GDT im Ordner:<br/>
       <b><?php echo h($dirGdt); ?></b><br/><br/>
@@ -720,9 +800,10 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="<?php echo h(ascii_only($UI_TITLE)); ?>" />
   <title><?php echo h(ascii_only($UI_TITLE)); ?></title>
 
@@ -790,9 +871,9 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 <body>
   <div class="card">
 
-    <div class="patient"><?php echo h(ascii_only($displayName)); ?></div>
+    <div class="patient"><?php echo h($displayName_ui); ?></div>
     <div class="sub">
-      Geburtsdatum: <b><?php echo h(ascii_only($gebdat !== '' ? $gebdat : '—')); ?></b>
+      Geburtsdatum: <b><?php echo h($gebdat_ui !== '' ? $gebdat_ui : '—'); ?></b>
     </div>
 
     <?php if ($yamlError !== '') { ?>
