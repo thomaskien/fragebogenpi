@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>fragebogenpi - Open Source Anamnesebogen für die Praxis</title>
+  <title>fragebogenpi – Open Source Anamnesebogen für die Praxis</title>
 
   <style>
     :root{
@@ -24,6 +24,7 @@
       font-family:var(--sans);
       background:var(--bg);
       color:var(--text);
+      line-height:1.45;
     }
 
     .wrap{
@@ -63,26 +64,33 @@
 
     /* ===== Bildleisten ===== */
 
+    .strip-wrap{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+
     .strip{
       display:flex;
       gap:0;
-      overflow:hidden;
-      border-radius:var(--radius);
+      align-items:flex-start;
       border:1px solid var(--line);
+      border-radius:var(--radius);
       box-shadow:var(--shadow);
-      background:#000;
-      margin-bottom:18px;
+      background:#fff;
+      width:fit-content;   /* nicht auf volle Breite zwingen */
+      max-width:100%;
+      margin-bottom:22px;
     }
 
     .strip img{
-      height:320px;
+      height:400px;        /* bewusst höher für bessere Lesbarkeit */
       width:auto;
-      flex:1 1 auto;
-      object-fit:cover; /* WICHTIG: keine weißen Balken */
+      object-fit:contain;  /* KEIN Beschneiden */
       display:block;
+      background:#fff;
     }
 
-    /* Nur Außenecken runden */
+    /* nur Außenecken */
     .strip img:first-child{
       border-top-left-radius:var(--radius);
       border-bottom-left-radius:var(--radius);
@@ -94,12 +102,12 @@
 
     h1{
       font-size:36px;
-      margin:16px 0 8px 0;
+      margin:18px 0 8px 0;
     }
 
     .subtitle{
       color:var(--muted);
-      margin-bottom:14px;
+      margin-bottom:16px;
     }
 
     .cta a{
@@ -120,6 +128,19 @@
       border-color:var(--accent);
     }
 
+    /* Info-Box (PVS-Kompatibilität) */
+    .infobox{
+      margin:22px 0;
+      padding:16px 18px;
+      background:#eef2ff;
+      border:1px solid #c7d2fe;
+      border-radius:var(--radius);
+      color:#1e3a8a;
+      font-size:15px;
+      box-shadow:0 6px 18px rgba(0,0,0,.08);
+    }
+
+    /* Installation */
     .install{
       margin-top:18px;
       background:#fff;
@@ -141,6 +162,7 @@
       background:#0f172a;
       color:#e5e7eb;
       overflow:auto;
+      font-size:14px;
     }
 
     .req{
@@ -152,7 +174,7 @@
     .req b{ color:var(--text); }
 
     .flow{
-      margin-top:16px;
+      margin-top:18px;
       background:#fff;
       border-radius:var(--radius);
       border:1px solid var(--line);
@@ -183,13 +205,14 @@
   </nav>
 </header>
 
-<!-- OBERE LEISTE: Screenshot | Foto | Foto | Screenshot -->
-<section class="strip">
-  <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="">
-  <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="">
-  <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="">
-  <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="">
-</section>
+<!-- OBERE LEISTE: Screenshot | Foto | Screenshot -->
+<div class="strip-wrap">
+  <section class="strip">
+    <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Selfie aufnehmen">
+    <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Setup iPad und Laptop">
+    <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Befund fotografieren">
+  </section>
+</div>
 
 <h1>fragebogenpi – Open Source Anamnesebogen für die Praxis</h1>
 
@@ -201,6 +224,11 @@
 <div class="cta">
   <a class="primary" href="https://github.com/thomaskien/fragebogenpi">GitHub</a>
   <a href="https://github.com/thomaskien/fragebogenpi#readme">Dokumentation</a>
+</div>
+
+<!-- INFOBOX -->
+<div class="infobox">
+  Läuft mit <b>T2med</b>, <b>x.concept</b> und vermutlich fast allen anderen Praxisverwaltungssystemen (PVS).
 </div>
 
 <section class="install">
@@ -215,7 +243,7 @@ sudo bash install.sh</pre>
       <li><b>Raspberry Pi</b> ab Version 3</li>
       <li>Raspberry Pi OS (Lite empfohlen)</li>
       <li>High-Endurance-SD-Karte</li>
-      <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z. B. iPad 7 refurbished, griffiger Silikonüberzug empfohlen)</li>
+      <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z.B. iPad 7 refurbished, griffiger Silikonüberzug empfohlen)</li>
       <li>optional: Smartphone für Befundfotos</li>
       <li>LAN-Anschluss in der Nähe des Wartebereichs</li>
     </ul>
@@ -231,11 +259,13 @@ sudo bash install.sh</pre>
   </ol>
 </section>
 
-<!-- UNTERE LEISTE -->
-<section class="strip" style="margin-top:20px;">
-  <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="">
-  <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="">
-</section>
+<!-- UNTERE LEISTE: 2 Screenshots, kein Beschnitt -->
+<div class="strip-wrap" style="margin-top:22px;">
+  <section class="strip">
+    <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Anamnesebogen">
+    <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Praxissoftware">
+  </section>
+</div>
 
 <footer>
   <div>© Dr. Thomas Kienzle · Open Source</div>
