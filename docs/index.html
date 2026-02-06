@@ -18,6 +18,7 @@
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
       --shadow: 0 12px 30px rgba(0,0,0,.12);
+      --shadowSoft: 0 10px 22px rgba(0,0,0,.08);
     }
 
     *{ box-sizing:border-box; }
@@ -65,68 +66,61 @@
       text-decoration:none;
       white-space:nowrap;
     }
-
     nav a:hover{ text-decoration:underline; }
 
-    /* SCREENSHOT-REIHEN: nahtlos, unterschiedliche Höhen erlaubt */
-    .shot-row{
+    /* Bildstreifen: gleiche Höhe, vollständig sichtbar, nahtlos */
+    .strip{
       display:flex;
-      align-items:flex-start;      /* unterschiedliche Höhen bleiben sichtbar */
-      gap:0;                       /* kein Abstand */
-      overflow:hidden;             /* saubere Außenkanten */
+      gap:0;
+      overflow:hidden;
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      background: #fff;
+      background:#fff;
       border:1px solid var(--line);
-      margin-bottom:16px;
     }
-
-    .shot-row img{
-      display:block;
-      width:100%;                  /* gleiche Breite pro Spalte */
-      height:auto;                 /* Höhe bleibt proportional (unterschiedlich) */
-      object-fit:contain;
-    }
-
-    /* pro Bild ein Flex-Item, damit die Bilder gleichmäßig verteilt werden */
-    .shot{
+    .strip .cell{
       flex:1 1 0;
       min-width:0;
     }
-
-    /* nur außen abrunden (innen bleibt gerade) */
-    .shot-row .shot:first-child img{
+    .strip img{
+      display:block;
+      width:100%;
+      height:340px;           /* gleiche Höhe für alle */
+      object-fit:contain;     /* vollständig sichtbar, keine Crops */
+      background:#fff;        /* neutraler Rand, falls Seitenverhältnis abweicht */
+    }
+    /* nur Außenecken runden */
+    .strip .cell:first-child img{
       border-top-left-radius: var(--radius);
       border-bottom-left-radius: var(--radius);
     }
-    .shot-row .shot:last-child img{
+    .strip .cell:last-child img{
       border-top-right-radius: var(--radius);
       border-bottom-right-radius: var(--radius);
     }
 
-    /* auf schmalen Screens horizontal scrollen statt zerquetschen */
+    /* Mobile: horizontal scroll, Höhe bleibt gleich */
     @media (max-width: 980px){
-      .shot-row{
+      .strip{
         overflow-x:auto;
         -webkit-overflow-scrolling: touch;
-        border-radius: var(--radius);
       }
-      .shot{
+      .strip .cell{
         flex:0 0 auto;
       }
-      .shot-row img{
+      .strip img{
+        height:300px;
         width:auto;
-        height:320px;              /* mobile: angenehm scrollbarer Streifen */
       }
-      .shot-row .shot:first-child img,
-      .shot-row .shot:last-child img{
+      .strip .cell:first-child img,
+      .strip .cell:last-child img{
         border-radius:0;
       }
     }
 
     h1{
       font-size: clamp(26px, 3.6vw, 40px);
-      margin: 14px 0 10px 0;
+      margin: 16px 0 10px 0;
       letter-spacing:-.5px;
     }
 
@@ -142,7 +136,6 @@
       flex-wrap:wrap;
       margin-bottom: 10px;
     }
-
     .cta a{
       display:inline-block;
       padding:10px 14px;
@@ -154,14 +147,13 @@
       text-decoration:none;
       color:var(--text);
     }
-
     .cta a.primary{
       background:var(--accent);
       color:#fff;
       border-color:var(--accent);
     }
 
-    /* INSTALLATION */
+    /* Installation */
     .install{
       margin-top:18px;
       background:var(--card);
@@ -170,22 +162,16 @@
       border:1px solid var(--line);
       overflow:hidden;
     }
-
     .install .head{
       padding:14px 16px;
       border-bottom:1px solid var(--line);
-      margin:0;
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:10px;
       flex-wrap:wrap;
     }
-
-    .install .head strong{
-      font-weight:800;
-    }
-
+    .install .head strong{ font-weight:800; }
     pre{
       margin:0;
       padding:16px;
@@ -195,50 +181,43 @@
       font-size:14px;
       overflow:auto;
     }
-
     .req{
       padding:14px 16px 16px 16px;
       border-top:1px solid var(--line);
       color:var(--muted);
       font-size:14px;
     }
-
     .req .title{
       font-weight:800;
       color:var(--text);
       margin:0 0 10px 0;
       font-size:14px;
     }
-
-    .req ul{
-      margin:0;
-      padding-left:18px;
-    }
+    .req ul{ margin:0; padding-left:18px; }
     .req li{ margin:6px 0; }
-    .req b{ color:var(--text); } /* nur Raspberry Pi fett */
+    .req b{ color:var(--text); } /* gezielt fett im Text */
 
-    /* FAKTENZEILE */
     .facts{
       margin-top:16px;
       color:var(--muted);
       font-size:14px;
     }
 
-    /* ABLAUF */
     .flow{
       margin-top:14px;
       background:var(--card);
       border-radius:var(--radius);
       padding:16px;
       border:1px solid var(--line);
-      box-shadow: 0 10px 22px rgba(0,0,0,.08);
+      box-shadow: var(--shadowSoft);
     }
     .flow h2{
       margin:0 0 10px 0;
-      font-size:14px;
-      letter-spacing:.2px;
-      text-transform:uppercase;
-      color:var(--muted);
+      font-size:16px;     /* nicht schreien */
+      font-weight:800;
+      color:var(--text);
+      letter-spacing:0;
+      text-transform:none;
     }
     .flow ol{
       margin:0;
@@ -247,6 +226,8 @@
       font-size:14px;
     }
     .flow li{ margin:7px 0; }
+
+    .spacer{ height:18px; }
 
     footer{
       margin-top:24px;
@@ -259,10 +240,7 @@
       padding-top:12px;
       border-top:1px solid var(--line);
     }
-    footer a{
-      color:var(--muted);
-      text-decoration:none;
-    }
+    footer a{ color:var(--muted); text-decoration:none; }
     footer a:hover{ text-decoration:underline; }
   </style>
 </head>
@@ -279,33 +257,19 @@
     </nav>
   </header>
 
-  <!-- Reihe 1: vier Screenshots nahtlos nebeneinander -->
-  <section class="shot-row" aria-label="Screenshots Reihe 1">
-    <div class="shot">
-      <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Befundfoto aufnehmen" />
+  <!-- OBERE 4er-Leiste: Screenshot | Foto | Foto | Screenshot -->
+  <section class="strip" aria-label="Screenshots und Fotos">
+    <div class="cell">
+      <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Screenshot (links)" />
     </div>
-    <div class="shot">
-      <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Selfie / Upload" />
+    <div class="cell">
+      <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Foto (Mitte links)" />
     </div>
-    <div class="shot">
-      <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Anamnesebogen am iPad" />
+    <div class="cell">
+      <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Foto (Mitte rechts)" />
     </div>
-    <div class="shot">
-      <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Import in die Praxissoftware" />
-    </div>
-  </section>
-
-  <!-- Reihe 2: drei Screenshots nahtlos nebeneinander -->
-  <section class="shot-row" aria-label="Screenshots Reihe 2">
-    <div class="shot">
-      <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Anforderungsbildschirm" />
-    </div>
-    <div class="shot">
-      <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Anamnesebogen" />
-    </div>
-    <div class="shot">
-      <!-- Bitte diesen Screenshot genau so benennen und neben index.html ablegen -->
-      <img src="x.concept.png" alt="Import in x.concept" />
+    <div class="cell">
+      <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Screenshot (rechts)" />
     </div>
   </section>
 
@@ -337,7 +301,7 @@ sudo bash install.sh</code></pre>
         <li><b>Raspberry Pi</b> ab Version 3 (Plastikgehäuse empfohlen – wichtig für WLAN-Reichweite)</li>
         <li>Raspberry Pi OS (Lite empfohlen)</li>
         <li>High-Endurance-SD-Karte</li>
-        <li>iPad Anamnesebogen (z.B. iPad 7 refurbished, griffiger Silikonüberzug z.B. JETech empfohlen)</li>
+        <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z.B. iPad 7 refurbished, griffiger Silikonüberzug z.B. JETech empfohlen)</li>
         <li>optional: Smartphone für Befundfotos</li>
         <li>optional: iPhone für Patienten-Selfies</li>
         <li>LAN-Anschluss in der Nähe des Wartebereichs (für stabile WLAN-Abdeckung)</li>
@@ -353,9 +317,22 @@ sudo bash install.sh</code></pre>
     <h2>Ablauf</h2>
     <ol>
       <li>Patientendaten per GDT an FragebogenPi</li>
-      <li>Patient füllt Formulare am iPad aus <span style="color:var(--muted);">(über vom Praxisnetz Abgeschottetem WLAN über den Raspberry Pi)</span></li>
+      <li>Patient füllt Formulare am iPad aus <span style="color:var(--muted);">(über vom Praxisnetz abgeschottetem WLAN über den Raspberry Pi)</span></li>
       <li>Rückschrieb der Daten und Bilder <b>per GDT</b> in die Praxissoftware</li>
     </ol>
+  </section>
+
+  <!-- ZUSÄTZLICHE SCREENSHOT-LEISTE GANZ UNTEN -->
+  <div class="spacer"></div>
+
+  <section class="strip" aria-label="Weitere Screenshots">
+    <div class="cell">
+      <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Anforderungsbildschirm" />
+    </div>
+    <div class="cell">
+      <!-- Platzhalter: Datei später hinzufügen -->
+      <img src="xconcept.png" alt="x.concept (Screenshot folgt)" />
+    </div>
   </section>
 
   <footer>
