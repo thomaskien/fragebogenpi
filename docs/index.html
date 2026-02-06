@@ -68,54 +68,49 @@
     }
     nav a:hover{ text-decoration:underline; }
 
-    /* Bildstreifen: gleiche Höhe, vollständig sichtbar, nahtlos */
+    /* === Bildstreifen: gleiche Höhe, Breite automatisch aus Seitenverhältnis, kein Beschnitt === */
     .strip{
       display:flex;
-      gap:0;
-      overflow:hidden;
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      background:#fff;
+      align-items:flex-start;
+      gap:0;                 /* kein Abstand */
+      overflow:hidden;       /* Außenkanten sauber */
       border:1px solid var(--line);
-    }
-    .strip .cell{
-      flex:1 1 0;
-      min-width:0;
-    }
-    .strip img{
-      display:block;
+      border-radius:var(--radius);
+      background:#fff;
+      box-shadow:var(--shadow);
       width:100%;
-      height:340px;           /* gleiche Höhe für alle */
-      object-fit:contain;     /* vollständig sichtbar, keine Crops */
-      background:#fff;        /* neutraler Rand, falls Seitenverhältnis abweicht */
-    }
-    /* nur Außenecken runden */
-    .strip .cell:first-child img{
-      border-top-left-radius: var(--radius);
-      border-bottom-left-radius: var(--radius);
-    }
-    .strip .cell:last-child img{
-      border-top-right-radius: var(--radius);
-      border-bottom-right-radius: var(--radius);
     }
 
-    /* Mobile: horizontal scroll, Höhe bleibt gleich */
+    .strip img{
+      display:block;
+      height:340px;          /* EINHEITLICHE HÖHE -> Breite wird automatisch berechnet */
+      width:auto;
+      object-fit:contain;    /* nichts wird beschnitten */
+      background:#fff;
+    }
+
+    /* Nur außen abrunden */
+    .strip img:first-child{
+      border-top-left-radius:var(--radius);
+      border-bottom-left-radius:var(--radius);
+    }
+    .strip img:last-child{
+      border-top-right-radius:var(--radius);
+      border-bottom-right-radius:var(--radius);
+    }
+
+    /* Falls die Summe der Breiten zu groß wird: lieber horizontal scrollen als quetschen/abschneiden */
+    .strip-wrap{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      border-radius:var(--radius); /* damit Scrollcontainer hübsch bleibt */
+    }
+    .strip-wrap::-webkit-scrollbar{ height:10px; }
+    .strip-wrap::-webkit-scrollbar-thumb{ background:rgba(0,0,0,.15); border-radius:999px; }
+    .strip-wrap::-webkit-scrollbar-track{ background:transparent; }
+
     @media (max-width: 980px){
-      .strip{
-        overflow-x:auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .strip .cell{
-        flex:0 0 auto;
-      }
-      .strip img{
-        height:300px;
-        width:auto;
-      }
-      .strip .cell:first-child img,
-      .strip .cell:last-child img{
-        border-radius:0;
-      }
+      .strip img{ height:280px; }
     }
 
     h1{
@@ -195,7 +190,7 @@
     }
     .req ul{ margin:0; padding-left:18px; }
     .req li{ margin:6px 0; }
-    .req b{ color:var(--text); } /* gezielt fett im Text */
+    .req b{ color:var(--text); }
 
     .facts{
       margin-top:16px;
@@ -213,11 +208,11 @@
     }
     .flow h2{
       margin:0 0 10px 0;
-      font-size:16px;     /* nicht schreien */
+      font-size:16px;
       font-weight:800;
       color:var(--text);
-      letter-spacing:0;
       text-transform:none;
+      letter-spacing:0;
     }
     .flow ol{
       margin:0;
@@ -257,21 +252,15 @@
     </nav>
   </header>
 
-  <!-- OBERE 4er-Leiste: Screenshot | Foto | Foto | Screenshot -->
-  <section class="strip" aria-label="Screenshots und Fotos">
-    <div class="cell">
-      <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Screenshot (links)" />
-    </div>
-    <div class="cell">
-      <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Foto (Mitte links)" />
-    </div>
-    <div class="cell">
-      <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Foto (Mitte rechts)" />
-    </div>
-    <div class="cell">
-      <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Screenshot (rechts)" />
-    </div>
-  </section>
+  <!-- OBEN: Screenshot | Foto | Foto | Screenshot (gleiche Höhe, keine Crops) -->
+  <div class="strip-wrap" aria-label="Obere Bildreihe (4 Bilder)">
+    <section class="strip">
+      <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Screenshot links" />
+      <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Foto Mitte links" />
+      <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Foto Mitte rechts" />
+      <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Screenshot rechts" />
+    </section>
+  </div>
 
   <h1>fragebogenpi - Open Source Anamnesebogen für die Praxis</h1>
 
@@ -322,18 +311,18 @@ sudo bash install.sh</code></pre>
     </ol>
   </section>
 
-  <!-- ZUSÄTZLICHE SCREENSHOT-LEISTE GANZ UNTEN -->
+  <!-- GANZ UNTEN: Anforderung | Anamnesebogen | x.concept (Platzhalter) -->
   <div class="spacer"></div>
 
-  <section class="strip" aria-label="Weitere Screenshots">
-    <div class="cell">
+  <div class="strip-wrap" aria-label="Untere Bildreihe (3 Bilder)">
+    <section class="strip">
       <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Anforderungsbildschirm" />
-    </div>
-    <div class="cell">
+      <!-- Falls du den unteren Anamnesebogen-Screenshot anders benennst, hier Dateiname anpassen -->
+      <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Anamnesebogen" />
       <!-- Platzhalter: Datei später hinzufügen -->
       <img src="xconcept.png" alt="x.concept (Screenshot folgt)" />
-    </div>
-  </section>
+    </section>
+  </div>
 
   <footer>
     <div>© Dr. Thomas Kienzle · Open Source</div>
