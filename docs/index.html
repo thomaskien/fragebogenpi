@@ -62,40 +62,39 @@
     }
     nav a:hover{ text-decoration:underline; }
 
-    /* ===== Bildleisten (GRID, keine festen Höhen) ===== */
+    /* ===== Bildstreifen: pixelgenau auf Breite skaliert, ohne Beschnitt, ohne Balken ===== */
 
     .strip{
-      display:grid;
+      display:flex;
       gap:0;
+      overflow:hidden;
       border:1px solid var(--line);
       border-radius:var(--radius);
       box-shadow:var(--shadow);
       background:#fff;
-      overflow:hidden;
+      width:100%;
       margin-bottom:22px;
     }
 
-    .strip.top{
-      grid-template-columns:repeat(3, 1fr);
+    .cell{
+      flex:0 0 auto;
+      overflow:hidden;
     }
 
-    .strip.bottom{
-      grid-template-columns:repeat(2, 1fr);
-    }
-
-    .strip img{
-      width:100%;
-      height:auto;       /* Höhe ergibt sich aus Breite */
+    .cell img{
       display:block;
+      width:100%;
+      height:100%;
+      object-fit:contain; /* kein Beschnitt */
       background:#fff;
     }
 
-    /* nur Außenecken */
-    .strip img:first-child{
+    /* nur Außenecken runden */
+    .strip .cell:first-child img{
       border-top-left-radius:var(--radius);
       border-bottom-left-radius:var(--radius);
     }
-    .strip img:last-child{
+    .strip .cell:last-child img{
       border-top-right-radius:var(--radius);
       border-bottom-right-radius:var(--radius);
     }
@@ -187,6 +186,11 @@
       border-top:1px solid var(--line);
       padding-top:12px;
     }
+
+    /* Mobile: wenn extrem schmal, nicht zu hoch werden */
+    @media (max-width: 520px){
+      h1{ font-size:30px; }
+    }
   </style>
 </head>
 
@@ -201,11 +205,18 @@
   </nav>
 </header>
 
-<!-- OBEN: 3 Bilder, volle Breite, keine Balken -->
-<section class="strip top">
-  <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="">
-  <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="">
-  <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="">
+<!-- OBEN: 3 Bilder (Selfie-Screenshot | Foto Setup | Befund-Screenshot) -->
+<section class="strip" id="strip-top"
+  data-minh="320" data-maxh="640">
+  <div class="cell">
+    <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Selfie aufnehmen">
+  </div>
+  <div class="cell">
+    <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Setup iPad und Laptop">
+  </div>
+  <div class="cell">
+    <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Befund fotografieren">
+  </div>
 </section>
 
 <h1>fragebogenpi – Open Source Anamnesebogen für die Praxis</h1>
@@ -252,10 +263,15 @@ sudo bash install.sh</pre>
   </ol>
 </section>
 
-<!-- UNTEN: 2 Bilder, automatische Höhe -->
-<section class="strip bottom">
-  <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="">
-  <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="">
+<!-- UNTEN: 2 Bilder (Anamnesebogen | Praxissoftware Screenshot) -->
+<section class="strip" id="strip-bottom"
+  data-minh="280" data-maxh="560" style="margin-top:22px;">
+  <div class="cell">
+    <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Anamnesebogen">
+  </div>
+  <div class="cell">
+    <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Praxissoftware">
+  </div>
 </section>
 
 <footer>
@@ -264,5 +280,76 @@ sudo bash install.sh</pre>
 </footer>
 
 </div>
+
+<script>
+(function(){
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  async function layoutStrip(strip){
+    const imgs = Array.from(strip.querySelectorAll('img'));
+    if (!imgs.length) return;
+
+    // Ensure images are loaded to get natural sizes
+    await Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise(res => {
+        img.addEventListener('load', res, {once:true});
+        img.addEventListener('error', res, {once:true}); // fail-soft
+      });
+    }));
+
+    const W = strip.clientWidth;
+    const minH = parseInt(strip.dataset.minh || "0", 10);
+    const maxH = parseInt(strip.dataset.maxh || "10000", 10);
+
+    // Aspect ratios
+    const ratios = imgs.map(img => {
+      const nw = img.naturalWidth || 1;
+      const nh = img.naturalHeight || 1;
+      return nw / nh;
+    });
+
+    const sumR = ratios.reduce((a,b) => a+b, 0);
+
+    // Ideal height so that sum(widths)=W
+    let H = W / sumR;
+    H = clamp(H, minH, maxH);
+
+    // If clamped, widths won't sum to W anymore. We still distribute exactly to fill W:
+    // widths = ratios * H, then scale factor so sum==W.
+    const rawWidths = ratios.map(r => r * H);
+    const sumRaw = rawWidths.reduce((a,b)=>a+b, 0) || 1;
+    const scale = W / sumRaw;
+
+    const finalWidths = rawWidths.map(w => Math.floor(w * scale));
+    // Fix rounding on last item
+    const used = finalWidths.slice(0, -1).reduce((a,b)=>a+b, 0);
+    finalWidths[finalWidths.length - 1] = Math.max(1, W - used);
+
+    strip.style.height = Math.round(H * scale) + "px";
+
+    const cells = Array.from(strip.querySelectorAll('.cell'));
+    cells.forEach((cell, i) => {
+      cell.style.width = finalWidths[i] + "px";
+      cell.style.height = "100%";
+    });
+  }
+
+  function layoutAll(){
+    const top = document.getElementById('strip-top');
+    const bottom = document.getElementById('strip-bottom');
+    if (top) layoutStrip(top);
+    if (bottom) layoutStrip(bottom);
+  }
+
+  window.addEventListener('resize', () => {
+    // debounce-ish
+    clearTimeout(window.__fpResizeT);
+    window.__fpResizeT = setTimeout(layoutAll, 80);
+  });
+
+  layoutAll();
+})();
+</script>
 </body>
 </html>
