@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>fragebogenpi - Open Source Anamnesebogen für die Praxis</title>
-  <meta name="description" content="fragebogenpi - Open Source Anamnesebogen für die Praxis. Lokale Patientenaufnahme auf dem Raspberry Pi mit GDT-Import und Rückschrieb per GDT in die Praxissoftware. Vollständig offline, vollständig isoliert." />
 
   <style>
     :root{
@@ -15,10 +14,8 @@
       --line:#e2e8f0;
       --accent:#2563eb;
       --radius:16px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
       --shadow: 0 12px 30px rgba(0,0,0,.12);
-      --shadowSoft: 0 10px 22px rgba(0,0,0,.08);
     }
 
     *{ box-sizing:border-box; }
@@ -27,26 +24,23 @@
       font-family:var(--sans);
       background:var(--bg);
       color:var(--text);
-      line-height:1.45;
     }
 
     .wrap{
-      width:min(1200px, calc(100% - 32px));
-      margin: 28px auto 60px auto;
+      max-width:1200px;
+      margin:24px auto 60px auto;
+      padding:0 16px;
     }
 
     header{
       display:flex;
       justify-content:space-between;
       align-items:center;
-      margin-bottom:16px;
-      gap:12px;
-      flex-wrap:wrap;
+      margin-bottom:14px;
     }
 
     .brand{
       font-weight:800;
-      letter-spacing:.2px;
       display:flex;
       align-items:center;
       gap:10px;
@@ -60,36 +54,35 @@
     }
 
     nav a{
-      margin-left:10px;
+      margin-left:12px;
       font-size:14px;
       color:var(--muted);
       text-decoration:none;
-      white-space:nowrap;
     }
     nav a:hover{ text-decoration:underline; }
 
-    /* === Bildstreifen: gleiche Höhe, Breite automatisch aus Seitenverhältnis, kein Beschnitt === */
+    /* ===== Bildleisten ===== */
+
     .strip{
       display:flex;
-      align-items:flex-start;
-      gap:0;                 /* kein Abstand */
-      overflow:hidden;       /* Außenkanten sauber */
-      border:1px solid var(--line);
+      gap:0;
+      overflow:hidden;
       border-radius:var(--radius);
-      background:#fff;
+      border:1px solid var(--line);
       box-shadow:var(--shadow);
-      width:100%;
+      background:#000;
+      margin-bottom:18px;
     }
 
     .strip img{
-      display:block;
-      height:340px;          /* EINHEITLICHE HÖHE -> Breite wird automatisch berechnet */
+      height:320px;
       width:auto;
-      object-fit:contain;    /* nichts wird beschnitten */
-      background:#fff;
+      flex:1 1 auto;
+      object-fit:cover; /* WICHTIG: keine weißen Balken */
+      display:block;
     }
 
-    /* Nur außen abrunden */
+    /* Nur Außenecken runden */
     .strip img:first-child{
       border-top-left-radius:var(--radius);
       border-bottom-left-radius:var(--radius);
@@ -99,235 +92,155 @@
       border-bottom-right-radius:var(--radius);
     }
 
-    /* Falls die Summe der Breiten zu groß wird: lieber horizontal scrollen als quetschen/abschneiden */
-    .strip-wrap{
-      overflow-x:auto;
-      -webkit-overflow-scrolling:touch;
-      border-radius:var(--radius); /* damit Scrollcontainer hübsch bleibt */
-    }
-    .strip-wrap::-webkit-scrollbar{ height:10px; }
-    .strip-wrap::-webkit-scrollbar-thumb{ background:rgba(0,0,0,.15); border-radius:999px; }
-    .strip-wrap::-webkit-scrollbar-track{ background:transparent; }
-
-    @media (max-width: 980px){
-      .strip img{ height:280px; }
-    }
-
     h1{
-      font-size: clamp(26px, 3.6vw, 40px);
-      margin: 16px 0 10px 0;
-      letter-spacing:-.5px;
+      font-size:36px;
+      margin:16px 0 8px 0;
     }
 
     .subtitle{
       color:var(--muted);
-      font-size:16px;
-      margin: 0 0 14px 0;
+      margin-bottom:14px;
     }
 
-    .cta{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-      margin-bottom: 10px;
-    }
     .cta a{
       display:inline-block;
       padding:10px 14px;
       border-radius:10px;
       border:1px solid var(--line);
-      background:#fff;
-      font-weight:600;
-      font-size:14px;
       text-decoration:none;
+      font-weight:600;
+      margin-right:8px;
       color:var(--text);
+      background:#fff;
     }
+
     .cta a.primary{
       background:var(--accent);
       color:#fff;
       border-color:var(--accent);
     }
 
-    /* Installation */
     .install{
       margin-top:18px;
-      background:var(--card);
+      background:#fff;
       border-radius:var(--radius);
-      box-shadow:var(--shadow);
       border:1px solid var(--line);
+      box-shadow:var(--shadow);
       overflow:hidden;
     }
-    .install .head{
+
+    .install header{
       padding:14px 16px;
       border-bottom:1px solid var(--line);
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      flex-wrap:wrap;
+      font-weight:800;
     }
-    .install .head strong{ font-weight:800; }
+
     pre{
       margin:0;
       padding:16px;
       background:#0f172a;
       color:#e5e7eb;
-      font-family:var(--mono);
-      font-size:14px;
       overflow:auto;
     }
+
     .req{
-      padding:14px 16px 16px 16px;
-      border-top:1px solid var(--line);
+      padding:16px;
+      font-size:14px;
       color:var(--muted);
-      font-size:14px;
     }
-    .req .title{
-      font-weight:800;
-      color:var(--text);
-      margin:0 0 10px 0;
-      font-size:14px;
-    }
-    .req ul{ margin:0; padding-left:18px; }
-    .req li{ margin:6px 0; }
+
     .req b{ color:var(--text); }
 
-    .facts{
-      margin-top:16px;
-      color:var(--muted);
-      font-size:14px;
-    }
-
     .flow{
-      margin-top:14px;
-      background:var(--card);
+      margin-top:16px;
+      background:#fff;
       border-radius:var(--radius);
-      padding:16px;
       border:1px solid var(--line);
-      box-shadow: var(--shadowSoft);
+      box-shadow:var(--shadow);
+      padding:16px;
     }
-    .flow h2{
-      margin:0 0 10px 0;
-      font-size:16px;
-      font-weight:800;
-      color:var(--text);
-      text-transform:none;
-      letter-spacing:0;
-    }
-    .flow ol{
-      margin:0;
-      padding-left:18px;
-      color:var(--muted);
-      font-size:14px;
-    }
-    .flow li{ margin:7px 0; }
-
-    .spacer{ height:18px; }
 
     footer{
-      margin-top:24px;
+      margin-top:28px;
       font-size:13px;
       color:var(--muted);
       display:flex;
       justify-content:space-between;
-      flex-wrap:wrap;
-      gap:10px;
-      padding-top:12px;
       border-top:1px solid var(--line);
+      padding-top:12px;
     }
-    footer a{ color:var(--muted); text-decoration:none; }
-    footer a:hover{ text-decoration:underline; }
   </style>
 </head>
 
 <body>
 <div class="wrap">
 
-  <header>
-    <div class="brand"><span class="dot"></span>fragebogenpi</div>
-    <nav>
-      <a href="https://github.com/thomaskien/fragebogenpi" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/thomaskien/fragebogenpi#readme" target="_blank" rel="noopener">README</a>
-      <a href="/impressum/">Impressum</a>
-    </nav>
-  </header>
+<header>
+  <div class="brand"><span class="dot"></span>fragebogenpi</div>
+  <nav>
+    <a href="https://github.com/thomaskien/fragebogenpi">GitHub</a>
+    <a href="/impressum/">Impressum</a>
+  </nav>
+</header>
 
-  <!-- OBEN: Screenshot | Foto | Foto | Screenshot (gleiche Höhe, keine Crops) -->
-  <div class="strip-wrap" aria-label="Obere Bildreihe (4 Bilder)">
-    <section class="strip">
-      <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="Screenshot links" />
-      <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Foto Mitte links" />
-      <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Foto Mitte rechts" />
-      <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Screenshot rechts" />
-    </section>
-  </div>
+<!-- OBERE LEISTE: Screenshot | Foto | Foto | Screenshot -->
+<section class="strip">
+  <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="">
+  <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="">
+  <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="">
+  <img src="63AEDA82-2CF4-4479-AC56-3F036F6D4F68.png" alt="">
+</section>
 
-  <h1>fragebogenpi - Open Source Anamnesebogen für die Praxis</h1>
+<h1>fragebogenpi – Open Source Anamnesebogen für die Praxis</h1>
 
-  <p class="subtitle">
-    Anamnesebögen, Patientenfotos und Befundbilder mit GDT-Import und Rückschrieb in die <b>Praxissoftware</b>.<br>
-    <b>Vollständig offline.</b> <b>Vollständig isoliert.</b> <b>Open Source.</b>
-  </p>
+<p class="subtitle">
+  Anamnesebögen, Patientenfotos und Befundbilder mit GDT-Import und Rückschrieb in die <b>Praxissoftware</b>.<br>
+  <b>Vollständig offline.</b> <b>Vollständig isoliert.</b> <b>Open Source.</b>
+</p>
 
-  <div class="cta">
-    <a class="primary" href="https://github.com/thomaskien/fragebogenpi" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://github.com/thomaskien/fragebogenpi#readme" target="_blank" rel="noopener">Dokumentation</a>
-  </div>
+<div class="cta">
+  <a class="primary" href="https://github.com/thomaskien/fragebogenpi">GitHub</a>
+  <a href="https://github.com/thomaskien/fragebogenpi#readme">Dokumentation</a>
+</div>
 
-  <section class="install" aria-label="Installation">
-    <div class="head">
-      <strong>▶ Installation</strong>
-      <span style="color:var(--muted); font-size:13px;">kurze URL, Wrapper auf GitHub</span>
-    </div>
-
-    <pre><code>wget https://fragebogenpi.de/install.sh
+<section class="install">
+  <header>▶ Installation</header>
+  <pre>wget https://fragebogenpi.de/install.sh
 chmod +x install.sh
-sudo bash install.sh</code></pre>
+sudo bash install.sh</pre>
 
-    <div class="req">
-      <div class="title">Man benötigt</div>
-      <ul>
-        <li><b>Raspberry Pi</b> ab Version 3 (Plastikgehäuse empfohlen – wichtig für WLAN-Reichweite)</li>
-        <li>Raspberry Pi OS (Lite empfohlen)</li>
-        <li>High-Endurance-SD-Karte</li>
-        <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z.B. iPad 7 refurbished, griffiger Silikonüberzug z.B. JETech empfohlen)</li>
-        <li>optional: Smartphone für Befundfotos</li>
-        <li>optional: iPhone für Patienten-Selfies</li>
-        <li>LAN-Anschluss in der Nähe des Wartebereichs (für stabile WLAN-Abdeckung)</li>
-      </ul>
-    </div>
-  </section>
-
-  <div class="facts">
-    <b>GDT-Import & Rückschrieb</b> · Anamnesebögen · Befundfotos · Patienten-Selfie · vollständig offline · vollständig isoliert · Raspberry Pi · Open Source
+  <div class="req">
+    <b>Man benötigt</b>
+    <ul>
+      <li><b>Raspberry Pi</b> ab Version 3</li>
+      <li>Raspberry Pi OS (Lite empfohlen)</li>
+      <li>High-Endurance-SD-Karte</li>
+      <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z. B. iPad 7 refurbished, griffiger Silikonüberzug empfohlen)</li>
+      <li>optional: Smartphone für Befundfotos</li>
+      <li>LAN-Anschluss in der Nähe des Wartebereichs</li>
+    </ul>
   </div>
+</section>
 
-  <section class="flow" aria-label="Ablauf">
-    <h2>Ablauf</h2>
-    <ol>
-      <li>Patientendaten per GDT an FragebogenPi</li>
-      <li>Patient füllt Formulare am iPad aus <span style="color:var(--muted);">(über vom Praxisnetz abgeschottetem WLAN über den Raspberry Pi)</span></li>
-      <li>Rückschrieb der Daten und Bilder <b>per GDT</b> in die Praxissoftware</li>
-    </ol>
-  </section>
+<section class="flow">
+  <h2>Ablauf</h2>
+  <ol>
+    <li>Patientendaten per GDT an fragebogenpi</li>
+    <li>Patient füllt Formulare am iPad aus (über vom Praxisnetz abgeschottetes WLAN über den Raspberry Pi)</li>
+    <li>Rückschrieb der Daten und Bilder <b>per GDT</b> in die Praxissoftware</li>
+  </ol>
+</section>
 
-  <!-- GANZ UNTEN: Anforderung | Anamnesebogen | x.concept (Platzhalter) -->
-  <div class="spacer"></div>
+<!-- UNTERE LEISTE -->
+<section class="strip" style="margin-top:20px;">
+  <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="">
+  <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="">
+</section>
 
-  <div class="strip-wrap" aria-label="Untere Bildreihe (3 Bilder)">
-    <section class="strip">
-      <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Anforderungsbildschirm" />
-      <!-- Falls du den unteren Anamnesebogen-Screenshot anders benennst, hier Dateiname anpassen -->
-      <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Anamnesebogen" />
-      <!-- Platzhalter: Datei später hinzufügen -->
-      <img src="xconcept.png" alt="x.concept (Screenshot folgt)" />
-    </section>
-  </div>
-
-  <footer>
-    <div>© Dr. Thomas Kienzle · Open Source</div>
-    <div><a href="/impressum/">Impressum</a></div>
-  </footer>
+<footer>
+  <div>© Dr. Thomas Kienzle · Open Source</div>
+  <div><a href="/impressum/">Impressum</a></div>
+</footer>
 
 </div>
 </body>
