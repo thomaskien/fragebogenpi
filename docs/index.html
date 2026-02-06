@@ -1,1 +1,434 @@
 
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FragebogenPi – lokale Patientenaufnahme auf dem Raspberry Pi</title>
+  <meta name="description" content="FragebogenPi ist ein Installations- und System-Setup für einen Raspberry Pi als vollständig isolierter, vollständig offline betriebener Fragebogen- und Datenerfassungs-Server mit GDT-Import & Rückschrieb." />
+
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --card:#101823;
+      --card2:#0f1620;
+      --text:#e9eef5;
+      --muted:#a9b6c7;
+      --line:rgba(255,255,255,.10);
+      --accent:#4ea1ff;
+      --accent2:#58d28c;
+      --danger:#ff5b5b;
+      --shadow: 0 18px 60px rgba(0,0,0,.45);
+      --shadow2: 0 10px 30px rgba(0,0,0,.35);
+      --radius:18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background: radial-gradient(1200px 600px at 50% -150px, rgba(78,161,255,.18), transparent 60%),
+                  radial-gradient(900px 500px at 85% 0%, rgba(88,210,140,.10), transparent 55%),
+                  var(--bg);
+      color:var(--text);
+      line-height:1.45;
+    }
+
+    a{ color:inherit; text-decoration:none; }
+    .wrap{
+      width:min(1100px, calc(100% - 32px));
+      margin: 28px auto 70px auto;
+    }
+
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom:18px;
+    }
+
+    .brand{
+      display:flex; align-items:center; gap:10px;
+      font-weight:700;
+      letter-spacing:.2px;
+    }
+    .dot{
+      width:10px; height:10px; border-radius:999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 0 6px rgba(78,161,255,.10);
+    }
+    .toplinks{
+      display:flex; gap:10px; flex-wrap:wrap;
+      font-size:14px;
+      color:var(--muted);
+    }
+    .toplinks a{ padding:8px 10px; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.02); }
+    .toplinks a:hover{ border-color:rgba(255,255,255,.22); }
+
+    /* HERO IMAGES */
+    .hero-images{
+      display:grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap:12px;
+      margin: 14px 0 18px 0;
+    }
+    .hero-images figure{
+      margin:0;
+      border-radius:16px;
+      overflow:hidden;
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--line);
+      box-shadow: var(--shadow2);
+    }
+    .hero-images img{
+      width:100%;
+      height:340px;
+      object-fit:cover;
+      display:block;
+      transform: scale(1.01);
+    }
+
+    /* HERO TEXT */
+    .hero{
+      display:grid;
+      grid-template-columns: 1.3fr .7fr;
+      gap:18px;
+      align-items:start;
+      margin-top: 10px;
+    }
+    .hero h1{
+      margin:0 0 10px 0;
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing:-.6px;
+      line-height:1.08;
+    }
+    .hero p{
+      margin:0;
+      color:var(--muted);
+      font-size: 16px;
+    }
+    .hero .tags{
+      margin-top: 12px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      color: var(--muted);
+      font-size:13px;
+    }
+    .pill{
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      padding:6px 10px;
+      border-radius:999px;
+      white-space:nowrap;
+    }
+    .cta{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+      padding-top: 4px;
+    }
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:11px 14px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      font-weight:600;
+      font-size:14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.22);
+    }
+    .btn:hover{ border-color:rgba(255,255,255,.22); }
+    .btn.primary{
+      border-color: rgba(78,161,255,.35);
+      background: linear-gradient(135deg, rgba(78,161,255,.22), rgba(78,161,255,.06));
+    }
+    .btn.secondary{
+      border-color: rgba(88,210,140,.28);
+      background: linear-gradient(135deg, rgba(88,210,140,.18), rgba(88,210,140,.05));
+    }
+
+    /* INSTALL BLOCK */
+    .install{
+      margin-top: 18px;
+      border-radius: var(--radius);
+      border:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .install .head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:14px 16px;
+      border-bottom:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .install .head .title{
+      font-weight:800;
+      letter-spacing:.2px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .install .head .title small{
+      color:var(--muted);
+      font-weight:600;
+    }
+    .copyrow{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .copybtn{
+      cursor:pointer;
+      user-select:none;
+      font-weight:700;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      padding:9px 12px;
+      border-radius:12px;
+      font-size:13px;
+    }
+    .copybtn:hover{ border-color:rgba(255,255,255,.22); }
+    .copyhint{
+      color:var(--muted);
+      font-size:13px;
+    }
+    pre{
+      margin:0;
+      padding:16px;
+      font-family:var(--mono);
+      font-size:14px;
+      line-height:1.45;
+      overflow:auto;
+      background: rgba(8,12,18,.45);
+    }
+    code{ font-family:var(--mono); }
+    .req{
+      padding: 14px 16px 16px 16px;
+      border-top:1px solid var(--line);
+      background: rgba(255,255,255,.02);
+    }
+    .req h2{
+      margin:0 0 10px 0;
+      font-size:14px;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+      color:var(--muted);
+    }
+    .req ul{
+      margin:0;
+      padding-left:18px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .req li{ margin:6px 0; }
+    .req strong{ color:var(--text); }
+
+    /* FACT LINE + FLOW */
+    .facts{
+      margin-top: 18px;
+      padding: 14px 16px;
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.02);
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .facts b{ color:var(--text); }
+
+    .flow{
+      margin-top: 14px;
+      padding: 16px;
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.02);
+    }
+    .flow h2{
+      margin:0 0 10px 0;
+      font-size:14px;
+      letter-spacing:.2px;
+      text-transform:uppercase;
+      color:var(--muted);
+    }
+    .flow ol{
+      margin:0;
+      padding-left:18px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .flow li{ margin:7px 0; }
+
+    footer{
+      margin-top: 22px;
+      color: var(--muted);
+      font-size:13px;
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    footer a{
+      color: var(--muted);
+      text-decoration: none;
+      border-bottom:1px dotted rgba(255,255,255,.18);
+    }
+    footer a:hover{ color: var(--text); border-bottom-color:rgba(255,255,255,.32); }
+
+    /* RESPONSIVE */
+    @media (max-width: 980px){
+      .hero{ grid-template-columns: 1fr; }
+      .cta{ justify-content:flex-start; }
+      .hero-images img{ height: 300px; }
+    }
+    @media (max-width: 760px){
+      .hero-images{ grid-template-columns: 1fr; }
+      .hero-images img{ height: 320px; }
+      .wrap{ width: min(1100px, calc(100% - 24px)); }
+      header{ margin-bottom: 10px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <span class="dot"></span>
+        <span>fragebogenpi</span>
+      </div>
+      <nav class="toplinks" aria-label="Links">
+        <a href="https://github.com/thomaskien/fragebogenpi" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/thomaskien/fragebogenpi/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/thomaskien/fragebogenpi#readme" target="_blank" rel="noopener">README</a>
+        <a href="/install/" title="Installationshinweise">/install</a>
+      </nav>
+    </header>
+
+    <!-- HERO IMAGES (bitte die 3 Dateien mit genau diesen Namen hier neben index.html ablegen) -->
+    <section class="hero-images" aria-label="Screenshots">
+      <figure>
+        <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Selfie aufnehmen & hochladen" />
+      </figure>
+      <figure>
+        <img src="187CE7FC-BF4F-4EE8-ACA8-C42979A119BA_1_105_c.jpeg" alt="Anamnesebogen am iPad" />
+      </figure>
+      <figure>
+        <img src="46586AE7-03E0-4BF6-9D5B-00F0DB15B60F_1_105_c.jpeg" alt="Rückschrieb / Anzeige in der Praxesoftware" />
+      </figure>
+    </section>
+
+    <section class="hero" aria-label="Einführung">
+      <div>
+        <h1>FragebogenPi – lokale Patientenaufnahme auf dem Raspberry Pi.</h1>
+        <p>
+          Anamnesebögen, Patientenfotos und Befundbilder mit <b>GDT-Import</b> und <b>Rückschrieb</b> in die Praxesoftware (z.&nbsp;B. T2med).
+          <br />
+          <b>Vollständig offline.</b> <b>Vollständig isoliert.</b> <b>Open Source.</b>
+        </p>
+
+        <div class="tags" aria-label="Fakten">
+          <span class="pill">GDT</span>
+          <span class="pill">Anamnese</span>
+          <span class="pill">Patientenfoto</span>
+          <span class="pill">Befundfotos</span>
+          <span class="pill">Offline</span>
+          <span class="pill">Isoliertes WLAN</span>
+        </div>
+      </div>
+
+      <div class="cta" aria-label="Aktionen">
+        <a class="btn primary" href="https://github.com/thomaskien/fragebogenpi" target="_blank" rel="noopener">GitHub Repository</a>
+        <a class="btn secondary" href="https://github.com/thomaskien/fragebogenpi#readme" target="_blank" rel="noopener">Dokumentation</a>
+      </div>
+    </section>
+
+    <!-- INSTALL: PROMINENT DIREKT UNTER DEN BILDERN -->
+    <section class="install" aria-label="Installation">
+      <div class="head">
+        <div class="title">
+          ▶ Installation
+          <small>in 3 Zeilen</small>
+        </div>
+        <div class="copyrow">
+          <button class="copybtn" id="copyBtn" type="button">Befehl kopieren</button>
+          <span class="copyhint" id="copyHint">Tipp: Script vorher ansehen (GitHub).</span>
+        </div>
+      </div>
+
+      <pre><code id="installCmd">wget https://fragebogenpi.de/install.sh
+chmod +x install.sh
+sudo bash install.sh</code></pre>
+
+      <div class="req">
+        <h2>Benötigt</h2>
+        <ul>
+          <li>Raspberry Pi ab Version 3 (<strong>Plastikgehäuse empfohlen – wichtig für WLAN-Reichweite</strong>)</li>
+          <li>Raspberry Pi OS (Lite empfohlen)</li>
+          <li>High-Endurance-SD-Karte</li>
+          <li>iPad für die Anamnesebögen</li>
+          <li>optional: Smartphone für Befundfotos</li>
+          <li>optional: iPhone für Patienten-Selfies</li>
+          <li>LAN-Anschluss <strong>in der Nähe des Wartebereichs</strong> (für stabile WLAN-Abdeckung)</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="facts" aria-label="Faktenzeile">
+      <b>GDT-Import & Rückschrieb</b> · Anamnesebögen · Befundfotos · Patienten-Selfie · vollständig offline · vollständig isoliert · Raspberry-Pi-Appliance · Open Source
+    </div>
+
+    <section class="flow" aria-label="Ablauf">
+      <h2>Ablauf</h2>
+      <ol>
+        <li>Patientendaten werden per GDT an FragebogenPi übertragen</li>
+        <li>Patient füllt Formulare am iPad aus</li>
+        <li>Rückschrieb der Daten und Bilder ins Praxisverwaltungssystem</li>
+      </ol>
+    </section>
+
+    <footer>
+      <div>
+        <a href="https://github.com/thomaskien/fragebogenpi" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="https://github.com/thomaskien/fragebogenpi/releases" target="_blank" rel="noopener">Releases</a> ·
+        <a href="https://github.com/thomaskien/fragebogenpi/issues" target="_blank" rel="noopener">Issues</a>
+      </div>
+      <div>fragebogenpi.de · Open Source · lokal & isoliert</div>
+    </footer>
+  </div>
+
+  <script>
+    (function(){
+      const btn = document.getElementById('copyBtn');
+      const hint = document.getElementById('copyHint');
+      const text = document.getElementById('installCmd').textContent;
+
+      btn.addEventListener('click', async () => {
+        try{
+          await navigator.clipboard.writeText(text);
+          hint.textContent = 'Kopiert ✓';
+          setTimeout(() => hint.textContent = 'Tipp: Script vorher ansehen (GitHub).', 1800);
+        }catch(e){
+          hint.textContent = 'Kopieren nicht möglich – bitte manuell markieren.';
+          setTimeout(() => hint.textContent = 'Tipp: Script vorher ansehen (GitHub).', 2200);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
