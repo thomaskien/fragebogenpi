@@ -9,5 +9,6 @@ echo
 echo "Lade Installationsskript…"
 echo
 
-curl -fsSL "$REAL_INSTALLER_URL" | bash
-
+wget "$REAL_INSTALLER_URL" 
+chomd +x fragebogenpi.sh
+./fragebogenpi.sh
