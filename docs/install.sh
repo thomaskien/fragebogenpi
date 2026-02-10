@@ -10,5 +10,5 @@ echo "Lade Installationsskript…"
 echo
 
 wget "$REAL_INSTALLER_URL" 
-chomd +x fragebogenpi.sh
+chmod +x fragebogenpi.sh
 ./fragebogenpi.sh
