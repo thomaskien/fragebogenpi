@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.2.2
+# Version 2.2.3
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -21,23 +21,25 @@
 #        * Hilfsmittel: Label ergaenzt; "Inkontinenzhilfsmittel" ergaenzt
 #        * Psychisch/Neurodivers: "Autismus-Spektrum" ergaenzt
 #        * Urogenital: "Transsexualitaet" ergaenzt
-#        * Rauchen/Alkohol/Drogen: Optionen erweitert, "frueher" + Jahre-Konsum-Felder
-#        * Drogen: Feld "Frueherer Konsum" entfernt; Substanzen umbenannt + "Steroide/Anabolika"
-#        * Sucht: zusaetzliche Frage "Nikotin"
+#        * Rauchen: Raucher von yes/no auf choice (ja/nein/ex-raucher) umgestellt;
+#          Rauchpausen-Felder umbenannt ("Wie oft aufgehoert?", "Wie lange maximal bisher?")
+#        * Alkohol: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum"
+#        * Drogen: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum";
+#          Feld "Frueherer Konsum (nicht mehr aktuell)" entfernt; Substanzfeld umbenannt und um "Steroide / Anabolika" ergaenzt
+#        * Sucht: zusaetzliche Frage "Nikotin" ergaenzt
 # - 2.2: Weitere inhaltliche Anpassungen:
 #        * "Nikotin" entfernt; stattdessen "Rauchen" als Checklist-Item im Abschnitt Sucht
 #        * Rauchen: "Seit wie vielen Jahren" -> "Anzahl Jahre gesamt"
-#        * Operationen: Untertitel geaendert zu
-#          "auch Details zu oben & weitere Infos (Art, Jahr)"
+#        * Operationen: Untertitel geaendert zu "auch Details zu oben & weitere Infos (Art, Jahr)"
 #        * Blutverduenner: strukturierte Zusatzabfrage (Praeparat, Komplikation, Grund, Ziel-INR bei Marcumar)
 # - 2.2.1: Korrektur unbeabsichtigter Aenderungen:
-#        * Zaehne: "Angst vor Zahnarzt" Felder wiederhergestellt (waren versehentlich entfernt)
+#        * Zaehne: "Angst vor Zahnarzt" Felder wiederhergestellt
 #        * Hilfsmittel: Felder "Hilfsmittel ausreichend" + "Weitere Angaben zu Hilfsmitteln" wiederhergestellt
 # - 2.2.2: Blutverduenner-Fix + Drogen-Labels:
-#        * Blutverduenner: Aufklapp-Logik vereinfacht: Praeparat/Grund/Komplikation/Details erscheinen bei Blutverduenner=ja
-#          (keine Abhaengigkeit mehr von Multiselect-Auswertung; Ziel-INR als Freitext im Detailfeld)
-#        * Drogen: drogenkonsum Label -> "Substanzen (z. B. Drogen, Anabolika)"
-#        * Drogen: drogen Label -> "Substanzen"
+#        * Blutverduenner: Ziel-INR in freiem Detailfeld; Drogen-Labels angepasst
+# - 2.2.3: Finaler Fix Blutverduenner-Aufklappen + Sicherstellung Jahre-Konsum:
+#        * Blutverduenner: Triggerfeld von checklist -> yesno (wie Rauchen-Logik), damit show_if equals:"yes" sicher greift
+#        * Drogen: Feld "Anzahl Jahre Konsum (Drogen)" explizit enthalten (show_if equals: frueher)
 #
 # Hinweis:
 # - Format meta + sections
@@ -46,7 +48,7 @@
 
 meta:
   title: "Anamnese"
-  version: "2.2.2"
+  version: "2.2.3"
   language: "de"
 
 sections:
@@ -221,10 +223,14 @@ sections:
 
 
   - title: "Blut / Gerinnung"
-    type: checklist
     questions:
-      - { id: gerinnungsstoerung, label: "Blutgerinnungsstoerung" }
-      - { id: blutverduenner, label: "Ich nehme einen Blutverduenner" }
+      - id: gerinnungsstoerung
+        label: "Blutgerinnungsstoerung"
+        type: yesno
+
+      - id: blutverduenner
+        label: "Ich nehme einen Blutverduenner"
+        type: yesno
 
       - id: blutverduenner_praeparat
         label: "Praeparat"
