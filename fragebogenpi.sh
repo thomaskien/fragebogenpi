@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.6
+# Version: 1.5.7
 #
 # =========================
 # Changelog (vollständig)
@@ -182,6 +182,13 @@
 #   * Minimal-Install "Nur User hinzufügen" erweitert:
 #       - installiert samba-common-bin (pdbedit), um Updates/Reparaturen zuverlässig zu machen
 #
+# - 1.5.7 (2026-02-11)
+#   * Fix Passwort-Handling (Samba):
+#       - ask_password_twice() schreibt Prompts/Zeilenumbrüche jetzt ausschließlich auf stderr
+#         und gibt NUR das Passwort auf stdout aus (verhindert eingefangene Newlines in $(...))
+#       - Nach jedem smbpasswd wird ein Login-Test via smbclient gegen localhost durchgeführt
+#         (früher konnten falsche Passwörter unbemerkt gesetzt werden)
+#
 # =========================
 #
 set -euo pipefail
@@ -243,7 +250,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.6"
+VERSION="1.5.7"
 STEP_NO=0
 
 banner() {
@@ -346,18 +353,19 @@ ask_choice_existing_install() {
   done
 }
 
+# Wichtig: Diese Funktion darf NUR das Passwort auf stdout ausgeben.
+# Alle Prompts/Zeilenumbrüche/Fehltexte -> stderr, sonst landen Newlines in pw="$(...)".
 ask_password_twice() {
   local prompt="$1"
   local p1="" p2=""
 
   while true; do
-    # Prompt + Newline ausschließlich auf stderr, damit stdout "clean" bleibt
     read -r -s -p "${prompt}: " p1 >&2
     printf '\n' >&2
     read -r -s -p "${prompt} (Wiederholung): " p2 >&2
     printf '\n' >&2
 
-    # CR entfernen (falls jemand über serielle Konsole/CRLF irgendwas reinträgt)
+    # CR entfernen (z.B. serielle Konsole / CRLF)
     p1="${p1%$'\r'}"
     p2="${p2%$'\r'}"
 
@@ -369,7 +377,6 @@ ask_password_twice() {
     echo "Passwörter stimmen nicht überein. Bitte erneut." >&2
   done
 }
-
 
 get_iface_ipv4() {
   local iface="$1"
@@ -489,6 +496,22 @@ EOF
   systemctl enable fragebogenpi-delete-user.service >/dev/null 2>&1 || true
 }
 
+ensure_samba_running_for_test() {
+  # konservativ: nur starten, wenn systemctl existiert; Fehler ignorieren (Test entscheidet)
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl start smbd >/dev/null 2>&1 || true
+  fi
+}
+
+samba_login_test() {
+  local u="$1" pw="$2"
+  ensure_command smbclient smbclient
+  ensure_samba_running_for_test
+
+  # Auth-Test: Share-Liste auf localhost anfordern
+  smbclient -L 127.0.0.1 -U "${u}%${pw}" -m SMB3 >/dev/null 2>&1
+}
+
 # Samba helpers (existence / robust set)
 samba_user_exists() {
   local u="$1"
@@ -498,14 +521,19 @@ samba_user_exists() {
 set_samba_password_add_or_update() {
   local u="$1"
   local pw="$2"
+
   if samba_user_exists "$u"; then
-    # Update existing samba user
     printf '%s\n' "$pw" "$pw" | smbpasswd -s "$u"
   else
-    # Add new samba user
     printf '%s\n' "$pw" "$pw" | smbpasswd -a -s "$u"
   fi
+
   smbpasswd -e "$u" >/dev/null 2>&1 || true
+
+  # Pflicht: Login-Test direkt nach dem Setzen
+  if ! samba_login_test "$u" "$pw"; then
+    die "Samba-Login-Test fehlgeschlagen für User '${u}'. Passwort wurde vermutlich nicht korrekt gesetzt."
+  fi
 }
 
 # Globals for extra users (needed for output/cred file)
@@ -520,8 +548,8 @@ manage_users_interactive() {
 
   ensure_command smbpasswd samba
   ensure_command pdbedit samba-common-bin
+  ensure_command smbclient smbclient
 
-  # Reset globals
   EXTRA_USERS_LIST=()
   EXTRA_USERS_PW=()
   EXTRA_USERS_MODE=()
@@ -530,6 +558,7 @@ manage_users_interactive() {
   echo "  - Username eingeben (leer = fertig)"
   echo "  - Danach Passwort eingeben oder generieren"
   echo "  - Existiert der User bereits in Samba, wird das Passwort sicher aktualisiert (Reparatur)"
+  echo "  - Nach dem Setzen erfolgt ein Login-Test (smbclient gegen localhost)"
   echo
 
   while true; do
@@ -545,7 +574,6 @@ manage_users_interactive() {
       continue
     fi
 
-    # Linux-User sicherstellen (Samba-Konten sind lokal angebunden)
     ensure_linux_user "$u" "/usr/sbin/nologin"
 
     local choice=""
@@ -569,7 +597,7 @@ manage_users_interactive() {
 
     log "Setze Samba-Passwort für '${u}' (neu oder Update) ..."
     set_samba_password_add_or_update "$u" "$pw"
-    ok "User '${u}' gesetzt/aktualisiert (Samba enabled)"
+    ok "User '${u}' gesetzt/aktualisiert (Samba enabled + Login-Test OK)"
 
     EXTRA_USERS_LIST+=("$u")
     EXTRA_USERS_PW+=("$pw")
@@ -593,7 +621,7 @@ install_packages_full() {
   log "Installiere benötigte Pakete..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apache2 php libapache2-mod-php php-gd php-yaml \
-    samba samba-common-bin \
+    samba samba-common-bin smbclient \
     hostapd dnsmasq \
     nftables \
     acl openssl \
@@ -604,7 +632,7 @@ install_packages_full() {
     sudo \
     iw
 
-  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw, samba-common-bin)"
+  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw, samba-common-bin, smbclient)"
 }
 
 install_packages_webroot_only() {
@@ -617,8 +645,8 @@ install_packages_webroot_only() {
 install_packages_users_only() {
   step "Minimal: Tools für User-Setup sicherstellen"
   apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y samba samba-common-bin
-  ok "samba + samba-common-bin ist verfügbar (smbpasswd/pdbedit)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y samba samba-common-bin smbclient
+  ok "samba + samba-common-bin + smbclient ist verfügbar (smbpasswd/pdbedit/smbclient)"
 }
 
 set_hostname() {
@@ -1388,13 +1416,10 @@ main() {
 
   ok "Eingaben übernommen"
 
-  # Pakete jetzt installieren (Samba-Tools werden für User-Dialog benötigt)
   install_packages_full
 
-  # Extra-User interaktiv (einzeln, reparierbar)
   manage_users_interactive "Zusätzliche Windows-/Samba-User (optional)"
 
-  # Userliste für valid users (GDT/PDF), nur wenn Shares geschützt sind
   local extra_users_space=""
   if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
     extra_users_space="${EXTRA_USERS_LIST[*]}"
@@ -1406,6 +1431,7 @@ main() {
 
   setup_samba "$protect_shares" "$samba_pw" "$admin_pw" "$extra_users_space"
 
+  configure_nm_unmanage_wlan0
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
   setup_https_if_requested "$web_mode"
