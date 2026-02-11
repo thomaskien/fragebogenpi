@@ -4,7 +4,7 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.5
+# Version: 1.5.6
 #
 # =========================
 # Changelog (vollständig)
@@ -174,6 +174,14 @@
 #   * Bugfix WLAN-AP Stabilität: hostapd erhält country_code=DE + 802.11d/n (reduziert Assoziations-/Handshake-Probleme)
 #   * sysctl-Anwendung konservativer: keine globale "sysctl --system" mehr (nur die zwei Forwarding-Keys werden gesetzt)
 #
+# - 1.5.6 (2026-02-11)
+#   * Samba-User-Handling umgestellt (robust & reparierbar):
+#       - Zusätzliche Windows-/Samba-User werden jetzt interaktiv EINZELN angelegt (Username → Passwort eingeben/generieren)
+#       - Bestehende Samba-User können über denselben Weg repariert werden (Passwort wird sicher neu gesetzt + User enabled)
+#       - Intern: Existenzprüfung via pdbedit; bei vorhandenem User wird smbpasswd ohne -a verwendet (Update statt Add)
+#   * Minimal-Install "Nur User hinzufügen" erweitert:
+#       - installiert samba-common-bin (pdbedit), um Updates/Reparaturen zuverlässig zu machen
+#
 # =========================
 #
 set -euo pipefail
@@ -235,7 +243,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.5"
+VERSION="1.5.6"
 STEP_NO=0
 
 banner() {
@@ -326,7 +334,7 @@ ask_choice_existing_install() {
   echo "Was soll ich tun?" >&2
   echo "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)" >&2
   echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)" >&2
-  echo "  3) Nur User hinzufügen (legt nur zusätzliche Windows-/Samba-User an; sonst keine Änderungen)" >&2
+  echo "  3) Nur User hinzufügen (legt/aktualisiert zusätzliche Windows-/Samba-User; sonst keine Änderungen)" >&2
   while true; do
     read -r -p "Auswahl [1/2/3]: " answer
     case "$answer" in
@@ -473,6 +481,98 @@ EOF
   systemctl enable fragebogenpi-delete-user.service >/dev/null 2>&1 || true
 }
 
+# Samba helpers (existence / robust set)
+samba_user_exists() {
+  local u="$1"
+  pdbedit -L 2>/dev/null | awk -F: '{print $1}' | grep -qx "$u"
+}
+
+set_samba_password_add_or_update() {
+  local u="$1"
+  local pw="$2"
+  if samba_user_exists "$u"; then
+    # Update existing samba user
+    printf '%s\n' "$pw" "$pw" | smbpasswd -s "$u"
+  else
+    # Add new samba user
+    printf '%s\n' "$pw" "$pw" | smbpasswd -a -s "$u"
+  fi
+  smbpasswd -e "$u" >/dev/null 2>&1 || true
+}
+
+# Globals for extra users (needed for output/cred file)
+declare -a EXTRA_USERS_LIST=()
+declare -a EXTRA_USERS_PW=()
+declare -a EXTRA_USERS_MODE=()
+
+manage_users_interactive() {
+  local headline="$1"
+
+  step "${headline}"
+
+  ensure_command smbpasswd samba
+  ensure_command pdbedit samba-common-bin
+
+  # Reset globals
+  EXTRA_USERS_LIST=()
+  EXTRA_USERS_PW=()
+  EXTRA_USERS_MODE=()
+
+  echo "User einzeln anlegen/aktualisieren:"
+  echo "  - Username eingeben (leer = fertig)"
+  echo "  - Danach Passwort eingeben oder generieren"
+  echo "  - Existiert der User bereits in Samba, wird das Passwort sicher aktualisiert (Reparatur)"
+  echo
+
+  while true; do
+    local u=""
+    read -r -p "Username (leer = fertig): " u
+    u="$(echo "$u" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+
+    [[ -n "$u" ]] || break
+
+    if [[ "$u" == "root" ]]; then
+      echo "root ist nicht erlaubt."
+      echo
+      continue
+    fi
+
+    # Linux-User sicherstellen (Samba-Konten sind lokal angebunden)
+    ensure_linux_user "$u" "/usr/sbin/nologin"
+
+    local choice=""
+    while true; do
+      read -r -p "User '${u}': Passwort eingeben (1) oder generieren (2)? [2]: " choice
+      choice="${choice:-2}"
+      case "$choice" in
+        1|2) break ;;
+        *) echo "Bitte 1 oder 2 eingeben." ;;
+      esac
+    done
+
+    local pw="" mode=""
+    if [[ "$choice" == "1" ]]; then
+      pw="$(ask_password_twice "Passwort für '${u}'")"
+      mode="manual"
+    else
+      pw="$(rand_pw)"
+      mode="generated"
+    fi
+
+    log "Setze Samba-Passwort für '${u}' (neu oder Update) ..."
+    set_samba_password_add_or_update "$u" "$pw"
+    ok "User '${u}' gesetzt/aktualisiert (Samba enabled)"
+
+    EXTRA_USERS_LIST+=("$u")
+    EXTRA_USERS_PW+=("$pw")
+    EXTRA_USERS_MODE+=("$mode")
+
+    echo
+  done
+
+  ok "User-Eingabe abgeschlossen"
+}
+
 # -------------------------
 # Installation
 # -------------------------
@@ -485,7 +585,7 @@ install_packages_full() {
   log "Installiere benötigte Pakete..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apache2 php libapache2-mod-php php-gd php-yaml \
-    samba \
+    samba samba-common-bin \
     hostapd dnsmasq \
     nftables \
     acl openssl \
@@ -496,7 +596,7 @@ install_packages_full() {
     sudo \
     iw
 
-  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw)"
+  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw, samba-common-bin)"
 }
 
 install_packages_webroot_only() {
@@ -509,8 +609,8 @@ install_packages_webroot_only() {
 install_packages_users_only() {
   step "Minimal: Tools für User-Setup sicherstellen"
   apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y samba
-  ok "samba ist verfügbar (smbpasswd)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y samba samba-common-bin
+  ok "samba + samba-common-bin ist verfügbar (smbpasswd/pdbedit)"
 }
 
 set_hostname() {
@@ -564,7 +664,7 @@ setup_samba() {
   local use_auth="$1"          # "yes"|"no"
   local samba_pw="$2"          # wenn use_auth=yes
   local admin_pw="$3"          # immer
-  local extra_users_csv="$4"   # optional, space-separated
+  local extra_users_space="$4" # space-separated usernames (optional)
 
   log "Konfiguriere Samba..."
 
@@ -598,8 +698,8 @@ EOF
   local valid_users_gdtpdf=""
   if [[ "$use_auth" == "yes" ]]; then
     valid_users_gdtpdf="${SAMBA_USER}"
-    if [[ -n "${extra_users_csv// }" ]]; then
-      valid_users_gdtpdf="${valid_users_gdtpdf} ${extra_users_csv}"
+    if [[ -n "${extra_users_space// }" ]]; then
+      valid_users_gdtpdf="${valid_users_gdtpdf} ${extra_users_space}"
     fi
   fi
 
@@ -646,8 +746,7 @@ EOF
 
     log "Lege Benutzer '${SAMBA_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
     ensure_linux_user "${SAMBA_USER}" "/usr/sbin/nologin"
-    printf '%s\n' "${samba_pw}" "${samba_pw}" | smbpasswd -a -s "${SAMBA_USER}"
-    smbpasswd -e "${SAMBA_USER}" >/dev/null 2>&1 || true
+    set_samba_password_add_or_update "${SAMBA_USER}" "${samba_pw}"
   fi
 
   cat >> "$smbconf" <<EOF
@@ -670,8 +769,7 @@ EOF
   fi
 
   echo "${ADMIN_USER}:${admin_pw}" | chpasswd
-  printf '%s\n' "${admin_pw}" "${admin_pw}" | smbpasswd -a -s "${ADMIN_USER}"
-  smbpasswd -e "${ADMIN_USER}" >/dev/null 2>&1 || true
+  set_samba_password_add_or_update "${ADMIN_USER}" "${admin_pw}"
 
   systemctl enable --now smbd nmbd || true
   systemctl restart smbd nmbd || true
@@ -862,7 +960,6 @@ dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
 EOF
   fi
 
-  # Reihenfolge konservativ: erst hostapd, dann dnsmasq (DHCP) – AP muss stabil stehen
   systemctl unmask hostapd >/dev/null 2>&1 || true
   systemctl enable --now hostapd || true
   systemctl restart hostapd || print_service_debug_and_die "hostapd.service"
@@ -922,8 +1019,6 @@ setup_firewall_nftables_wlan_only() {
   local nftconf="/etc/nftables.conf"
   backup_file "$nftconf"
 
-  # 1.5.5: KEIN "flush ruleset" mehr -> vermeidet Nebenwirkungen/Internetverlust.
-  # Wir definieren eine eigene Tabelle mit Base-Chains. Regeln greifen nur auf wlan0.
   cat > "$nftconf" <<EOF
 #!/usr/sbin/nft -f
 
@@ -959,7 +1054,6 @@ EOF
   systemctl enable --now nftables
   systemctl restart nftables
 
-  # ip_forward aus (kein Routing) – konservativ anwenden (kein sysctl --system)
   cat > /etc/sysctl.d/99-fragebogenpi.conf <<EOF
 net.ipv4.ip_forward=0
 net.ipv6.conf.all.forwarding=0
@@ -1045,7 +1139,6 @@ download_bootstrap_files_to_webroot() {
 
   local tmp_list
   tmp_list="$(mktemp)"
-  # tmp_list ist local -> RETURN statt EXIT (sonst set -u / unbound in manchen Fällen)
   trap 'rm -f "$tmp_list"' RETURN
 
   curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_list" || die "Download fehlgeschlagen: bootstrap"
@@ -1082,35 +1175,6 @@ download_bootstrap_files_to_webroot() {
   ok "Bootstrap abgeschlossen: ${count_ok} Datei(en) geladen (Kommentare/leer: ${count_skipped})"
 }
 
-create_additional_samba_users() {
-  local users_csv="$1"
-  local -n pw_arr="$2"
-  local -n mode_arr="$3"
-
-  [[ -n "${users_csv// }" ]] || return 0
-
-  step "Zusätzliche Windows-/Samba-User anlegen"
-
-  ensure_command smbpasswd samba
-
-  local i=0
-  for u in $users_csv; do
-    if [[ -z "$u" ]] || [[ "$u" == "root" ]]; then
-      die "Ungültiger Username in Zusatzliste: '$u'"
-    fi
-
-    log "Lege Benutzer '${u}' an (Linux + Samba)..."
-    ensure_linux_user "$u" "/usr/sbin/nologin"
-
-    local pw="${pw_arr[$i]}"
-    printf '%s\n' "${pw}" "${pw}" | smbpasswd -a -s "${u}"
-    smbpasswd -e "${u}" >/dev/null 2>&1 || true
-
-    ok "User '${u}' angelegt/aktiviert (Samba)"
-    i=$((i+1))
-  done
-}
-
 write_credentials_file_if_requested() {
   local want="$1"
   local web_mode="$2"
@@ -1121,9 +1185,6 @@ write_credentials_file_if_requested() {
   local lan_ip="$7"
   local lan_mac="$8"
   local ap_mac="$9"
-  local extra_users_csv="${10}"
-  local -n extra_pw_arr="${11}"
-  local -n extra_mode_arr="${12}"
 
   if [[ "$want" != "yes" ]]; then
     log "Zugangsdaten-Datei: nicht gewünscht – überspringe."
@@ -1182,12 +1243,12 @@ write_credentials_file_if_requested() {
     echo "Admin (WEBROOT/SSH/sudo): ${ADMIN_USER}"
     echo "Admin Passwort (generiert):  ${admin_pw}"
     echo
-    if [[ -n "${extra_users_csv// }" ]]; then
+    if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
       echo "== Zusätzliche Windows-/Samba-User =="
       local idx=0
-      for u in $extra_users_csv; do
-        if [[ "${extra_mode_arr[$idx]}" == "generated" ]]; then
-          echo "- ${u}: Passwort (generiert) = ${extra_pw_arr[$idx]}"
+      for u in "${EXTRA_USERS_LIST[@]}"; do
+        if [[ "${EXTRA_USERS_MODE[$idx]}" == "generated" ]]; then
+          echo "- ${u}: Passwort (generiert) = ${EXTRA_USERS_PW[$idx]}"
         else
           echo "- ${u}: Passwort (manuell gesetzt, nicht angezeigt)"
         fi
@@ -1244,68 +1305,25 @@ main() {
   fi
 
   # ------------------------------------------------------
-  # Modus 3: Nur User hinzufügen
+  # Modus 3: Nur User hinzufügen / reparieren
   # ------------------------------------------------------
   if [[ "$mode" == "users" ]]; then
-    step "Modus: Nur User hinzufügen"
-    log "Es werden NUR zusätzliche Windows-/Samba-User angelegt."
-    log "Netzwerk/Samba-Config/Firewall/AP/Webroot/PHP/Passwörter bleiben unverändert."
+    step "Modus: Nur User hinzufügen / reparieren"
+    log "Es werden NUR zusätzliche Windows-/Samba-User angelegt/aktualisiert."
+    log "Netzwerk/Samba-Config/Firewall/AP/Webroot/PHP/sonstiges bleibt unverändert."
 
     install_packages_users_only
-
-    local extra_users_csv=""
-    read -r -p "Zusätzliche Windows-/Samba-User anlegen? (Leer=keine, Trennung per Leerzeichen): " extra_users_csv
-    extra_users_csv="$(echo "$extra_users_csv" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-
-    declare -a EXTRA_USERS_PW=()
-    declare -a EXTRA_USERS_MODE=()
-
-    if [[ -n "${extra_users_csv// }" ]]; then
-      for u in $extra_users_csv; do
-        if [[ -z "$u" ]] || [[ "$u" == "root" ]]; then
-          die "Ungültiger Username: '$u'"
-        fi
-
-        local choice=""
-        while true; do
-          read -r -p "User '${u}': Passwort eingeben (1) oder generieren (2)? [2]: " choice
-          choice="${choice:-2}"
-          case "$choice" in
-            1)
-              EXTRA_USERS_PW+=("$(ask_password_twice "Passwort für '${u}'")")
-              EXTRA_USERS_MODE+=("manual")
-              break
-              ;;
-            2)
-              EXTRA_USERS_PW+=("$(rand_pw)")
-              EXTRA_USERS_MODE+=("generated")
-              break
-              ;;
-            *)
-              echo "Bitte 1 oder 2 eingeben."
-              ;;
-          esac
-        done
-      done
-    fi
-
-    ok "Eingaben übernommen"
-
-    if [[ -n "${extra_users_csv// }" ]]; then
-      create_additional_samba_users "$extra_users_csv" EXTRA_USERS_PW EXTRA_USERS_MODE
-    else
-      ok "Keine User angegeben – nichts zu tun."
-    fi
+    manage_users_interactive "Zusätzliche Windows-/Samba-User (nur User-Modus)"
 
     step "Abschluss (nur User)"
     echo
-    echo "Zusätzliche User wurden angelegt."
+    echo "Zusätzliche User wurden angelegt/aktualisiert."
     echo "Hinweis: Eingegebene Passwörter werden nicht ausgegeben."
-    if [[ -n "${extra_users_csv// }" ]]; then
+    if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
       echo
       echo "Generierte Passwörter:"
       local idx=0
-      for u in $extra_users_csv; do
+      for u in "${EXTRA_USERS_LIST[@]}"; do
         if [[ "${EXTRA_USERS_MODE[$idx]}" == "generated" ]]; then
           echo "  - ${u}: ${EXTRA_USERS_PW[$idx]}"
         fi
@@ -1360,54 +1378,25 @@ main() {
     save_creds="yes"
   fi
 
-  local extra_users_csv=""
-  read -r -p "Zusätzliche Windows-/Samba-User anlegen? (Leer=keine, Trennung per Leerzeichen): " extra_users_csv
-  extra_users_csv="$(echo "$extra_users_csv" | sed -e 's/\r$//' -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-
-  declare -a EXTRA_USERS_PW=()
-  declare -a EXTRA_USERS_MODE=()
-
-  if [[ -n "${extra_users_csv// }" ]]; then
-    for u in $extra_users_csv; do
-      if [[ -z "$u" ]] || [[ "$u" == "root" ]]; then
-        die "Ungültiger Username: '$u'"
-      fi
-
-      local choice=""
-      while true; do
-        read -r -p "User '${u}': Passwort eingeben (1) oder generieren (2)? [2]: " choice
-        choice="${choice:-2}"
-        case "$choice" in
-          1)
-            EXTRA_USERS_PW+=("$(ask_password_twice "Passwort für '${u}'")")
-            EXTRA_USERS_MODE+=("manual")
-            break
-            ;;
-          2)
-            EXTRA_USERS_PW+=("$(rand_pw)")
-            EXTRA_USERS_MODE+=("generated")
-            break
-            ;;
-          *)
-            echo "Bitte 1 oder 2 eingeben."
-            ;;
-        esac
-      done
-    done
-  fi
-
   ok "Eingaben übernommen"
 
+  # Pakete jetzt installieren (Samba-Tools werden für User-Dialog benötigt)
   install_packages_full
+
+  # Extra-User interaktiv (einzeln, reparierbar)
+  manage_users_interactive "Zusätzliche Windows-/Samba-User (optional)"
+
+  # Userliste für valid users (GDT/PDF), nur wenn Shares geschützt sind
+  local extra_users_space=""
+  if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
+    extra_users_space="${EXTRA_USERS_LIST[*]}"
+  fi
+
   set_hostname
   setup_share_dirs
   setup_webroot_perms
 
-  setup_samba "$protect_shares" "$samba_pw" "$admin_pw" "$extra_users_csv"
-
-  if [[ -n "${extra_users_csv// }" ]]; then
-    create_additional_samba_users "$extra_users_csv" EXTRA_USERS_PW EXTRA_USERS_MODE
-  fi
+  setup_samba "$protect_shares" "$samba_pw" "$admin_pw" "$extra_users_space"
 
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
@@ -1427,8 +1416,7 @@ main() {
 
   write_credentials_file_if_requested \
     "$save_creds" "$web_mode" "$protect_shares" "$wifi_pw" "$samba_pw" "$admin_pw" \
-    "$lan_ip" "$lan_mac" "$ap_mac" \
-    "$extra_users_csv" EXTRA_USERS_PW EXTRA_USERS_MODE
+    "$lan_ip" "$lan_mac" "$ap_mac"
 
   step "Abschlussinformationen"
   log "Fertig."
@@ -1462,6 +1450,9 @@ main() {
   if [[ "$protect_shares" == "yes" ]]; then
     echo "Samba User (GDT/PDF):   ${SAMBA_USER}"
     echo "Samba Passwort:         ${samba_pw}"
+    if [[ -n "${extra_users_space// }" ]]; then
+      echo "Weitere gültige User (GDT/PDF): ${extra_users_space}"
+    fi
   else
     echo "Samba Zugriff GDT/PDF:  anonym (guest), schreibbar"
   fi
@@ -1469,10 +1460,10 @@ main() {
   echo "Samba Admin (WEBROOT/SSH/sudo):  ${ADMIN_USER}"
   echo "Admin Passwort (generiert):       ${admin_pw}"
   echo
-  if [[ -n "${extra_users_csv// }" ]]; then
+  if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
     echo "Zusätzliche Windows-/Samba-User:"
     local idx=0
-    for u in $extra_users_csv; do
+    for u in "${EXTRA_USERS_LIST[@]}"; do
       if [[ "${EXTRA_USERS_MODE[$idx]}" == "generated" ]]; then
         echo "  - ${u}: Passwort (generiert) = ${EXTRA_USERS_PW[$idx]}"
       else
