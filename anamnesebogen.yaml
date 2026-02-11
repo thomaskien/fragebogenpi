@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.2.1
+# Version 2.2.2
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -33,11 +33,20 @@
 # - 2.2.1: Korrektur unbeabsichtigter Aenderungen:
 #        * Zaehne: "Angst vor Zahnarzt" Felder wiederhergestellt (waren versehentlich entfernt)
 #        * Hilfsmittel: Felder "Hilfsmittel ausreichend" + "Weitere Angaben zu Hilfsmitteln" wiederhergestellt
-#        * Keine weiteren inhaltlichen Aenderungen gegenueber 2.2
+# - 2.2.2: Blutverduenner-Fix + Drogen-Labels:
+#        * Blutverduenner: Aufklapp-Logik vereinfacht: Praeparat/Grund/Komplikation/Details erscheinen bei Blutverduenner=ja
+#          (keine Abhaengigkeit mehr von Multiselect-Auswertung; Ziel-INR als Freitext im Detailfeld)
+#        * Drogen: drogenkonsum Label -> "Substanzen (z. B. Drogen, Anabolika)"
+#        * Drogen: drogen Label -> "Substanzen"
+#
+# Hinweis:
+# - Format meta + sections
+# - "Keine ..." Optionen sind als erste Option enthalten (Allergien/Vorerkrankungen/Operationen)
+# - Keine Angaben sollen verloren gehen: alles Angekreuzte/ausgefuellte wird ausgegeben (auch bei Widerspruch)
 
 meta:
   title: "Anamnese"
-  version: "2.2.1"
+  version: "2.2.2"
   language: "de"
 
 sections:
@@ -248,12 +257,13 @@ sections:
           - Verschlusskrankheit
           - Sonstiges
 
-      - id: ziel_inr
-        label: "Ziel-INR"
+      - id: blutverduenner_details
+        label: "Details: Praeparat, Ziel-INR"
         type: text
+        multiline: true
         show_if:
-          id: blutverduenner_praeparat
-          in: [Marcumar]
+          id: blutverduenner
+          equals: "yes"
 
 
   - title: "Familienanamnese: Was liegt in der Familie?"
@@ -430,7 +440,7 @@ sections:
           not_equals: nein
 
       - id: drogenkonsum
-        label: "Drogenkonsum"
+        label: "Substanzen (z. B. Drogen, Anabolika)"
         type: choice
         options: [nein, gelegentlich, taeglich, frueher]
 
@@ -442,7 +452,7 @@ sections:
           equals: frueher
 
       - id: drogen
-        label: "Substanzen (z. B. Drogen, Anabolika)"
+        label: "Substanzen"
         type: multiselect
         show_if:
           id: drogenkonsum
