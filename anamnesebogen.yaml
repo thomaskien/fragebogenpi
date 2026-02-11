@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.0
+# Version 2.1
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -13,6 +13,20 @@
 #        * Allergieausweis vorhanden + Frueherer allergischer Schock nur bei vorhandener Allergie
 #          (mind. eine Auswahl ausser "Keine Allergie bekannt")
 #        * Weitere Angaben zu Zaehnen / Zahnarzt nur bei Zahnstatus schlecht / sehr schlecht
+# - 2.1: Inhaltliche Erweiterungen/Anpassungen:
+#        * Allergien: "Insekten" + "Sonstiges" als Optionen ergaenzt
+#        * Allergien: "Allergie - genaueres / Reaktionen" erscheint nur bei vorhandener Allergie
+#        * Vorerkrankungen: "Krebserkrankung" als eigene Option ergaenzt
+#        * Operationen: "Keine Operationen bekannt" -> "Bisher keine Operation"; "Brust-OP" ergaenzt
+#        * Hilfsmittel: Label ergaenzt ("... (z. B. Brille)"); Option "Inkontinenzhilfsmittel" ergaenzt
+#        * Psychisch/Neurodivers: "Autismus-Spektrum" ergaenzt
+#        * Urogenital/Gynaekologisch: "Transsexualitaet" ergaenzt
+#        * Rauchen: Raucher von yes/no auf choice (ja/nein/ex-raucher) umgestellt;
+#          Rauchpausen-Felder umbenannt ("Wie oft aufgehoert?", "Wie lange maximal bisher?")
+#        * Alkohol: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum"
+#        * Drogen: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum";
+#          Feld "Frueherer Konsum (nicht mehr aktuell)" entfernt; Substanzfeld umbenannt und um "Steroide / Anabolika" ergaenzt
+#        * Sucht: zusaetzliche Frage "Nikotin" ergaenzt
 #
 # Hinweis:
 # - Format meta + sections
@@ -21,7 +35,7 @@
 
 meta:
   title: "Anamnese"
-  version: "2.0"
+  version: "2.1"
   language: "de"
 
 sections:
@@ -39,11 +53,16 @@ sections:
           - "Medikamente"
           - "Chemikalien"
           - "Tierhaare"
+          - "Insekten"
+          - "Sonstiges"
 
       - id: allergie_details
         label: "Allergie - genaueres / Reaktionen"
         type: text
         multiline: true
+        show_if:
+          id: allergie_typen
+          any_selected_except: "Keine Allergie bekannt"
 
       - id: allergieausweis
         label: "Allergieausweis vorhanden"
@@ -64,6 +83,7 @@ sections:
     type: checklist
     questions:
       - { id: vorerkrankung_keine, label: "Keine Vorerkrankungen bekannt" }
+      - { id: krebserkrankung, label: "Krebserkrankung" }
 
       - { type: header, label: "Herz / Kreislauf" }
       - { id: hypertonie, label: "Bluthochdruck" }
@@ -78,7 +98,7 @@ sections:
       - { type: header, label: "Stoffwechsel / Endokrinologie" }
       - { id: diabetes, label: "Diabetes mellitus" }
       - { id: fettstoffwechsel, label: "Fettstoffwechselstoerung / Cholesterin" }
-      - { id: schilddruese, label: "Schilddruesenerkrankung" }
+      - { id: schilddruese, label: "Schilddru(e)senerkrankung" }
       - { id: laktose, label: "Laktoseintoleranz" }
 
       - { type: header, label: "Lunge / HNO" }
@@ -115,6 +135,7 @@ sections:
       - { id: inkontinenz, label: "Inkontinenz" }
       - { id: prostata, label: "Prostata-Beschwerden / Prostataerkrankung" }
       - { id: endometriose, label: "Endometriose" }
+      - { id: transsexualitaet, label: "Transsexualitaet" }
 
       - { type: header, label: "Psychisch / Neurodivers" }
       - { id: psych_allg, label: "Psychische Erkrankungen (Oberbegriff)" }
@@ -123,6 +144,7 @@ sections:
       - { id: burnout, label: "Burn-out" }
       - { id: ptbs, label: "Posttraumatische Belastungsstoerung (PTBS)" }
       - { id: adhs, label: "ADHS" }
+      - { id: autismus_spektrum, label: "Autismus-Spektrum" }
 
       - { type: header, label: "Sucht" }
       - { id: alkoholkrankheit, label: "Alkoholkrankheit" }
@@ -140,7 +162,7 @@ sections:
   - title: "Operationen"
     type: checklist
     questions:
-      - { id: op_keine, label: "Keine Operationen bekannt" }
+      - { id: op_keine, label: "Bisher keine Operation" }
 
       - { id: op_tumor, label: "Tumoroperation (sonstige / allgemein)" }
       - { id: op_galle, label: "Gallenblase" }
@@ -171,6 +193,8 @@ sections:
       - { id: op_mandeln, label: "Mandeln" }
 
       - { id: op_hautkrebs, label: "Hautkrebs" }
+
+      - { id: op_brust, label: "Brust-OP" }
 
       - { id: op_kaiserschnitt, label: "Kaiserschnitt" }
       - { id: op_gebaermutter, label: "Gebaermutter-OP" }
@@ -227,7 +251,7 @@ sections:
   - title: "Hilfsmittel"
     questions:
       - id: hilfsmittel_verwendet
-        label: "Ich benutze Hilfsmittel"
+        label: "Ich benutze Hilfsmittel (z. B. Brille)"
         type: yesno
 
       - id: hilfsmittel
@@ -249,6 +273,7 @@ sections:
           - "Einlagen / Orthesen"
           - "Prothesen"
           - "Inhalationsgeraet (z. B. Spray)"
+          - "Inkontinenzhilfsmittel"
 
       - id: hilfsmittel_ausreichend
         label: "Hilfsmittel ausreichend"
@@ -300,47 +325,67 @@ sections:
     questions:
       - id: raucher
         label: "Raucher"
-        type: yesno
+        type: choice
+        options: [nein, ja, ex-raucher]
 
       - id: rauchen_zigaretten_tag
         label: "Durchschnittliche Zigaretten pro Tag"
         type: number
         show_if:
           id: raucher
-          equals: "yes"
+          not_equals: nein
 
       - id: rauchen_jahre
         label: "Seit wie vielen Jahren"
         type: number
         show_if:
           id: raucher
-          equals: "yes"
+          not_equals: nein
 
       - id: packyears
         label: "Packyears"
         type: derived
         show_if:
           id: raucher
-          equals: "yes"
+          not_equals: nein
 
       - id: rauchen_rauchpausen_anzahl
-        label: "Anzahl Rauchpausen"
+        label: "Wie oft aufgehoert?"
         type: number
         show_if:
           id: raucher
-          equals: "yes"
+          not_equals: nein
 
       - id: rauchen_rauchpausen_details
-        label: "Rauchpausen - maximale Laenge"
+        label: "Wie lange maximal bisher?"
         type: text
         show_if:
           id: raucher
-          equals: "yes"
+          not_equals: nein
+
+      - id: nikotin
+        label: "Nikotin"
+        type: choice
+        options: [nein, gelegentlich, taeglich, frueher]
+
+      - id: nikotin_jahre_konsum
+        label: "Anzahl Jahre Konsum (Nikotin)"
+        type: number
+        show_if:
+          id: nikotin
+          equals: frueher
 
       - id: alkohol
         label: "Alkoholkonsum"
         type: choice
-        options: [nein, gelegentlich, regelmaessig, taeglich]
+        options: [nein, gelegentlich, taeglich, frueher]
+
+      - id: alkohol_jahre_konsum
+        label: "Anzahl Jahre Konsum (Alkohol)"
+        type: number
+        show_if:
+          id: alkohol
+          equals: frueher
 
       - id: alkohol_getraenke_woche
         label: "Getraenke pro Woche"
@@ -359,17 +404,17 @@ sections:
       - id: drogenkonsum
         label: "Drogenkonsum"
         type: choice
-        options: [nein, gelegentlich, regelmaessig, taeglich]
+        options: [nein, gelegentlich, taeglich, frueher]
 
-      - id: drogen_frueher
-        label: "Frueherer Konsum (nicht mehr aktuell)"
-        type: yesno
+      - id: drogen_jahre_konsum
+        label: "Anzahl Jahre Konsum (Drogen)"
+        type: number
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          equals: frueher
 
       - id: drogen
-        label: "Welche Substanzen"
+        label: "Substanzen (z. B. Drogen, Anabolika)"
         type: multiselect
         show_if:
           id: drogenkonsum
@@ -388,6 +433,7 @@ sections:
           - "Neue psychoaktive Substanzen (NPS)"
           - "Medikamente nicht aerztlich verordnet"
           - "Mehrere Substanzen"
+          - "Steroide / Anabolika"
 
       - id: drogen_andere_als_cannabis_geraucht
         label: "Wurden schon einmal andere Drogen als Cannabis geraucht?"
