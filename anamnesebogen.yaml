@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.2.3
+# Version 2.2.4
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -21,11 +21,9 @@
 #        * Hilfsmittel: Label ergaenzt; "Inkontinenzhilfsmittel" ergaenzt
 #        * Psychisch/Neurodivers: "Autismus-Spektrum" ergaenzt
 #        * Urogenital: "Transsexualitaet" ergaenzt
-#        * Rauchen: Raucher von yes/no auf choice (ja/nein/ex-raucher) umgestellt;
-#          Rauchpausen-Felder umbenannt ("Wie oft aufgehoert?", "Wie lange maximal bisher?")
-#        * Alkohol: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum"
-#        * Drogen: Optionen auf (nein/gelegentlich/taeglich/frueher) umgestellt; bei "frueher" Feld "Anzahl Jahre Konsum";
-#          Feld "Frueherer Konsum (nicht mehr aktuell)" entfernt; Substanzfeld umbenannt und um "Steroide / Anabolika" ergaenzt
+#        * Rauchen/Alkohol/Drogen: Optionen erweitert, "frueher" + Jahre-Konsum-Felder
+#        * Drogen: Feld "Frueherer Konsum (nicht mehr aktuell)" entfernt;
+#          Substanzen umbenannt + "Steroide / Anabolika" ergaenzt
 #        * Sucht: zusaetzliche Frage "Nikotin" ergaenzt
 # - 2.2: Weitere inhaltliche Anpassungen:
 #        * "Nikotin" entfernt; stattdessen "Rauchen" als Checklist-Item im Abschnitt Sucht
@@ -38,17 +36,18 @@
 # - 2.2.2: Blutverduenner-Fix + Drogen-Labels:
 #        * Blutverduenner: Ziel-INR in freiem Detailfeld; Drogen-Labels angepasst
 # - 2.2.3: Finaler Fix Blutverduenner-Aufklappen + Sicherstellung Jahre-Konsum:
-#        * Blutverduenner: Triggerfeld von checklist -> yesno (wie Rauchen-Logik), damit show_if equals:"yes" sicher greift
-#        * Drogen: Feld "Anzahl Jahre Konsum (Drogen)" explizit enthalten (show_if equals: frueher)
-#
-# Hinweis:
-# - Format meta + sections
-# - "Keine ..." Optionen sind als erste Option enthalten (Allergien/Vorerkrankungen/Operationen)
-# - Keine Angaben sollen verloren gehen: alles Angekreuzte/ausgefuellte wird ausgegeben (auch bei Widerspruch)
+#        * Blutverduenner/gerinnungsstoerung als yesno (wie Rauchen-Logik), damit show_if equals:"yes" sicher greift
+#        * Drogen: Feld "Anzahl Jahre Konsum (Drogen)" explizit enthalten
+# - 2.2.4: Feinschliff Konsumjahre + Blutverduenner-Optionen:
+#        * Alkohol/Drogen: "Anzahl Jahre Konsum" erscheint nun bei jedem Konsum (gelegentlich/taeglich/frueher),
+#          nicht nur bei "frueher" (show_if: not_equals: nein)
+#        * Blutverduenner: Praeparat-Liste erweitert (Eliquis, Lixiana, Xarelto, Clopidogrel, Prasugrel)
+#          vor "Sonstiges"
+#        * Blutverduenner: Grund um "kuenstliche Herzklappe" ergaenzt
 
 meta:
   title: "Anamnese"
-  version: "2.2.3"
+  version: "2.2.4"
   language: "de"
 
 sections:
@@ -241,6 +240,11 @@ sections:
         options:
           - Marcumar
           - ASS
+          - Eliquis
+          - Lixiana
+          - Xarelto
+          - Clopidogrel
+          - Prasugrel
           - Sonstiges
 
       - id: blutverduenner_komplikation
@@ -258,6 +262,7 @@ sections:
           equals: "yes"
         options:
           - "Herzrhythmusstoerung / Vorhofflimmern"
+          - "kuenstliche Herzklappe"
           - Thrombose
           - Schlaganfall
           - Verschlusskrankheit
@@ -429,7 +434,7 @@ sections:
         type: number
         show_if:
           id: alkohol
-          equals: frueher
+          not_equals: nein
 
       - id: alkohol_getraenke_woche
         label: "Getraenke pro Woche"
@@ -455,7 +460,7 @@ sections:
         type: number
         show_if:
           id: drogenkonsum
-          equals: frueher
+          not_equals: nein
 
       - id: drogen
         label: "Substanzen"
