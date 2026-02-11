@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.2
+# Version 2.2.1
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -30,10 +30,14 @@
 #        * Operationen: Untertitel geaendert zu
 #          "auch Details zu oben & weitere Infos (Art, Jahr)"
 #        * Blutverduenner: strukturierte Zusatzabfrage (Praeparat, Komplikation, Grund, Ziel-INR bei Marcumar)
+# - 2.2.1: Korrektur unbeabsichtigter Aenderungen:
+#        * Zaehne: "Angst vor Zahnarzt" Felder wiederhergestellt (waren versehentlich entfernt)
+#        * Hilfsmittel: Felder "Hilfsmittel ausreichend" + "Weitere Angaben zu Hilfsmitteln" wiederhergestellt
+#        * Keine weiteren inhaltlichen Aenderungen gegenueber 2.2
 
 meta:
   title: "Anamnese"
-  version: "2.2"
+  version: "2.2.1"
   language: "de"
 
 sections:
@@ -162,6 +166,7 @@ sections:
     type: checklist
     questions:
       - { id: op_keine, label: "Bisher keine Operation" }
+
       - { id: op_brust, label: "Brust-OP" }
       - { id: op_tumor, label: "Tumoroperation (sonstige / allgemein)" }
       - { id: op_galle, label: "Gallenblase" }
@@ -169,22 +174,30 @@ sections:
       - { id: op_dickdarm, label: "Dickdarm" }
       - { id: op_magen, label: "Magen" }
       - { id: op_magenverkleinerung, label: "Magenverkleinerung" }
+
       - { id: op_herzklappe, label: "Herzklappe" }
       - { id: op_bypass_herz, label: "Bypass Herz" }
       - { id: op_bypass_bein, label: "Bypass Bein" }
       - { id: op_krampfadern, label: "Krampfadern (Varizen)" }
+
       - { id: op_lunge, label: "Lunge" }
       - { id: op_gehirn, label: "Gehirn" }
+
       - { id: op_prostata, label: "Prostata" }
+
       - { id: op_knochen, label: "Knochenbruch" }
       - { id: op_karpaltunnel, label: "Karpaltunnel" }
+
       - { id: op_auge_star, label: "Auge - Star-OP" }
       - { id: op_auge_sonst, label: "Auge - sonstige OP" }
+
       - { id: op_ohr, label: "Ohr" }
       - { id: op_nase, label: "Nase" }
       - { id: op_polypen, label: "Polypen" }
       - { id: op_mandeln, label: "Mandeln" }
+
       - { id: op_hautkrebs, label: "Hautkrebs" }
+
       - { id: op_kaiserschnitt, label: "Kaiserschnitt" }
       - { id: op_gebaermutter, label: "Gebaermutter-OP" }
       - { id: op_eierstock, label: "Eierstock-OP" }
@@ -252,16 +265,19 @@ sections:
       - { id: fam_herzinfarkt, label: "Herzinfarkt" }
       - { id: fam_schlaganfall, label: "Schlaganfall" }
       - { id: fam_thrombose, label: "Thrombose / Lungenembolie" }
+
       - { id: fam_demenz, label: "Demenz / Alzheimer" }
       - { id: fam_depression, label: "Depression" }
       - { id: fam_psych, label: "Psychische Erkrankungen" }
       - { id: fam_suizid, label: "Suizid" }
       - { id: fam_sucht, label: "Suchterkrankung" }
+
       - { id: fam_darmkrebs, label: "Darmkrebs" }
       - { id: fam_brustkrebs, label: "Brustkrebs" }
       - { id: fam_lungenkrebs, label: "Lungenkrebs" }
       - { id: fam_prostatakrebs, label: "Prostatakrebs" }
       - { id: fam_andere_krebs, label: "Anderer Krebs" }
+
       - { id: fam_erbkrankheit, label: "Erbkrankheit" }
 
   - title: "Notizen zur Familienanamnese"
@@ -299,6 +315,21 @@ sections:
           - "Inhalationsgeraet (z. B. Spray)"
           - "Inkontinenzhilfsmittel"
 
+      - id: hilfsmittel_ausreichend
+        label: "Hilfsmittel ausreichend"
+        type: yesno
+        show_if:
+          id: hilfsmittel_verwendet
+          equals: "yes"
+
+      - id: hilfsmittel_notizen
+        label: "Weitere Angaben zu Hilfsmitteln"
+        type: text
+        multiline: true
+        show_if:
+          id: hilfsmittel_verwendet
+          equals: "yes"
+
 
   - title: "Zaehne"
     questions:
@@ -306,6 +337,20 @@ sections:
         label: "Zahnstatus"
         type: choice
         options: [gut, saniert, schlecht, sehr schlecht]
+
+      - id: zaehne_angst_zahnarzt_schlecht
+        label: "Angst vor Zahnarzt"
+        type: yesno
+        show_if:
+          id: zaehne_status
+          equals: schlecht
+
+      - id: zaehne_angst_zahnarzt_sehr_schlecht
+        label: "Angst vor Zahnarzt"
+        type: yesno
+        show_if:
+          id: zaehne_status
+          equals: sehr schlecht
 
       - id: zaehne_notizen
         label: "Weitere Angaben zu Zaehnen / Zahnarzt"
