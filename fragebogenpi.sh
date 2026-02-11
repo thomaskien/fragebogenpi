@@ -349,19 +349,27 @@ ask_choice_existing_install() {
 ask_password_twice() {
   local prompt="$1"
   local p1="" p2=""
+
   while true; do
-    read -r -s -p "${prompt}: " p1
-    printf '\n'
-    read -r -s -p "${prompt} (Wiederholung): " p2
-    printf '\n'
-    [[ -n "$p1" ]] || { echo "Passwort darf nicht leer sein."; continue; }
+    # Prompt + Newline ausschließlich auf stderr, damit stdout "clean" bleibt
+    read -r -s -p "${prompt}: " p1 >&2
+    printf '\n' >&2
+    read -r -s -p "${prompt} (Wiederholung): " p2 >&2
+    printf '\n' >&2
+
+    # CR entfernen (falls jemand über serielle Konsole/CRLF irgendwas reinträgt)
+    p1="${p1%$'\r'}"
+    p2="${p2%$'\r'}"
+
+    [[ -n "$p1" ]] || { echo "Passwort darf nicht leer sein." >&2; continue; }
     if [[ "$p1" == "$p2" ]]; then
-      echo "$p1"
+      printf '%s' "$p1"
       return 0
     fi
-    echo "Passwörter stimmen nicht überein. Bitte erneut."
+    echo "Passwörter stimmen nicht überein. Bitte erneut." >&2
   done
 }
+
 
 get_iface_ipv4() {
   local iface="$1"
