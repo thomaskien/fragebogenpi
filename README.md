@@ -125,7 +125,10 @@ Ansicht in der Akte:
 <img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2020.46.29.png" alt="drawing" width="800"/>
 
 
-
+# PVS
+- T2med siehe screenshots
+- x.concept läuft mit $ENABLE_XCONCEPT_3000_END_WORKAROUND = true; und aktuell noch einer weiteren anpassung im code (anleitung folgt)
+- tomedo läuft, man muss "bei der Kodierung  NSUTF8StringEncoding wählen"
 
 
 
