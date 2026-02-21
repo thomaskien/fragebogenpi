@@ -3,41 +3,54 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.3.6
+# Version: 1.4
 # Stand:   2026-02-21
 # Autor:   Dr. Thomas Kienzle
 #
-# Ziel (konservativ):
-# - Startverhalten wie 1.3.2: Kiosk startet Chromium direkt, ohne fragile wmctrl/xdotool-Fokus-Automatik.
-# - Alle neuen Features bleiben erhalten:
-#   - Hostname robust + cloud-init user-data hostname-Zeile ersetzen
-#   - WLAN optional, Prompts über /dev/tty
-#   - nftables: wlan0 inbound dicht (established/related, DHCP, Ping), eth0 offen
-#   - Samba Guest RW Share auf /var/www/html
-#   - Web-App: Video/Slideshow, Overlay + Footer nur bei Meldung, Audio Ducking, getrennte Volumes
-#   - Dotfiles/._* filtern
-#   - Fetch: rooms 1+2, display_seconds=10, delete scripts
-#   - Name-Format optional (T. Kie.) konfigurierbar (Vor-/Nachname getrennt), Spaces/Hyphens ignorieren
-#   - Sound bootstrap: jsbach.m4a (default_sound)
-#   - Boot-Playback Stabilität: Web-App Self-Heal (watchdog -> reload wenn nötig)
-#
 # Changelog (komplett, ab 1.0):
-# - 1.0: Basis Kiosk+Apache+PHP+Samba+Konfig.
-# - 1.1: Webroot direkt, Guest RW, Fetch testweise localhost, Löschskript.
-# - 1.2: Hostname/WLAN-Abfragen, Logging off.
-# - 1.3: DPMS off, Anti-throttle Flags, Web-App self heal, dotfile filter, firewall wlan dicht.
-# - 1.3.1: WLAN-Prompts robust (/dev/tty), Audio reset+duck.
-# - 1.3.2: /boot/firmware/user-data hostname, rooms 1+2, README erweitert.
-# - 1.3.3: Name-Format optional, jsbach.m4a bootstrap, sounds m4a erlaubt.
-# - 1.3.4: Fix hostname user-data patch (Zeile ersetzen, nicht anhängen).
-# - 1.3.5: (verworfen in der Praxis) Fokus/Reload via wmctrl/xdotool war nicht robust genug.
-# - 1.3.6: Zurück zu 1.3.2 Startverhalten (kein wmctrl/xdotool).
-#          Boot-Fix erfolgt jetzt zuverlässig in der Web-App selbst (watchdog reload),
-#          ohne Window-Fokus-Race.
+# - 1.0:
+#   - Basis: Desktop + Kiosk-Browser + Apache/PHP + Samba + Backend + JSON-Konfig.
+# - 1.1:
+#   - Webroot /var/www/html (kein Unterverzeichnis), Startseite wartezimmer.php.
+#   - Samba Guest RW + setgid-Rechte, Fetch aktiviert (localhost), Löschskript.
+#   - Firewall temporär deaktiviert, Webserver im LAN offen.
+# - 1.2:
+#   - Footer eingeblendet (später nur bei Meldung gewünscht), Hostname/WLAN-Abfragen ergänzt,
+#     Logging wieder deaktiviert, Boot-Refresh-Fix per simplem wait-loop vorbereitet.
+# - 1.3:
+#   - Boot-Playback-Fix “perfekt” (ohne Alt-Tab/F5):
+#     - Kiosk-Robustheit: wartet auf lokale Endpunkte (PHP+JSON+Playlist),
+#       deaktiviert DPMS/Screensaver, setzt Anti-Background-Throttling-Flags,
+#       bringt Chromium per wmctrl in Vordergrund und triggert einmaliges Reload per xdotool.
+#     - Web-App Self-Heal: skip invalid videos (onerror), Watchdog-Retry, focus/visibility retry,
+#       Retry wenn Playlist leer.
+#   - Dotfiles/AppleDouble werden nicht mehr gelistet (._* und .* werden gefiltert).
+#   - Footer erscheint NUR während der Aufruf-Meldung (Overlay) und zeigt:
+#     "Dr. Thomas Kienzle · fragebogenpi.de wartezimmerbildschirm · v1.3"
+#   - Hostname-Abfrage + robustes Setzen (Default: "wartezimmer") inkl. Verifikation.
+#   - WLAN: erst Abfrage "WLAN aktivieren?" → nur dann SSID/Passwort (Default SSID: "fragebogenpi").
+#   - Firewall via nftables wieder aktiv:
+#     - wlan0 inbound dicht (nur established/related, DHCP, Ping)
+#     - eth0 vollständig offen (keine Einschränkungen im LAN)
+#   - Audio-Konfig in wartezimmer.json:
+#     - video_sound_enabled (default false)
+#     - video_volume (default 0.15)
+#     - chime_volume (default 1.0)
+#   - Backend: parst ausschließlich 3102 (Vorname) + 3101 (Nachname) aus GDT, Fetch aktiv,
+#     Logging default AUS (per JSON einschaltbar).
+# - 1.4:
+#   - Feature-Nachbau aller Erweiterungen seit 1.3 (bis inkl. 1.3.5), konservativ auf 1.3-Basis:
+#     - Hostname zusätzlich in /boot/firmware/user-data (cloud-init) patchen: ganze "hostname:"-Zeile ersetzen (idempotent).
+#     - wartezimmer.json: display_seconds=10; rooms=sprechzimmer1+2; gültige _comment0.._comment3 Hinweise.
+#     - Webroot: loesche-sprechzimmer2.php ergänzt; README erweitert inkl. Sicherheitssatz.
+#     - Audio: default_sound=jsbach.m4a; Sound-Bootstrap (curl -fL + retries, atomar); list_media.php listet mp3+m4a.
+#     - Backend: optionales Name-Abkürzen per name_format (Zählen ohne Leerzeichen/Bindestriche).
+#     - Frontend: Chime robust (pause+seek+play); während Meldung Video-Audio ducken und danach restore.
+#   - Kiosk/Boot-Setup (configure_kiosk) NICHT umgebaut.
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.3.6"
+VERSION="1.4"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -45,21 +58,25 @@ CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
 INFODISPLAY_USER="infodisplay"
 INFODISPLAY_GROUP="infodisplay"
 
-# Autologin/Kiosk user (dein System nutzt pi auf :0)
+# Kiosk user (Autologin)
 KIOSK_USER="pi"
 KIOSK_HOME="/home/${KIOSK_USER}"
 
-# RAM chromium profile/cache
+# RAM dirs
 RUN_CHROME_DIR="/run/wartezimmer-chromium"
 
 # Sound bootstrap
-BOOTSTRAP_SOUND_URL="https://github.com/thomaskien/fragebogenpi/raw/refs/heads/main/jsbach.m4a"
-BOOTSTRAP_SOUND_PATH="${WEBROOT_DIR}/sounds/jsbach.m4a"
+JSBACH_URL="https://github.com/thomaskien/fragebogenpi/raw/refs/heads/main/jsbach.m4a"
+JSBACH_DEST="${WEBROOT_DIR}/sounds/jsbach.m4a"
 
 say() { echo -e "\n### $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-need_root() { [[ "${EUID}" -eq 0 ]] || die "Bitte als root ausführen."; }
+need_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    die "Bitte als root ausführen."
+  fi
+}
 
 backup_file() {
   local f="$1"
@@ -72,17 +89,24 @@ backup_file() {
 
 ensure_group() {
   local g="$1"
-  getent group "$g" >/dev/null 2>&1 || groupadd "$g"
+  if ! getent group "$g" >/dev/null 2>&1; then
+    groupadd "$g"
+  fi
 }
 
 ensure_user_infodisplay() {
-  if id "$INFODISPLAY_USER" >/dev/null 2>&1; then return 0; fi
+  if id "$INFODISPLAY_USER" >/dev/null 2>&1; then
+    return 0
+  fi
   say "Lege Benutzer an: ${INFODISPLAY_USER}"
+  # Wichtig: Primärgruppe explizit setzen, sonst: "group exists"
   useradd -r -m -d "/var/lib/${INFODISPLAY_USER}" -s /usr/sbin/nologin -g "${INFODISPLAY_GROUP}" "${INFODISPLAY_USER}"
 }
 
 ensure_kiosk_user() {
-  if id "$KIOSK_USER" >/dev/null 2>&1; then return 0; fi
+  if id "$KIOSK_USER" >/dev/null 2>&1; then
+    return 0
+  fi
   say "Benutzer '${KIOSK_USER}' nicht gefunden — lege an (Autologin-Kiosk)."
   useradd -m -d "$KIOSK_HOME" -s /bin/bash -G sudo,audio,video,input,render,netdev "$KIOSK_USER"
   passwd -d "$KIOSK_USER" >/dev/null 2>&1 || true
@@ -105,48 +129,69 @@ apt_install() {
     lightdm openbox \
     chromium \
     unclutter-xfixes \
+    wmctrl xdotool \
     python3 python3-aiohttp python3-requests
 }
 
-# Hostname user-data patch (cloud-init) — robust + idempotent
-patch_cloud_user_data_hostname() {
+patch_cloud_init_user_data_hostname() {
+  # Ab 1.3.2: /boot/firmware/user-data (cloud-init) patchen:
+  # Wenn Datei existiert und eine Zeile "hostname:" enthält:
+  #   ersetze die ganze Zeile durch "hostname: <hn>"
+  # Idempotent: nur einmal ersetzen (count=1).
   local hn="$1"
-  local ud="/boot/firmware/user-data"
+  local f="/boot/firmware/user-data"
 
-  [[ -f "$ud" ]] || return 0
-  grep -qE '^\s*#cloud-config\b' "$ud" || return 0
-  grep -qE '^\s*hostname\s*:' "$ud" || return 0
+  [[ -f "$f" ]] || return 0
+  grep -qE '^\s*hostname\s*:' "$f" || return 0
 
-  backup_file "$ud"
+  say "cloud-init: Patche ${f} (hostname: Zeile)"
+  backup_file "$f"
 
-  HN="$hn" UD="$ud" python3 - <<'PY'
-import os, re, pathlib
-hn = os.environ["HN"]
-ud = os.environ["UD"]
-p = pathlib.Path(ud)
-t = p.read_text(encoding="utf-8", errors="replace")
-t2, n = re.subn(r'(?m)^(\s*hostname\s*:\s*).*$',
-                r'\1' + hn, t, count=1)
-p.write_text(t2, encoding="utf-8")
-print("patched hostname lines:", n)
+  local tmp
+  tmp="$(mktemp)"
+
+  python3 - "$hn" "$f" "$tmp" <<'PY'
+import re, sys
+hn = sys.argv[1]
+src = sys.argv[2]
+dst = sys.argv[3]
+
+with open(src, "r", encoding="utf-8", errors="replace") as fp:
+    data = fp.read()
+
+# replace whole line, only once
+pat = re.compile(r'^(\s*hostname\s*:\s*).*$',
+                 re.MULTILINE)
+new, n = pat.subn(lambda m: m.group(1) + hn, data, count=1)
+
+# If no replacement happened, keep original (idempotent / safe)
+if n == 0:
+    new = data
+
+with open(dst, "w", encoding="utf-8") as fp:
+    fp.write(new)
 PY
+
+  # atomic-ish move (same filesystem)
+  mv -f "$tmp" "$f"
 }
 
 ask_hostname_and_set_robust() {
   say "Hostname setzen (robust)"
   local hn
-  if [[ -t 0 ]]; then
-    read -r -p "Hostname [default: wartezimmer]: " hn
-  else
-    read -r -p "Hostname [default: wartezimmer]: " hn </dev/tty
-  fi
+  read -r -p "Hostname [default: wartezimmer]: " hn
   hn="${hn:-wartezimmer}"
 
-  [[ "$hn" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$ ]] || die "Ungültiger Hostname: '$hn'"
+  if [[ ! "$hn" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$ ]]; then
+    die "Ungültiger Hostname: '$hn' (erlaubt: a-z A-Z 0-9 - , max 63 Zeichen, nicht mit - starten)."
+  fi
 
   say "Setze Hostname auf: $hn"
+
+  # 1) persistent
   echo "$hn" >/etc/hostname
 
+  # 2) /etc/hosts 127.0.1.1
   backup_file /etc/hosts
   if grep -qE '^127\.0\.1\.1' /etc/hosts; then
     sed -i -E "s/^127\.0\.1\.1\s+.*/127.0.1.1\t${hn}/" /etc/hosts
@@ -154,36 +199,42 @@ ask_hostname_and_set_robust() {
     echo -e "127.0.1.1\t${hn}" >>/etc/hosts
   fi
 
+  # 3) immediate kernel hostname
   hostname "$hn" || true
-  command -v hostnamectl >/dev/null 2>&1 && hostnamectl set-hostname "$hn" || true
-  patch_cloud_user_data_hostname "$hn"
+
+  # 4) also via hostnamectl if available
+  if command -v hostnamectl >/dev/null 2>&1; then
+    hostnamectl set-hostname "$hn" || true
+  fi
+
+  # 5) cloud-init user-data patch (if present)
+  patch_cloud_init_user_data_hostname "$hn" || true
+
+  # 6) verify
+  local cur
+  cur="$(hostname || true)"
+  if [[ "$cur" != "$hn" ]]; then
+    die "Hostname konnte nicht gesetzt werden (ist '$cur', erwartet '$hn')."
+  fi
 }
 
 ask_wlan_enable_and_configure() {
   say "WLAN optional konfigurieren"
-  local ans ssid pass
-
-  if [[ -t 0 ]]; then
-    read -r -p "WLAN aktivieren und konfigurieren? [Y/n]: " ans
-  else
-    read -r -p "WLAN aktivieren und konfigurieren? [Y/n]: " ans </dev/tty
-  fi
+  local ans
+  read -r -p "WLAN aktivieren und konfigurieren? [Y/n]: " ans
   ans="${ans:-Y}"
   if [[ "$ans" =~ ^([nN]|no|NO)$ ]]; then
     say "WLAN-Konfiguration übersprungen."
     return 1
   fi
 
-  if [[ -t 0 ]]; then
-    read -r -p "WLAN SSID [default: fragebogenpi]: " ssid
-  else
-    read -r -p "WLAN SSID [default: fragebogenpi]: " ssid </dev/tty
-  fi
+  local ssid pass
+  read -r -p "WLAN SSID [default: fragebogenpi]: " ssid
   ssid="${ssid:-fragebogenpi}"
 
-  echo -n "WLAN Passwort (WPA2/PSK): " >/dev/tty
-  IFS= read -r -s pass </dev/tty
-  echo >/dev/tty
+  echo -n "WLAN Passwort (WPA2/PSK): " >&2
+  IFS= read -r -s pass
+  echo >&2
 
   [[ -n "$ssid" ]] || die "SSID leer."
   [[ -n "$pass" ]] || die "Passwort leer."
@@ -212,11 +263,13 @@ EOF
     systemctl enable dhcpcd.service >/dev/null 2>&1 || true
     systemctl restart dhcpcd.service >/dev/null 2>&1 || true
   fi
+
   return 0
 }
 
 configure_firewall_wlan_only() {
   say "Firewall (nftables): wlan0 inbound dicht (Ping+DHCP+established), eth0 offen"
+
   backup_file /etc/nftables.conf
   cat >/etc/nftables.conf <<'EOF'
 #!/usr/sbin/nft -f
@@ -232,7 +285,7 @@ table inet filter {
     # LAN: alles offen
     iif "eth0" accept
 
-    # WLAN: DHCP replies
+    # WLAN: DHCP client replies (for wpa_supplicant/dhcpcd)
     iif "wlan0" udp sport 67 udp dport 68 accept
     iif "wlan0" udp sport 547 udp dport 546 accept
 
@@ -242,41 +295,66 @@ table inet filter {
 
     # WLAN: sonst nichts rein
     iif "wlan0" drop
+
+    # Default: akzeptiere nichts Unerwartetes
     drop
   }
 
-  chain forward { type filter hook forward priority 0; drop }
-  chain output  { type filter hook output  priority 0; accept }
+  chain forward {
+    type filter hook forward priority 0;
+    drop
+  }
+
+  chain output {
+    type filter hook output priority 0;
+    accept
+  }
 }
 EOF
+
   systemctl enable nftables >/dev/null 2>&1 || true
   systemctl restart nftables
 }
 
 configure_chromium_policy() {
-  say "Chromium Policy: Übersetzungsleiste deaktivieren"
+  say "Chromium Policy: Übersetzungsleiste deaktivieren (TranslateEnabled=false)"
   mkdir -p /etc/chromium/policies/managed
   cat >/etc/chromium/policies/managed/00-disable-translate.json <<'EOF'
-{ "TranslateEnabled": false }
+{
+  "TranslateEnabled": false
+}
 EOF
   mkdir -p /etc/chromium-browser/policies/managed || true
   cat >/etc/chromium-browser/policies/managed/00-disable-translate.json <<'EOF'
-{ "TranslateEnabled": false }
+{
+  "TranslateEnabled": false
+}
 EOF
 }
 
 configure_apache_open_lan() {
-  say "Apache: im LAN erreichbar"
+  say "Apache: im LAN erreichbar (0.0.0.0:80)"
   mkdir -p "${WEBROOT_DIR}/logs"
 
   backup_file /etc/apache2/ports.conf
   cat >/etc/apache2/ports.conf <<'EOF'
+# Managed by fragebogenpi wartezimmerbildschirm installer
 Listen 0.0.0.0:80
+
+<IfModule ssl_module>
+  Listen 0.0.0.0:443
+</IfModule>
+
+<IfModule mod_gnutls.c>
+  Listen 0.0.0.0:443
+</IfModule>
 EOF
 
   backup_file /etc/apache2/sites-available/000-default.conf
   cat >/etc/apache2/sites-available/000-default.conf <<'EOF'
+# Managed by fragebogenpi wartezimmerbildschirm installer
 <VirtualHost *:80>
+  ServerAdmin webmaster@localhost
   DocumentRoot /var/www/html
 
   ErrorLog /var/www/html/logs/apache_error.log
@@ -290,6 +368,7 @@ EOF
 
   DirectoryIndex wartezimmer.php index.php index.html
 
+  # Disable PHP execution inside media folders
   <Directory /var/www/html/videos>
     php_admin_flag engine off
   </Directory>
@@ -299,6 +378,9 @@ EOF
   <Directory /var/www/html/sounds>
     php_admin_flag engine off
   </Directory>
+  <Directory /var/www/html/assets>
+    php_admin_flag engine off
+  </Directory>
 </VirtualHost>
 EOF
 
@@ -306,153 +388,44 @@ EOF
   systemctl restart apache2
 }
 
-bootstrap_sound_file() {
-  say "Bootstrap Sound: jsbach.m4a"
+download_jsbach_sound() {
+  say "Sound-Bootstrap: jsbach.m4a herunterladen (fail-fast, retries, atomar)"
   mkdir -p "${WEBROOT_DIR}/sounds"
-  curl -fL --retry 3 --retry-delay 2 -o "${BOOTSTRAP_SOUND_PATH}.tmp" "${BOOTSTRAP_SOUND_URL}"
-  mv -f "${BOOTSTRAP_SOUND_PATH}.tmp" "${BOOTSTRAP_SOUND_PATH}"
+
+  local tmp
+  tmp="$(mktemp "${WEBROOT_DIR}/sounds/.jsbach.m4a.tmp.XXXXXX")"
+
+  # curl fail-fast + retries
+  # --retry-all-errors: auch bei transienten Netzwerkfehlern
+  if ! curl -fL --retry 6 --retry-delay 1 --retry-all-errors -o "$tmp" "$JSBACH_URL"; then
+    rm -f "$tmp" || true
+    die "Download fehlgeschlagen: ${JSBACH_URL}"
+  fi
+
+  # sanity: non-empty
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp" || true
+    die "Download ist leer: ${JSBACH_URL}"
+  fi
+
+  # atomar move ins Ziel
+  mv -f "$tmp" "$JSBACH_DEST"
+  chmod 0664 "$JSBACH_DEST" || true
 }
 
 install_webroot_files() {
-  say "Webroot-Struktur + Dateien"
+  say "Webroot-Struktur + Dateien anlegen in /var/www/html"
   mkdir -p \
     "${WEBROOT_DIR}/videos" \
     "${WEBROOT_DIR}/images" \
     "${WEBROOT_DIR}/sounds" \
+    "${WEBROOT_DIR}/assets" \
     "${WEBROOT_DIR}/helper" \
     "${WEBROOT_DIR}/logs"
 
-  bootstrap_sound_file
+  download_jsbach_sound
 
-  # list_media.php: filter dotfiles/._*, allow mp4/m4v, images, sounds mp3+m4a
-  cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
-<?php
-header("Content-Type: application/json; charset=utf-8");
-header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
-header("Pragma: no-cache");
-
-$kind = isset($_GET["kind"]) ? $_GET["kind"] : "";
-$allowed = ["videos", "images", "sounds"];
-if (!in_array($kind, $allowed, true)) { http_response_code(400); echo json_encode(["error"=>"invalid kind"]); exit; }
-
-$base = realpath(__DIR__ . "/..");
-$dir  = realpath($base . "/" . $kind);
-if ($base === false || $dir === false || strpos($dir, $base . DIRECTORY_SEPARATOR) !== 0) {
-  http_response_code(500); echo json_encode(["error"=>"path error"]); exit;
-}
-
-$exts = [];
-if ($kind === "videos") $exts = ["mp4","m4v"];
-if ($kind === "images") $exts = ["jpg","jpeg","png","webp"];
-if ($kind === "sounds") $exts = ["mp3","m4a"];
-
-$files = [];
-$dh = opendir($dir);
-if ($dh !== false) {
-  while (($f = readdir($dh)) !== false) {
-    if ($f === "." || $f === "..") continue;
-    if (strpos($f, '.') === 0) continue;     // .*, includes ._*
-    if (strpos($f, '._') === 0) continue;
-    if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
-
-    $p = $dir . DIRECTORY_SEPARATOR . $f;
-    if (!is_file($p)) continue;
-
-    $e = strtolower(pathinfo($f, PATHINFO_EXTENSION));
-    if (!in_array($e, $exts, true)) continue;
-
-    $files[] = $f;
-  }
-  closedir($dh);
-}
-sort($files, SORT_STRING);
-echo json_encode(["files"=>$files], JSON_UNESCAPED_UNICODE);
-EOF
-
-  # wartezimmer.json (rooms 1+2, display_seconds=10, name_format off by default, default_sound jsbach.m4a)
-  cat >"${CONFIG_JSON}" <<'EOF'
-{
-  "version": "1.3.6",
-  "mode": "video",
-  "display_seconds": 10,
-  "video_dir": "videos",
-  "image_dir": "images",
-  "sound_dir": "sounds",
-  "default_sound": "jsbach.m4a",
-  "slideshow_interval_seconds": 10,
-  "playlist_restart_on_call_end": false,
-
-  "audio": {
-    "video_sound_enabled": false,
-    "video_volume": 0.15,
-    "chime_volume": 1.0
-  },
-
-  "name_format": {
-    "enabled": false,
-    "first_name": { "enabled": true, "letters": 1, "dot": true },
-    "last_name":  { "enabled": true, "letters": 3, "dot": true }
-  },
-
-  "fetch": {
-    "enabled": true,
-    "poll_interval_ms": 500,
-    "max_jobs_per_room_per_cycle": 10,
-    "rooms": [
-      {
-        "id": "sprechzimmer1",
-        "target": "Bitte ins Sprechzimmer 1",
-        "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
-        "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
-        "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
-        "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
-        "_comment3": "die datei loesche muss editiert werden je nach name den man waehlt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
-        "enabled": true
-      },
-      {
-        "id": "sprechzimmer2",
-        "target": "Bitte ins Sprechzimmer 2",
-        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
-        "enabled": true
-      }
-    ]
-  },
-
-  "logging": {
-    "enabled": false,
-    "sink": "file",
-    "level": "debug",
-    "log_file": "/var/www/html/logs/backend.log"
-  }
-}
-EOF
-
-  # delete scripts (hardcoded file)
-  cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
-<?php
-header("Content-Type: text/plain; charset=utf-8");
-header("Cache-Control: no-store");
-$path = "/var/www/html/sprechzimmer1.gdt";
-if (substr($path, -4) !== ".gdt") { http_response_code(500); echo "bad extension\n"; exit; }
-if (!file_exists($path)) { http_response_code(204); echo "no file\n"; exit; }
-if (@unlink($path)) { http_response_code(200); echo "deleted\n"; exit; }
-http_response_code(500); echo "delete failed\n";
-EOF
-
-  cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
-<?php
-header("Content-Type: text/plain; charset=utf-8");
-header("Cache-Control: no-store");
-$path = "/var/www/html/sprechzimmer2.gdt";
-if (substr($path, -4) !== ".gdt") { http_response_code(500); echo "bad extension\n"; exit; }
-if (!file_exists($path)) { http_response_code(204); echo "no file\n"; exit; }
-if (@unlink($path)) { http_response_code(200); echo "deleted\n"; exit; }
-http_response_code(500); echo "delete failed\n";
-EOF
-
-  # wartezimmer.php (mit "Boot self-heal reload" — das ist der Kernfix von 1.3.6)
+  say "Schreibe wartezimmer.php (Footer nur bei Meldung, Self-Heal, Audio-Config, Ducking/Chime-Robustheit)"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
 <?php
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
@@ -491,10 +464,13 @@ header("Pragma: no-cache");
 
     #footer {
       position: fixed;
-      left: 0; right: 0; bottom: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
       padding: 10px 14px;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       font-size: 18px;
+      letter-spacing: 0.2px;
       color: rgba(255,255,255,0.90);
       text-align: center;
       background: rgba(0,0,0,0.35);
@@ -517,6 +493,7 @@ header("Pragma: no-cache");
   </div>
 
   <div id="footer">Dr. Thomas Kienzle · fragebogenpi.de wartezimmerbildschirm · v${VERSION}</div>
+
   <audio id="chime" preload="auto"></audio>
 
 <script>
@@ -550,19 +527,22 @@ header("Pragma: no-cache");
   let videoWatchdog = null;
   let starting = false;
 
-  // audio ducking restore
-  let savedVideoMuted = true;
-  let savedVideoVolume = 0.0;
-
-  // ---- Boot-self-heal: if nothing plays after boot, we reload (replaces manual F5) ----
-  let bootOk = false;
-  let bootStartTs = Date.now();
-  let bootReloads = 0;
+  // ducking state
+  let duckActive = false;
+  let prevMuted = null;
+  let prevVolume = null;
 
   function clamp01(x) {
     const n = Number(x);
     if (!isFinite(n)) return 0;
     return Math.max(0, Math.min(1, n));
+  }
+
+  function clearStage() {
+    stage.innerHTML = "";
+    videoEl = null;
+    imgEl = null;
+    if (videoWatchdog) { clearInterval(videoWatchdog); videoWatchdog = null; }
   }
 
   async function loadConfig() {
@@ -588,37 +568,13 @@ header("Pragma: no-cache");
   }
 
   async function ensurePlaylist(kind) {
-    for (let i = 0; i < 90; i++) { // bis ~90s
+    // Retry until we have at least one file
+    for (let i = 0; i < 60; i++) { // ~60s max
       const files = await listMedia(kind);
       if (files.length > 0) return files;
       await new Promise(res => setTimeout(res, 1000));
     }
     return [];
-  }
-
-  function clearStage() {
-    stage.innerHTML = "";
-    videoEl = null;
-    imgEl = null;
-    if (videoWatchdog) { clearInterval(videoWatchdog); videoWatchdog = null; }
-  }
-
-  function applyVideoAudioFromConfig() {
-    if (!videoEl) return;
-    videoEl.muted = !videoSoundEnabled;
-    videoEl.volume = videoSoundEnabled ? videoVolume : 0.0;
-  }
-
-  async function tryPlayVideo() {
-    if (!videoEl) return false;
-    try {
-      applyVideoAudioFromConfig();
-      const p = videoEl.play();
-      if (p && typeof p.then === 'function') await p;
-      return true;
-    } catch (e) {
-      return false;
-    }
   }
 
   function nextIndex() {
@@ -631,52 +587,58 @@ header("Pragma: no-cache");
     return \`videos/\${encodeURIComponent(playlist[idx])}\`;
   }
 
-  async function skipVideo() {
+  function applyVideoAudioConfig() {
+    if (!videoEl) return;
+    videoEl.muted = !videoSoundEnabled;
+    videoEl.volume = videoSoundEnabled ? videoVolume : 0.0;
+  }
+
+  async function tryPlayVideo() {
+    if (!videoEl) return false;
+    try {
+      applyVideoAudioConfig();
+      const p = videoEl.play();
+      if (p && typeof p.then === 'function') {
+        await p;
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function skipVideo(reason) {
     if (!videoEl || playlist.length === 0) return;
-    videoEl.src = videoSrcForIndex(nextIndex());
+    const ni = nextIndex();
+    videoEl.src = videoSrcForIndex(ni);
     await tryPlayVideo();
   }
 
   function attachVideoSelfHeal() {
     if (!videoEl) return;
 
-    videoEl.addEventListener('error', () => { skipVideo(); });
-    videoEl.addEventListener('ended', () => { skipVideo(); });
+    videoEl.addEventListener('error', () => { skipVideo('error'); });
+    videoEl.addEventListener('stalled', () => { /* watchdog handles */ });
+    videoEl.addEventListener('ended', () => { skipVideo('ended'); });
 
-    // mark boot OK when we actually play/advance
-    const markOk = () => {
-      bootOk = true;
-    };
-    videoEl.addEventListener('playing', markOk);
-    videoEl.addEventListener('timeupdate', markOk);
-    videoEl.addEventListener('canplay', () => { /* not sufficient alone */ });
-
-    // Watchdog: retry play/skip; if still not ok after boot window -> reload
     let lastOk = Date.now();
-    const ping = () => { lastOk = Date.now(); };
-
-    videoEl.addEventListener('playing', ping);
-    videoEl.addEventListener('timeupdate', ping);
+    const markOk = () => { lastOk = Date.now(); };
+    videoEl.addEventListener('playing', markOk);
+    videoEl.addEventListener('canplay', markOk);
+    videoEl.addEventListener('timeupdate', markOk);
 
     videoWatchdog = setInterval(async () => {
       if (pausedByCall) return;
       if (!videoEl) return;
 
       const age = Date.now() - lastOk;
+      if (age < 2500) return;
 
-      // If we're not progressing: try play, then skip
-      if (age > 2500) {
-        const ok = await tryPlayVideo();
-        if (!ok) await skipVideo();
-      }
-
-      // Boot self-heal:
-      // If after 12s since boot start we still have not reached bootOk, reload (max 3x).
-      const sinceBoot = Date.now() - bootStartTs;
-      if (!bootOk && sinceBoot > 12000 && bootReloads < 3) {
-        bootReloads += 1;
-        // Backoff a bit to avoid reload storms
-        setTimeout(() => location.reload(), 200 * bootReloads);
+      const ok = await tryPlayVideo();
+      if (!ok) {
+        await skipVideo('watchdog');
+      } else {
+        lastOk = Date.now();
       }
     }, 1000);
   }
@@ -709,7 +671,6 @@ header("Pragma: no-cache");
     const showIndex = (i) => {
       idx = i % playlist.length;
       imgEl.src = \`images/\${encodeURIComponent(playlist[idx])}\`;
-      bootOk = true; // slideshow counts as "ok"
     };
 
     showIndex(0);
@@ -739,48 +700,57 @@ header("Pragma: no-cache");
     }
   }
 
-  function duckVideoAudioForCall() {
-    if (!videoEl) return;
-    savedVideoMuted = !!videoEl.muted;
-    savedVideoVolume = (typeof videoEl.volume === 'number') ? videoEl.volume : 0.0;
-    videoEl.muted = true;
-    videoEl.volume = 0.0;
-  }
-
-  function restoreVideoAudioAfterCall() {
-    if (!videoEl) return;
-    videoEl.muted = savedVideoMuted;
-    videoEl.volume = savedVideoVolume;
-  }
-
   function pauseNormal() {
     pausedByCall = true;
-    if (videoEl) {
-      duckVideoAudioForCall();
-      try { videoEl.pause(); } catch(e) {}
-    }
+    if (videoEl) { try { videoEl.pause(); } catch(e) {} }
   }
 
   async function resumeNormal() {
     pausedByCall = false;
+
+    // Restore audio state if we ducked
+    if (duckActive && videoEl) {
+      try {
+        if (prevMuted !== null) videoEl.muted = prevMuted;
+        if (prevVolume !== null) videoEl.volume = prevVolume;
+      } catch(e) {}
+      duckActive = false;
+      prevMuted = null;
+      prevVolume = null;
+
+      // re-apply config (source of truth)
+      try { applyVideoAudioConfig(); } catch(e) {}
+    }
+
     if (restartAfterCall) {
       await startNormalMode();
       return;
     }
     if (videoEl) {
-      restoreVideoAudioAfterCall();
-      applyVideoAudioFromConfig();
       await tryPlayVideo();
     }
   }
 
   async function playChime(soundPath) {
     try {
+      // Robust chime playback
       chime.pause();
       chime.currentTime = 0;
       chime.volume = chimeVolume;
       chime.src = soundPath;
       await chime.play();
+    } catch(e) {}
+  }
+
+  function duckVideoAudioForCall() {
+    if (!videoEl) return;
+    if (duckActive) return;
+    try {
+      prevMuted = videoEl.muted;
+      prevVolume = videoEl.volume;
+      videoEl.muted = true;
+      videoEl.volume = 0.0;
+      duckActive = true;
     } catch(e) {}
   }
 
@@ -790,6 +760,9 @@ header("Pragma: no-cache");
     ovSource.textContent = source || "";
     overlay.style.display = "flex";
     footer.style.display = "block";
+
+    // During call overlay: duck video audio so chime isn't drowned
+    duckVideoAudioForCall();
   }
 
   function hideOverlay() {
@@ -823,6 +796,7 @@ header("Pragma: no-cache");
     };
   }
 
+  // Refocus/visibility self-heal (replaces manual Alt-Tab)
   function installFocusHeal() {
     const heal = async () => {
       if (pausedByCall) return;
@@ -840,7 +814,7 @@ header("Pragma: no-cache");
   connectEvents();
   installFocusHeal();
 
-  // config reload
+  // Config reload (read-only)
   setInterval(async () => {
     try {
       const oldMode = mode;
@@ -854,40 +828,207 @@ header("Pragma: no-cache");
 </html>
 EOF
 
-  # README
+  say "Schreibe helper/list_media.php (filtert dotfiles/._*; sounds: mp3+m4a)"
+  cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
+<?php
+header("Content-Type: application/json; charset=utf-8");
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
+
+$kind = isset($_GET["kind"]) ? $_GET["kind"] : "";
+$allowed = ["videos", "images", "sounds"];
+if (!in_array($kind, $allowed, true)) {
+  http_response_code(400);
+  echo json_encode(["error" => "invalid kind"], JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+$base = realpath(__DIR__ . "/..");
+$dir  = realpath($base . "/" . $kind);
+if ($base === false || $dir === false || strpos($dir, $base . DIRECTORY_SEPARATOR) !== 0) {
+  http_response_code(500);
+  echo json_encode(["error" => "path error"], JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+$exts = [];
+if ($kind === "videos") $exts = ["mp4", "m4v"];
+if ($kind === "images") $exts = ["jpg", "jpeg", "png", "webp"];
+if ($kind === "sounds") $exts = ["mp3", "m4a"];
+
+$files = [];
+$dh = opendir($dir);
+if ($dh !== false) {
+  while (($f = readdir($dh)) !== false) {
+    if ($f === "." || $f === "..") continue;
+
+    // Skip dotfiles + AppleDouble (._*)
+    if (strpos($f, '.') === 0) continue;          // .* including .DS_Store and ._*
+    if (strpos($f, '._') === 0) continue;         // redundant, but explicit
+
+    // Skip common junk
+    if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
+
+    $p = $dir . DIRECTORY_SEPARATOR . $f;
+    if (!is_file($p)) continue;
+
+    $e = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+    if (!in_array($e, $exts, true)) continue;
+
+    $files[] = $f;
+  }
+  closedir($dh);
+}
+
+sort($files, SORT_STRING);
+echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
+EOF
+
+  say "Schreibe wartezimmer.json (rooms 1+2, display_seconds=10, comments, name_format, default_sound=jsbach.m4a)"
+  cat >"${CONFIG_JSON}" <<'EOF'
+{
+  "version": "1.4",
+
+  "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
+  "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
+  "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
+  "_comment3": "loesche-Skript muss angepasst werden je nach Dateiname",
+
+  "mode": "video",
+  "display_seconds": 10,
+  "video_dir": "videos",
+  "image_dir": "images",
+  "sound_dir": "sounds",
+  "default_sound": "jsbach.m4a",
+  "slideshow_interval_seconds": 10,
+  "playlist_restart_on_call_end": false,
+
+  "audio": {
+    "video_sound_enabled": false,
+    "video_volume": 0.15,
+    "chime_volume": 1.0
+  },
+
+  "name_format": {
+    "enabled": false,
+    "first_name": { "enabled": true, "letters": 1, "dot": true },
+    "last_name":  { "enabled": true, "letters": 3, "dot": true }
+  },
+
+  "fetch": {
+    "enabled": true,
+    "poll_interval_ms": 500,
+    "max_jobs_per_room_per_cycle": 10,
+    "rooms": [
+      {
+        "id": "sprechzimmer1",
+        "target": "Bitte ins Sprechzimmer 1",
+        "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
+        "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
+        "enabled": true
+      },
+      {
+        "id": "sprechzimmer2",
+        "target": "Bitte ins Sprechzimmer 2",
+        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
+        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
+        "enabled": true
+      }
+    ]
+  },
+
+  "logging": {
+    "enabled": false,
+    "sink": "file",
+    "level": "debug",
+    "log_file": "/var/www/html/logs/backend.log"
+  }
+}
+EOF
+
+  say "Schreibe loesche-sprechzimmer1.php (hardcoded delete)"
+  cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
+<?php
+header("Content-Type: text/plain; charset=utf-8");
+header("Cache-Control: no-store");
+
+$path = "/var/www/html/sprechzimmer1.gdt";
+if (substr($path, -4) !== ".gdt") {
+  http_response_code(500);
+  echo "bad extension\n";
+  exit;
+}
+if (!file_exists($path)) {
+  http_response_code(204);
+  echo "no file\n";
+  exit;
+}
+if (@unlink($path)) {
+  http_response_code(200);
+  echo "deleted\n";
+  exit;
+}
+http_response_code(500);
+echo "delete failed\n";
+EOF
+
+  say "Schreibe loesche-sprechzimmer2.php (hardcoded delete)"
+  cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
+<?php
+header("Content-Type: text/plain; charset=utf-8");
+header("Cache-Control: no-store");
+
+$path = "/var/www/html/sprechzimmer2.gdt";
+if (substr($path, -4) !== ".gdt") {
+  http_response_code(500);
+  echo "bad extension\n";
+  exit;
+}
+if (!file_exists($path)) {
+  http_response_code(204);
+  echo "no file\n";
+  exit;
+}
+if (@unlink($path)) {
+  http_response_code(200);
+  echo "deleted\n";
+  exit;
+}
+http_response_code(500);
+echo "delete failed\n";
+EOF
+
   cat >"${WEBROOT_DIR}/README_WARTEZIMMER.txt" <<EOF
 ${APP_NAME} v${VERSION}
 
 Startseite:
 - http://<pi-ip>/wartezimmer.php
-- Kiosk lokal: http://127.0.0.1/wartezimmer.php
+- Kiosk öffnet lokal: http://127.0.0.1/wartezimmer.php
 
 Konfiguration:
 - ${CONFIG_JSON}
 
-GDT-Quellen / Fetch (Sprechzimmer 1–2)
-- Standard-Konzept: Der Wartezimmerbildschirm (Raspberry Pi) holt die Aufrufdateien per HTTP (Pull).
-  Das ist die sauberste und sicherste Variante, da der Wartezimmerbildschirm ueber fragebogenpi vollstaendig vom Praxisnetz abgeschirmt ist.
+Hinweise (Empfehlung):
+- am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt
+- alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden
+- am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php
+- loesche-Skript muss angepasst werden je nach Dateiname
+- Das ist die sauberste und sicherste Variante, da der Wartezimmerbildschirm ueber fragebogenpi vollstaendig vom Praxisnetz abgeschirmt ist.
 
-Empfohlene URLs (Beispiel)
-- Sprechzimmer 1:
-  - GDT abrufen:   http://fragebogenpi.local/sprechzimmer1.gdt
-  - GDT loeschen:  http://fragebogenpi.local/loesche-sprechzimmer1.php
-- Sprechzimmer 2:
-  - GDT abrufen:   http://fragebogenpi.local/sprechzimmer2.gdt
-  - GDT loeschen:  http://fragebogenpi.local/loesche-sprechzimmer2.php
-
-Alternative: Schreiben per SMB
-- smb://wartezimmer/webroot  (Dateinamen: sprechzimmer1.gdt / sprechzimmer2.gdt)
-
-Name-Format (optional)
-- wartezimmer.json -> name_format.enabled=true
-  Beispiel: letters 1 / 3 + dot=true -> "T. Kie."
-  Leerzeichen und Bindestriche werden beim Zaehlen ignoriert.
+Test-GDT:
+- Per SMB im Webroot eine Datei 'sprechzimmer1.gdt' oder 'sprechzimmer2.gdt' anlegen.
+- Backend fetcht:
+  - http://127.0.0.1/sprechzimmer1.gdt
+  - http://127.0.0.1/sprechzimmer2.gdt
+- Danach ruft es:
+  - http://127.0.0.1/loesche-sprechzimmer1.php
+  - http://127.0.0.1/loesche-sprechzimmer2.php
 
 Audio:
-- Default chime: sounds/jsbach.m4a (Installer bootstrapped)
-- getrennte Volumes: audio.video_volume / audio.chime_volume
+- wartezimmer.json -> audio.video_sound_enabled (default false)
+- wartezimmer.json -> audio.video_volume (0..1)
+- wartezimmer.json -> audio.chime_volume (0..1)
+- default_sound: jsbach.m4a (liegt in /var/www/html/sounds/)
 
 Firewall:
 - eth0 offen
@@ -896,9 +1037,11 @@ EOF
 }
 
 configure_permissions_and_samba_ready() {
-  say "Rechte: SMB-Guest RW wie besprochen"
+  say "User/Gruppe/Rechte: SMB-Guest Schreibzugriff (wie bisher)"
+
   ensure_group "$INFODISPLAY_GROUP"
   ensure_user_infodisplay
+
   usermod -a -G "$INFODISPLAY_GROUP" "$INFODISPLAY_USER" >/dev/null 2>&1 || true
   usermod -a -G "$INFODISPLAY_GROUP" "www-data" >/dev/null 2>&1 || true
 
@@ -906,13 +1049,19 @@ configure_permissions_and_samba_ready() {
   chmod 2775 "${WEBROOT_DIR}"
   find "${WEBROOT_DIR}" -type d -exec chmod 2775 {} \;
   find "${WEBROOT_DIR}" -type f -exec chmod 0664 {} \;
+
+  mkdir -p "${WEBROOT_DIR}/logs"
+  chown "${INFODISPLAY_USER}:${INFODISPLAY_GROUP}" "${WEBROOT_DIR}/logs"
+  chmod 2775 "${WEBROOT_DIR}/logs"
 }
 
 configure_samba() {
-  say "Samba: Guest RW Share auf /var/www/html"
+  say "Samba: Guest RW Share auf gesamtes Webroot (/var/www/html)"
+
   backup_file /etc/samba/smb.conf
 
   cat >/etc/samba/smb.conf <<EOF
+# Managed by ${APP_NAME} installer v${VERSION}
 [global]
    workgroup = WORKGROUP
    server string = ${APP_NAME}
@@ -947,7 +1096,7 @@ EOF
 }
 
 install_backend() {
-  say "Backend (SSE + Fetch/Delete + Name-Format) installieren"
+  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd (logging default AUS)"
 
   cat >/usr/local/bin/infodisplay-backend.py <<'EOF'
 #!/usr/bin/env python3
@@ -958,14 +1107,17 @@ import json
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
 from aiohttp import web, ClientSession, ClientTimeout
 
 WEBROOT = "/var/www/html"
 CONFIG_PATH = os.path.join(WEBROOT, "wartezimmer.json")
 DEFAULT_LOG_FILE = os.path.join(WEBROOT, "logs", "backend.log")
 
+
 def ts() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
 
 class Logger:
     def __init__(self) -> None:
@@ -982,12 +1134,17 @@ class Logger:
             self.level = str(lc.get("level", "error")).lower()
             self.sink = str(lc.get("sink", "file")).lower()
             self.log_file = str(lc.get("log_file", DEFAULT_LOG_FILE))
+
         if self._fp:
-            try: self._fp.close()
-            except Exception: pass
+            try:
+                self._fp.close()
+            except Exception:
+                pass
             self._fp = None
+
         if not self.enabled:
             return
+
         if self.sink == "file":
             try:
                 os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
@@ -1005,8 +1162,10 @@ class Logger:
             return
         line = f"{ts()} [{lvl.upper()}] {msg}\n"
         if self.sink == "stdout":
-            try: print(line, end="", flush=True)
-            except Exception: pass
+            try:
+                print(line, end="", flush=True)
+            except Exception:
+                pass
         else:
             if self._fp:
                 try:
@@ -1015,9 +1174,17 @@ class Logger:
                 except Exception:
                     pass
 
+
 def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
+    """
+    Use ONLY:
+      3102 = Vorname
+      3101 = Nachname
+    Typical line: LLLFFFF<value> (LLL length ignored).
+    """
     firstname = ""
     lastname = ""
+
     for raw in gdt_text.splitlines():
         line = raw.strip()
         if not line or len(line) < 7:
@@ -1026,99 +1193,147 @@ def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
             continue
         field = line[3:7]
         value = line[7:].strip()
+
         if field == "3102" and value:
             firstname = value
         elif field == "3101" and value:
             lastname = value
+
         if firstname and lastname:
             break
+
     return firstname, lastname
 
-def _take_letters_ignoring_separators(s: str, n: int) -> str:
-    if n <= 0:
-        return ""
-    out = []
+
+def _abbr_component(text: str, letters: int, dot: bool, enabled: bool) -> str:
+    if not enabled:
+        return text.strip()
+
+    # min 1
+    try:
+        n = int(letters)
+    except Exception:
+        n = 1
+    if n < 1:
+        n = 1
+
+    # counting ignores: space, tab, "-", "–", "—"
+    ignore = {" ", "\t", "-", "–", "—"}
+    out_chars: List[str] = []
     count = 0
-    for ch in s.strip():
-        if ch in (" ", "\t", "-", "–", "—"):
+    for ch in text.strip():
+        if ch in ignore:
             continue
-        out.append(ch)
+        out_chars.append(ch)
         count += 1
         if count >= n:
             break
-    return "".join(out)
 
-def format_name(first: str, last: str, cfg: Dict[str, Any]) -> str:
+    out = "".join(out_chars).strip()
+    if not out:
+        return ""
+
+    if dot:
+        out += "."
+    return out
+
+
+def format_name(cfg: Dict[str, Any], firstname: str, lastname: str) -> str:
     nf = cfg.get("name_format", {})
-    if not isinstance(nf, dict) or not bool(nf.get("enabled", False)):
-        full = (first + " " + last).strip()
+    if not isinstance(nf, dict):
+        nf = {}
+
+    enabled = bool(nf.get("enabled", False))
+
+    full = (firstname + " " + lastname).strip()
+    if not enabled:
         return full if full else "Aufruf"
 
-    fnc = nf.get("first_name", {}) if isinstance(nf.get("first_name", {}), dict) else {}
-    lnc = nf.get("last_name", {}) if isinstance(nf.get("last_name", {}), dict) else {}
+    fn_cfg = nf.get("first_name", {})
+    ln_cfg = nf.get("last_name", {})
+    if not isinstance(fn_cfg, dict):
+        fn_cfg = {}
+    if not isinstance(ln_cfg, dict):
+        ln_cfg = {}
 
-    first_part = ""
-    if first.strip() and bool(fnc.get("enabled", True)):
-        letters = int(fnc.get("letters", 1) or 1)
-        dot = bool(fnc.get("dot", True))
-        first_part = _take_letters_ignoring_separators(first, max(1, letters))
-        if dot and first_part:
-            first_part += "."
+    fn = _abbr_component(
+        firstname,
+        letters=fn_cfg.get("letters", 1),
+        dot=bool(fn_cfg.get("dot", True)),
+        enabled=bool(fn_cfg.get("enabled", True)),
+    )
+    ln = _abbr_component(
+        lastname,
+        letters=ln_cfg.get("letters", 3),
+        dot=bool(ln_cfg.get("dot", True)),
+        enabled=bool(ln_cfg.get("enabled", True)),
+    )
 
-    last_part = ""
-    if last.strip() and bool(lnc.get("enabled", True)):
-        letters = int(lnc.get("letters", 3) or 3)
-        dot = bool(lnc.get("dot", True))
-        last_part = _take_letters_ignoring_separators(last, max(1, letters))
-        if dot and last_part:
-            last_part += "."
-
-    out = (first_part + " " + last_part).strip()
+    out = (fn + " " + ln).strip()
     return out if out else "Aufruf"
+
 
 class EventHub:
     def __init__(self) -> None:
         self._clients: List[asyncio.Queue] = []
+
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=200)
         self._clients.append(q)
         return q
+
     def unsubscribe(self, q: asyncio.Queue) -> None:
-        try: self._clients.remove(q)
-        except ValueError: pass
+        try:
+            self._clients.remove(q)
+        except ValueError:
+            pass
+
     async def publish(self, payload: Dict[str, Any]) -> None:
         dead: List[asyncio.Queue] = []
         for q in self._clients:
-            try: q.put_nowait(payload)
-            except asyncio.QueueFull: dead.append(q)
-        for q in dead: self.unsubscribe(q)
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                dead.append(q)
+        for q in dead:
+            self.unsubscribe(q)
+
 
 async def load_config(log: Logger) -> Optional[Dict[str, Any]]:
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else None
+        if not isinstance(cfg, dict):
+            log.log("error", "Config is not a JSON object")
+            return None
+        return cfg
     except Exception as e:
         log.log("error", f"Config load failed: {e}")
         return None
+
 
 async def sse_events(request: web.Request) -> web.StreamResponse:
     hub: EventHub = request.app["hub"]
     log: Logger = request.app["log"]
     q = hub.subscribe()
 
-    resp = web.StreamResponse(status=200, headers={
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-    })
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
     await resp.prepare(request)
 
     async def heartbeat() -> None:
         while True:
-            try: await resp.write(b": ping\n\n")
-            except Exception: break
+            try:
+                await resp.write(b": ping\n\n")
+            except Exception:
+                break
             await asyncio.sleep(10)
 
     hb_task = asyncio.create_task(heartbeat())
@@ -1133,26 +1348,34 @@ async def sse_events(request: web.Request) -> web.StreamResponse:
     finally:
         hb_task.cancel()
         hub.unsubscribe(q)
+
     return resp
+
 
 async def fetch_gdt(session: ClientSession, url: str, log: Logger) -> Optional[str]:
     try:
         async with session.get(url) as r:
-            if r.status == 204: return None
-            if r.status != 200: return None
+            log.log("debug", f"fetch {url} -> {r.status}")
+            if r.status == 204:
+                return None
+            if r.status != 200:
+                return None
             txt = await r.text()
             return txt if txt.strip() else None
     except Exception as e:
         log.log("warn", f"fetch error {url}: {e}")
         return None
 
+
 async def call_delete(session: ClientSession, url: str, log: Logger) -> bool:
     try:
         async with session.get(url) as r:
+            log.log("debug", f"delete {url} -> {r.status}")
             return r.status in (200, 204)
     except Exception as e:
         log.log("warn", f"delete error {url}: {e}")
         return False
+
 
 async def poll_loop(app: web.Application) -> None:
     hub: EventHub = app["hub"]
@@ -1183,14 +1406,17 @@ async def poll_loop(app: web.Application) -> None:
 
         async with ClientSession(timeout=timeout) as session:
             for room in rooms:
-                if not isinstance(room, dict): continue
-                if not bool(room.get("enabled", True)): continue
+                if not isinstance(room, dict):
+                    continue
+                if not bool(room.get("enabled", True)):
+                    continue
 
                 rid = str(room.get("id", "room")).strip() or "room"
                 target = str(room.get("target", "")).strip()
                 fetch_url = str(room.get("fetch_url", "")).strip()
                 delete_url = str(room.get("delete_url", "")).strip()
-                if not fetch_url or not delete_url: continue
+                if not fetch_url or not delete_url:
+                    continue
 
                 sound = f"{sound_dir}/{default_sound}"
                 so = room.get("sound_override")
@@ -1203,8 +1429,8 @@ async def poll_loop(app: web.Application) -> None:
                     if gdt_text is None:
                         break
 
-                    first, last = parse_first_last_from_gdt(gdt_text)
-                    name = format_name(first, last, cfg)
+                    firstname, lastname = parse_first_last_from_gdt(gdt_text)
+                    name = format_name(cfg, firstname, lastname)
 
                     payload = {
                         "type": "call",
@@ -1227,15 +1453,20 @@ async def poll_loop(app: web.Application) -> None:
 
         await asyncio.sleep(max(0.1, poll_ms / 1000.0))
 
+
 async def on_startup(app: web.Application) -> None:
     app["poll_task"] = asyncio.create_task(poll_loop(app))
+
 
 async def on_cleanup(app: web.Application) -> None:
     t = app.get("poll_task")
     if t:
         t.cancel()
-        try: await t
-        except Exception: pass
+        try:
+            await t
+        except Exception:
+            pass
+
 
 def main() -> None:
     log = Logger()
@@ -1253,10 +1484,12 @@ def main() -> None:
     app["log"] = log
 
     app.router.add_get("/events", sse_events)
+
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
     web.run_app(app, host="127.0.0.1", port=8765, access_log=None)
+
 
 if __name__ == "__main__":
     main()
@@ -1289,18 +1522,20 @@ EOF
 configure_tmpfiles_for_chrome() {
   say "tmpfiles.d: RAM-Verzeichnisse für Chromium unter /run"
   cat >/etc/tmpfiles.d/wartezimmer.conf <<EOF
+# Managed by ${APP_NAME} installer v${VERSION}
 d ${RUN_CHROME_DIR} 0755 ${KIOSK_USER} ${KIOSK_USER} -
 EOF
   systemd-tmpfiles --create /etc/tmpfiles.d/wartezimmer.conf >/dev/null 2>&1 || true
 }
 
-configure_kiosk_like_132() {
-  say "Kiosk (wie 1.3.2): Chromium direkt starten (ohne wmctrl/xdotool), DPMS aus, Anti-throttle Flags"
+configure_kiosk() {
+  say "Kiosk: Autologin + Openbox autostart + Chromium (maximale Robustheit)"
 
   ensure_kiosk_user
 
   mkdir -p /etc/lightdm/lightdm.conf.d
   cat >/etc/lightdm/lightdm.conf.d/50-wartezimmer.conf <<EOF
+# Managed by ${APP_NAME} installer v${VERSION}
 [Seat:*]
 autologin-user=${KIOSK_USER}
 autologin-user-timeout=0
@@ -1311,24 +1546,37 @@ EOF
   chown -R "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config"
 
   local chrome_cmd="chromium"
-  command -v chromium-browser >/dev/null 2>&1 && chrome_cmd="chromium-browser" || true
-  command -v chromium >/dev/null 2>&1 && chrome_cmd="chromium" || true
+  if command -v chromium-browser >/dev/null 2>&1; then
+    chrome_cmd="chromium-browser"
+  elif command -v chromium >/dev/null 2>&1; then
+    chrome_cmd="chromium"
+  fi
 
   cat >"${KIOSK_HOME}/.config/openbox/autostart" <<EOF
+# Managed by ${APP_NAME} installer v${VERSION}
+
+# Cursor verstecken
 unclutter -idle 0.5 -root &
 
-# DPMS/Screensaver aus
+# DPMS/Screensaver aus (gegen schwarzes Bild / Throttling)
 xset s off
 xset s noblank
 xset -dpms
 
 mkdir -p "${RUN_CHROME_DIR}"
 
-# Warte bis lokaler Webserver da ist (konservativ)
+# Warten, bis lokale Endpunkte wirklich funktionieren (statt nur sleep):
+# 1) wartezimmer.php (HTTP 200)
+# 2) wartezimmer.json (HTTP 200)
+# 3) Playlist liefert mindestens 1 Datei
 for i in \$(seq 1 240); do
   if curl -fsS "http://127.0.0.1/wartezimmer.php" >/dev/null 2>&1 && \
-     curl -fsS "http://127.0.0.1/wartezimmer.json" >/dev/null 2>&1; then
-    break
+     curl -fsS "http://127.0.0.1/wartezimmer.json" >/dev/null 2>&1 && \
+     curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '"files":\['; then
+    # Optional: echte Dateiliste prüfen
+    if curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '\.mp4"\|\.m4v"'; then
+      break
+    fi
   fi
   sleep 0.5
 done
@@ -1348,6 +1596,12 @@ ${chrome_cmd} \\
   --disable-pinch \\
   --overscroll-history-navigation=0 \\
   "http://127.0.0.1/wartezimmer.php" &
+
+# Chromium in Vordergrund holen + einmaliges Reload (ersetzt Alt-Tab + F5)
+sleep 1.5
+wmctrl -a Chromium >/dev/null 2>&1 || true
+sleep 0.3
+xdotool key F5 >/dev/null 2>&1 || true
 EOF
 
   chown "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config/openbox/autostart"
@@ -1355,19 +1609,6 @@ EOF
 
   systemctl set-default graphical.target
   systemctl enable lightdm
-}
-
-configure_permissions_and_samba_ready() {
-  say "Rechte (Webroot) setzen"
-  ensure_group "$INFODISPLAY_GROUP"
-  ensure_user_infodisplay
-  usermod -a -G "$INFODISPLAY_GROUP" "$INFODISPLAY_USER" >/dev/null 2>&1 || true
-  usermod -a -G "$INFODISPLAY_GROUP" "www-data" >/dev/null 2>&1 || true
-
-  chown -R "${INFODISPLAY_USER}:${INFODISPLAY_GROUP}" "${WEBROOT_DIR}"
-  chmod 2775 "${WEBROOT_DIR}"
-  find "${WEBROOT_DIR}" -type d -exec chmod 2775 {} \;
-  find "${WEBROOT_DIR}" -type f -exec chmod 0664 {} \;
 }
 
 main() {
@@ -1380,6 +1621,9 @@ main() {
   ensure_user_infodisplay
 
   ask_hostname_and_set_robust
+
+  # WLAN optional; Firewall-Regeln gelten besonders für wlan0, aber können immer aktiv sein.
+  # (Falls wlan0 nicht existiert, ist das kein Problem — nftables matcht dann einfach nichts.)
   ask_wlan_enable_and_configure || true
 
   configure_firewall_wlan_only
@@ -1392,12 +1636,20 @@ main() {
 
   install_backend
   configure_tmpfiles_for_chrome
-  configure_kiosk_like_132
+  configure_kiosk
 
   say "Fertig. Reboot empfohlen."
   echo
-  echo "Hinweis (1.3.6): Boot-Video-Fix passiert jetzt in der Web-App selbst (watchdog reload),"
-  echo "kein wmctrl/xdotool mehr."
+  echo "Wichtige URLs:"
+  echo "  - Web:   http://<pi-ip>/wartezimmer.php"
+  echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
+  echo
+  echo "Firewall:"
+  echo "  - eth0: offen"
+  echo "  - wlan0: inbound blockiert (Ping+DHCP+established erlaubt)"
+  echo
+  echo "Audio-Konfig:"
+  echo "  - ${CONFIG_JSON} -> audio.video_sound_enabled / audio.video_volume / audio.chime_volume"
 }
 
 main "$@"
