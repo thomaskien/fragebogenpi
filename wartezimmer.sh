@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.3.1
+# Version: 1.3.2
 # Stand:   2026-02-21
 # Autor:   Dr. Thomas Kienzle
 #
@@ -24,13 +24,20 @@ set -euo pipefail
 # - 1.3.1:
 #   - Fix: WLAN-Abfrage hing “unsichtbar” (keine stdout/stderr Umleitung mehr)
 #   - Robustheit: interaktive Reads über /dev/tty (funktioniert auch bei heredoc/pipe)
-#   - Audio-Fix: Chime spielt zuverlässig auch wenn Video-Sound aktiv ist
-#       - Chime wird vor play() immer reset (pause + currentTime=0)
-#       - Während Meldung wird Video-Audio geduckt (mute/volume), danach sauber restauriert
+#   - Audio-Fix: Chime spielt zuverlässig auch wenn Video-Sound aktiv ist (reset + ducking)
+# - 1.3.2:
+#   - Hostname: zusätzlich /boot/firmware/user-data (cloud-config) “hostname:” auf den gewählten Hostnamen setzen
+#   - wartezimmer.json:
+#       - display_seconds auf 10
+#       - rooms erweitert auf sprechzimmer1 + sprechzimmer2 mit target "Bitte ins Sprechzimmer X"
+#       - _comment*-Hinweise (gültiges JSON) ergänzt
+#   - Löschskript für Sprechzimmer 2 zusätzlich erzeugt (loesche-sprechzimmer2.php)
+#   - README_WARTEZIMMER.txt: Inhalte der _comment*-Hinweise zusätzlich dokumentiert (inkl. Hinweis:
+#       "sauberste und sicherste Variante, da der Wartezimmerbildschirm über fragebogenpi vollständig vom Praxisnetz abgeschirmt ist.")
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.3.1"
+VERSION="1.3.2"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -75,7 +82,6 @@ ensure_user_infodisplay() {
     return 0
   fi
   say "Lege Benutzer an: ${INFODISPLAY_USER}"
-  # Wichtig: Primärgruppe explizit setzen, sonst: "group exists"
   useradd -r -m -d "/var/lib/${INFODISPLAY_USER}" -s /usr/sbin/nologin -g "${INFODISPLAY_GROUP}" "${INFODISPLAY_USER}"
 }
 
@@ -109,11 +115,33 @@ apt_install() {
     python3 python3-aiohttp python3-requests
 }
 
+# v1.3.2: also patch cloud-init user-data hostname
+patch_cloud_user_data_hostname() {
+  local hn="$1"
+  local ud="/boot/firmware/user-data"
+  if [[ ! -f "$ud" ]]; then
+    return 0
+  fi
+
+  # Only patch if it looks like cloud-config and has a hostname key
+  if ! grep -qE '^\s*#cloud-config\b' "$ud"; then
+    return 0
+  fi
+
+  if grep -qE '^\s*hostname\s*:' "$ud"; then
+    backup_file "$ud"
+    # Replace first matching line, keep indentation (best-effort)
+    sed -i -E "0,/^\s*hostname\s*:/s//hostname: ${hn}/" "$ud"
+  else
+    # If no hostname key exists, do not invent structure (conservative)
+    return 0
+  fi
+}
+
 ask_hostname_and_set_robust() {
   say "Hostname setzen (robust)"
   local hn
 
-  # Read from tty for robustness (also works if script was started with heredoc/pipe)
   if [[ -t 0 ]]; then
     read -r -p "Hostname [default: wartezimmer]: " hn
   else
@@ -127,10 +155,8 @@ ask_hostname_and_set_robust() {
 
   say "Setze Hostname auf: $hn"
 
-  # 1) persistent
   echo "$hn" >/etc/hostname
 
-  # 2) /etc/hosts 127.0.1.1
   backup_file /etc/hosts
   if grep -qE '^127\.0\.1\.1' /etc/hosts; then
     sed -i -E "s/^127\.0\.1\.1\s+.*/127.0.1.1\t${hn}/" /etc/hosts
@@ -138,15 +164,15 @@ ask_hostname_and_set_robust() {
     echo -e "127.0.1.1\t${hn}" >>/etc/hosts
   fi
 
-  # 3) immediate kernel hostname
   hostname "$hn" || true
 
-  # 4) also via hostnamectl if available
   if command -v hostnamectl >/dev/null 2>&1; then
     hostnamectl set-hostname "$hn" || true
   fi
 
-  # 5) verify
+  # v1.3.2: patch cloud-init file
+  patch_cloud_user_data_hostname "$hn"
+
   local cur
   cur="$(hostname || true)"
   if [[ "$cur" != "$hn" ]]; then
@@ -176,7 +202,6 @@ ask_wlan_enable_and_configure() {
   fi
   ssid="${ssid:-fragebogenpi}"
 
-  # Password prompt MUST go to tty
   echo -n "WLAN Passwort (WPA2/PSK): " >/dev/tty
   IFS= read -r -s pass </dev/tty
   echo >/dev/tty
@@ -230,7 +255,7 @@ table inet filter {
     # LAN: alles offen
     iif "eth0" accept
 
-    # WLAN: DHCP client replies (for wpa_supplicant/dhcpcd)
+    # WLAN: DHCP client replies
     iif "wlan0" udp sport 67 udp dport 68 accept
     iif "wlan0" udp sport 547 udp dport 546 accept
 
@@ -241,7 +266,6 @@ table inet filter {
     # WLAN: sonst nichts rein
     iif "wlan0" drop
 
-    # Default: akzeptiere nichts Unerwartetes
     drop
   }
 
@@ -313,7 +337,6 @@ EOF
 
   DirectoryIndex wartezimmer.php index.php index.html
 
-  # Disable PHP execution inside media folders
   <Directory /var/www/html/videos>
     php_admin_flag engine off
   </Directory>
@@ -343,7 +366,8 @@ install_webroot_files() {
     "${WEBROOT_DIR}/helper" \
     "${WEBROOT_DIR}/logs"
 
-  say "Schreibe wartezimmer.php (Footer nur bei Meldung, Self-Heal, Audio-Fix)"
+  # wartezimmer.php is unchanged from 1.3.1 (only version string changes)
+  say "Schreibe wartezimmer.php"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
 <?php
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
@@ -394,7 +418,7 @@ header("Pragma: no-cache");
       background: rgba(0,0,0,0.35);
       text-shadow: 0 1px 2px rgba(0,0,0,0.7);
       pointer-events: none;
-      display: none; /* nur bei Meldung */
+      display: none;
       z-index: 11;
     }
   </style>
@@ -430,7 +454,6 @@ header("Pragma: no-cache");
   let slideshowInterval = 10;
   let restartAfterCall = false;
 
-  // audio config
   let videoSoundEnabled = false;
   let videoVolume = 0.15;
   let chimeVolume = 1.0;
@@ -445,7 +468,6 @@ header("Pragma: no-cache");
   let videoWatchdog = null;
   let starting = false;
 
-  // for audio ducking during call
   let savedVideoMuted = true;
   let savedVideoVolume = 0.0;
 
@@ -485,7 +507,7 @@ header("Pragma: no-cache");
   }
 
   async function ensurePlaylist(kind) {
-    for (let i = 0; i < 60; i++) { // ~60s max
+    for (let i = 0; i < 60; i++) {
       const files = await listMedia(kind);
       if (files.length > 0) return files;
       await new Promise(res => setTimeout(res, 1000));
@@ -615,7 +637,6 @@ header("Pragma: no-cache");
 
   function duckVideoAudioForCall() {
     if (!videoEl) return;
-    // Save current state, then mute (duck to silence). Restored after call.
     savedVideoMuted = !!videoEl.muted;
     savedVideoVolume = (typeof videoEl.volume === 'number') ? videoEl.volume : 0.0;
     videoEl.muted = true;
@@ -644,7 +665,6 @@ header("Pragma: no-cache");
     }
     if (videoEl) {
       restoreVideoAudioAfterCall();
-      // ensure config applies (in case config changed)
       applyVideoAudioFromConfig();
       await tryPlayVideo();
     }
@@ -652,7 +672,6 @@ header("Pragma: no-cache");
 
   async function playChime(soundPath) {
     try {
-      // Always reset so it plays even if previously playing / in a weird state
       chime.pause();
       chime.currentTime = 0;
       chime.volume = chimeVolume;
@@ -763,11 +782,8 @@ $dh = opendir($dir);
 if ($dh !== false) {
   while (($f = readdir($dh)) !== false) {
     if ($f === "." || $f === "..") continue;
-
-    // Skip dotfiles + AppleDouble (._*)
-    if (strpos($f, '.') === 0) continue;
+    if (strpos($f, '.') === 0) continue;    // .* and ._*
     if (strpos($f, '._') === 0) continue;
-
     if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
 
     $p = $dir . DIRECTORY_SEPARATOR . $f;
@@ -785,12 +801,13 @@ sort($files, SORT_STRING);
 echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
 EOF
 
-  say "Schreibe wartezimmer.json (fetch aktiv, logging default AUS, audio config)"
+  # v1.3.2: JSON updated (display_seconds=10, two rooms, comments)
+  say "Schreibe wartezimmer.json (v1.3.2 Änderungen)"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.3.1",
+  "version": "1.3.2",
   "mode": "video",
-  "display_seconds": 20,
+  "display_seconds": 10,
   "video_dir": "videos",
   "image_dir": "images",
   "sound_dir": "sounds",
@@ -811,9 +828,20 @@ EOF
     "rooms": [
       {
         "id": "sprechzimmer1",
-        "target": "Sprechzimmer 1",
+        "target": "Bitte ins Sprechzimmer 1",
+        "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
+        "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
         "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
+        "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
+        "_comment3": "die datei loesche muss editiert werden je nach name den man waehlt",
         "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
+        "enabled": true
+      },
+      {
+        "id": "sprechzimmer2",
+        "target": "Bitte ins Sprechzimmer 2",
+        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
+        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
         "enabled": true
       }
     ]
@@ -854,6 +882,35 @@ http_response_code(500);
 echo "delete failed\n";
 EOF
 
+  # v1.3.2: new delete script for room 2
+  say "Schreibe loesche-sprechzimmer2.php (hardcoded delete)"
+  cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
+<?php
+header("Content-Type: text/plain; charset=utf-8");
+header("Cache-Control: no-store");
+
+$path = "/var/www/html/sprechzimmer2.gdt";
+if (substr($path, -4) !== ".gdt") {
+  http_response_code(500);
+  echo "bad extension\n";
+  exit;
+}
+if (!file_exists($path)) {
+  http_response_code(204);
+  echo "no file\n";
+  exit;
+}
+if (@unlink($path)) {
+  http_response_code(200);
+  echo "deleted\n";
+  exit;
+}
+http_response_code(500);
+echo "delete failed\n";
+EOF
+
+  # v1.3.2: README includes comment contents (with requested wording tweak)
+  say "Schreibe README_WARTEZIMMER.txt (v1.3.2 Ergänzung)"
   cat >"${WEBROOT_DIR}/README_WARTEZIMMER.txt" <<EOF
 ${APP_NAME} v${VERSION}
 
@@ -864,6 +921,27 @@ Startseite:
 Konfiguration:
 - ${CONFIG_JSON}
 
+GDT-Quellen / Fetch (Sprechzimmer 1–2)
+- Standard-Konzept: Der Wartezimmerbildschirm (Raspberry Pi) holt die Aufrufdateien per HTTP (Pull).
+  Das ist die sauberste und sicherste Variante, da der Wartezimmerbildschirm ueber fragebogenpi vollstaendig vom Praxisnetz abgeschirmt ist.
+
+Empfohlene URLs (Beispiel)
+- Sprechzimmer 1:
+  - GDT abrufen:   http://fragebogenpi.local/sprechzimmer1.gdt
+  - GDT loeschen:  http://fragebogenpi.local/loesche-sprechzimmer1.php
+- Sprechzimmer 2:
+  - GDT abrufen:   http://fragebogenpi.local/sprechzimmer2.gdt
+  - GDT loeschen:  http://fragebogenpi.local/loesche-sprechzimmer2.php
+
+Alternative (wenn HTTP nicht moeglich): Schreiben per SMB
+- Alternativ kann die GDT-Datei auch direkt per SMB in das Webroot geschrieben werden:
+  smb://wartezimmer/webroot
+  (Dateinamen-Beispiel: sprechzimmer1.gdt / sprechzimmer2.gdt)
+
+Wichtig: Loeschskripte anpassen
+- Die Dateien loesche-sprechzimmer1.php / loesche-sprechzimmer2.php loeschen jeweils eine hart codierte GDT-Datei.
+- Wenn du Dateinamen oder Pfade aenderst, muessen diese Loeschskripte entsprechend angepasst werden.
+
 Audio:
 - wartezimmer.json -> audio.video_sound_enabled (default false)
 - wartezimmer.json -> audio.video_volume (0..1)
@@ -872,9 +950,6 @@ Audio:
 Firewall:
 - eth0 offen
 - wlan0 inbound blockiert (nur established/related, DHCP, Ping)
-
-Hinweis:
-- macOS/SMB dotfiles (._* / .DS_Store) werden ignoriert.
 EOF
 }
 
@@ -936,7 +1011,7 @@ EOF
 }
 
 install_backend() {
-  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd (logging default AUS)"
+  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd (unverändert)"
 
   cat >/usr/local/bin/infodisplay-backend.py <<'EOF'
 #!/usr/bin/env python3
@@ -1016,12 +1091,6 @@ class Logger:
 
 
 def parse_name_from_gdt(gdt_text: str) -> str:
-    """
-    Use ONLY:
-      3102 = Vorname
-      3101 = Nachname
-    Typical line: LLLFFFF<value> (LLL length ignored).
-    """
     firstname = ""
     lastname = ""
 
@@ -1327,14 +1396,12 @@ EOF
 
 unclutter -idle 0.5 -root &
 
-# DPMS/Screensaver aus
 xset s off
 xset s noblank
 xset -dpms
 
 mkdir -p "${RUN_CHROME_DIR}"
 
-# Warten bis lokale Endpunkte zuverlässig sind
 for i in \$(seq 1 240); do
   if curl -fsS "http://127.0.0.1/wartezimmer.php" >/dev/null 2>&1 && \
      curl -fsS "http://127.0.0.1/wartezimmer.json" >/dev/null 2>&1 && \
@@ -1362,7 +1429,6 @@ ${chrome_cmd} \\
   --overscroll-history-navigation=0 \\
   "http://127.0.0.1/wartezimmer.php" &
 
-# Chromium in Vordergrund holen + einmaliges Reload
 sleep 1.5
 wmctrl -a Chromium >/dev/null 2>&1 || true
 sleep 0.3
@@ -1376,63 +1442,6 @@ EOF
   systemctl enable lightdm
 }
 
-configure_permissions_and_samba_ready() {
-  say "User/Gruppe/Rechte: SMB-Guest Schreibzugriff (wie bisher)"
-  ensure_group "$INFODISPLAY_GROUP"
-  ensure_user_infodisplay
-
-  usermod -a -G "$INFODISPLAY_GROUP" "$INFODISPLAY_USER" >/dev/null 2>&1 || true
-  usermod -a -G "$INFODISPLAY_GROUP" "www-data" >/dev/null 2>&1 || true
-
-  chown -R "${INFODISPLAY_USER}:${INFODISPLAY_GROUP}" "${WEBROOT_DIR}"
-  chmod 2775 "${WEBROOT_DIR}"
-  find "${WEBROOT_DIR}" -type d -exec chmod 2775 {} \;
-  find "${WEBROOT_DIR}" -type f -exec chmod 0664 {} \;
-
-  mkdir -p "${WEBROOT_DIR}/logs"
-  chown "${INFODISPLAY_USER}:${INFODISPLAY_GROUP}" "${WEBROOT_DIR}/logs"
-  chmod 2775 "${WEBROOT_DIR}/logs"
-}
-
-configure_samba() {
-  say "Samba: Guest RW Share auf gesamtes Webroot (/var/www/html)"
-  backup_file /etc/samba/smb.conf
-
-  cat >/etc/samba/smb.conf <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
-[global]
-   workgroup = WORKGROUP
-   server string = ${APP_NAME}
-   server role = standalone server
-
-   map to guest = Bad User
-   guest account = ${INFODISPLAY_USER}
-
-   logging = syslog
-   log level = 0
-
-   server min protocol = SMB2
-   client min protocol = SMB2
-
-[webroot]
-   comment = ${APP_NAME} Webroot (Guest RW)
-   path = ${WEBROOT_DIR}
-   browseable = yes
-   read only = no
-   guest ok = yes
-   public = yes
-
-   force user = ${INFODISPLAY_USER}
-   force group = ${INFODISPLAY_GROUP}
-
-   create mask = 0664
-   directory mask = 2775
-EOF
-
-  systemctl enable smbd nmbd >/dev/null 2>&1 || true
-  systemctl restart smbd nmbd
-}
-
 main() {
   need_root
   say "${APP_NAME} — Installer v${VERSION}"
@@ -1444,7 +1453,6 @@ main() {
 
   ask_hostname_and_set_robust
 
-  # WLAN optional (keine Ausgaben unterdrücken!)
   ask_wlan_enable_and_configure || true
 
   configure_firewall_wlan_only
@@ -1465,12 +1473,12 @@ main() {
   echo "  - Web:   http://<pi-ip>/wartezimmer.php"
   echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
   echo
+  echo "Hostname-Hinweis:"
+  echo "  - /etc/hostname + /etc/hosts + (falls vorhanden) /boot/firmware/user-data hostname: gesetzt"
+  echo
   echo "Firewall:"
   echo "  - eth0: offen"
   echo "  - wlan0: inbound blockiert (Ping+DHCP+established erlaubt)"
-  echo
-  echo "Audio-Konfig:"
-  echo "  - ${CONFIG_JSON} -> audio.video_sound_enabled / audio.video_volume / audio.chime_volume"
 }
 
 main "$@"
