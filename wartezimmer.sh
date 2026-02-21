@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.3.2
+# Version: 1.3.4
 # Stand:   2026-02-21
 # Autor:   Dr. Thomas Kienzle
 #
@@ -27,17 +27,18 @@ set -euo pipefail
 #   - Audio-Fix: Chime spielt zuverlässig auch wenn Video-Sound aktiv ist (reset + ducking)
 # - 1.3.2:
 #   - Hostname: zusätzlich /boot/firmware/user-data (cloud-config) “hostname:” auf den gewählten Hostnamen setzen
-#   - wartezimmer.json:
-#       - display_seconds auf 10
-#       - rooms erweitert auf sprechzimmer1 + sprechzimmer2 mit target "Bitte ins Sprechzimmer X"
-#       - _comment*-Hinweise (gültiges JSON) ergänzt
-#   - Löschskript für Sprechzimmer 2 zusätzlich erzeugt (loesche-sprechzimmer2.php)
-#   - README_WARTEZIMMER.txt: Inhalte der _comment*-Hinweise zusätzlich dokumentiert (inkl. Hinweis:
-#       "sauberste und sicherste Variante, da der Wartezimmerbildschirm über fragebogenpi vollständig vom Praxisnetz abgeschirmt ist.")
+#   - wartezimmer.json: display_seconds=10, rooms 1+2, comments, delete scripts, README erweitert
+# - 1.3.3:
+#   - Namensabkürzung konfigurierbar (optional, T. Kie.)
+#   - Bootstrapping Sound: jsbach.m4a -> /var/www/html/sounds/, default_sound angepasst
+#   - list_media.php: sounds akzeptiert .m4a
+# - 1.3.4:
+#   - FIX: cloud-init user-data Patch war fehlerhaft (hostname wurde angehängt).
+#     Jetzt wird die komplette Zeile "hostname: ..." exakt ersetzt (idempotent, robust).
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.3.2"
+VERSION="1.3.4"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -45,12 +46,13 @@ CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
 INFODISPLAY_USER="infodisplay"
 INFODISPLAY_GROUP="infodisplay"
 
-# Kiosk user (Autologin)
 KIOSK_USER="pi"
 KIOSK_HOME="/home/${KIOSK_USER}"
 
-# RAM dirs
 RUN_CHROME_DIR="/run/wartezimmer-chromium"
+
+BOOTSTRAP_SOUND_URL="https://github.com/thomaskien/fragebogenpi/raw/refs/heads/main/jsbach.m4a"
+BOOTSTRAP_SOUND_PATH="${WEBROOT_DIR}/sounds/jsbach.m4a"
 
 say() { echo -e "\n### $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -115,33 +117,33 @@ apt_install() {
     python3 python3-aiohttp python3-requests
 }
 
-# v1.3.2: also patch cloud-init user-data hostname
+# v1.3.4 FIX: replace complete hostname line, not just the token
 patch_cloud_user_data_hostname() {
   local hn="$1"
   local ud="/boot/firmware/user-data"
-  if [[ ! -f "$ud" ]]; then
-    return 0
-  fi
 
-  # Only patch if it looks like cloud-config and has a hostname key
-  if ! grep -qE '^\s*#cloud-config\b' "$ud"; then
-    return 0
-  fi
+  [[ -f "$ud" ]] || return 0
+  grep -qE '^\s*#cloud-config\b' "$ud" || return 0
+  grep -qE '^\s*hostname\s*:' "$ud" || return 0
 
-  if grep -qE '^\s*hostname\s*:' "$ud"; then
-    backup_file "$ud"
-    # Replace first matching line, keep indentation (best-effort)
-    sed -i -E "0,/^\s*hostname\s*:/s//hostname: ${hn}/" "$ud"
-  else
-    # If no hostname key exists, do not invent structure (conservative)
-    return 0
-  fi
+  backup_file "$ud"
+
+  python3 - <<PY
+import re, pathlib
+hn = ${hn!r}
+p = pathlib.Path(${ud!r})
+t = p.read_text(encoding="utf-8", errors="replace")
+# Replace the whole line once (keep indentation + key formatting)
+t2, n = re.subn(r'(?m)^(\\s*hostname\\s*:\\s*).*$',
+                r'\\1' + hn, t, count=1)
+p.write_text(t2, encoding="utf-8")
+print("patched hostname lines:", n)
+PY
 }
 
 ask_hostname_and_set_robust() {
   say "Hostname setzen (robust)"
   local hn
-
   if [[ -t 0 ]]; then
     read -r -p "Hostname [default: wartezimmer]: " hn
   else
@@ -165,12 +167,10 @@ ask_hostname_and_set_robust() {
   fi
 
   hostname "$hn" || true
-
   if command -v hostnamectl >/dev/null 2>&1; then
     hostnamectl set-hostname "$hn" || true
   fi
 
-  # v1.3.2: patch cloud-init file
   patch_cloud_user_data_hostname "$hn"
 
   local cur
@@ -356,6 +356,13 @@ EOF
   systemctl restart apache2
 }
 
+bootstrap_sound_file() {
+  say "Bootstrap Sound: jsbach.m4a -> ${BOOTSTRAP_SOUND_PATH}"
+  mkdir -p "${WEBROOT_DIR}/sounds"
+  curl -fL --retry 3 --retry-delay 2 -o "${BOOTSTRAP_SOUND_PATH}.tmp" "${BOOTSTRAP_SOUND_URL}"
+  mv -f "${BOOTSTRAP_SOUND_PATH}.tmp" "${BOOTSTRAP_SOUND_PATH}"
+}
+
 install_webroot_files() {
   say "Webroot-Struktur + Dateien anlegen in /var/www/html"
   mkdir -p \
@@ -366,7 +373,8 @@ install_webroot_files() {
     "${WEBROOT_DIR}/helper" \
     "${WEBROOT_DIR}/logs"
 
-  # wartezimmer.php is unchanged from 1.3.1 (only version string changes)
+  bootstrap_sound_file
+
   say "Schreibe wartezimmer.php"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
 <?php
@@ -450,7 +458,7 @@ header("Pragma: no-cache");
 
   let cfg = null;
   let mode = "video";
-  let displaySeconds = 20;
+  let displaySeconds = 10;
   let slideshowInterval = 10;
   let restartAfterCall = false;
 
@@ -489,7 +497,7 @@ header("Pragma: no-cache");
     cfg = await r.json();
 
     mode = cfg.mode || "video";
-    displaySeconds = Number(cfg.display_seconds ?? 20);
+    displaySeconds = Number(cfg.display_seconds ?? 10);
     slideshowInterval = Number(cfg.slideshow_interval_seconds ?? 10);
     restartAfterCall = Boolean(cfg.playlist_restart_on_call_end ?? false);
 
@@ -703,7 +711,7 @@ header("Pragma: no-cache");
       pauseNormal();
       showOverlay(data.display_text || "Aufruf", data.target || "", data.source_id || "");
 
-      const sound = data.sound || ("sounds/" + (cfg.default_sound || "chime.mp3"));
+      const sound = data.sound || ("sounds/" + (cfg.default_sound || "jsbach.m4a"));
       await playChime(sound);
 
       const ms = Math.max(1, Number(data.display_seconds ?? displaySeconds)) * 1000;
@@ -749,7 +757,7 @@ header("Pragma: no-cache");
 </html>
 EOF
 
-  say "Schreibe helper/list_media.php (filtert dotfiles/._*)"
+  say "Schreibe helper/list_media.php (filtert dotfiles/._*; sounds mp3+m4a)"
   cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
 <?php
 header("Content-Type: application/json; charset=utf-8");
@@ -775,7 +783,7 @@ if ($base === false || $dir === false || strpos($dir, $base . DIRECTORY_SEPARATO
 $exts = [];
 if ($kind === "videos") $exts = ["mp4", "m4v"];
 if ($kind === "images") $exts = ["jpg", "jpeg", "png", "webp"];
-if ($kind === "sounds") $exts = ["mp3"];
+if ($kind === "sounds") $exts = ["mp3", "m4a"];
 
 $files = [];
 $dh = opendir($dir);
@@ -801,17 +809,16 @@ sort($files, SORT_STRING);
 echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
 EOF
 
-  # v1.3.2: JSON updated (display_seconds=10, two rooms, comments)
-  say "Schreibe wartezimmer.json (v1.3.2 Änderungen)"
+  say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.3.2",
+  "version": "1.3.4",
   "mode": "video",
   "display_seconds": 10,
   "video_dir": "videos",
   "image_dir": "images",
   "sound_dir": "sounds",
-  "default_sound": "chime.mp3",
+  "default_sound": "jsbach.m4a",
   "slideshow_interval_seconds": 10,
   "playlist_restart_on_call_end": false,
 
@@ -819,6 +826,12 @@ EOF
     "video_sound_enabled": false,
     "video_volume": 0.15,
     "chime_volume": 1.0
+  },
+
+  "name_format": {
+    "enabled": false,
+    "first_name": { "enabled": true, "letters": 1, "dot": true },
+    "last_name":  { "enabled": true, "letters": 3, "dot": true }
   },
 
   "fetch": {
@@ -856,61 +869,31 @@ EOF
 }
 EOF
 
-  say "Schreibe loesche-sprechzimmer1.php (hardcoded delete)"
+  say "Schreibe loesche-sprechzimmer1.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
 header("Cache-Control: no-store");
-
 $path = "/var/www/html/sprechzimmer1.gdt";
-if (substr($path, -4) !== ".gdt") {
-  http_response_code(500);
-  echo "bad extension\n";
-  exit;
-}
-if (!file_exists($path)) {
-  http_response_code(204);
-  echo "no file\n";
-  exit;
-}
-if (@unlink($path)) {
-  http_response_code(200);
-  echo "deleted\n";
-  exit;
-}
-http_response_code(500);
-echo "delete failed\n";
+if (substr($path, -4) !== ".gdt") { http_response_code(500); echo "bad extension\n"; exit; }
+if (!file_exists($path)) { http_response_code(204); echo "no file\n"; exit; }
+if (@unlink($path)) { http_response_code(200); echo "deleted\n"; exit; }
+http_response_code(500); echo "delete failed\n";
 EOF
 
-  # v1.3.2: new delete script for room 2
-  say "Schreibe loesche-sprechzimmer2.php (hardcoded delete)"
+  say "Schreibe loesche-sprechzimmer2.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
 header("Cache-Control: no-store");
-
 $path = "/var/www/html/sprechzimmer2.gdt";
-if (substr($path, -4) !== ".gdt") {
-  http_response_code(500);
-  echo "bad extension\n";
-  exit;
-}
-if (!file_exists($path)) {
-  http_response_code(204);
-  echo "no file\n";
-  exit;
-}
-if (@unlink($path)) {
-  http_response_code(200);
-  echo "deleted\n";
-  exit;
-}
-http_response_code(500);
-echo "delete failed\n";
+if (substr($path, -4) !== ".gdt") { http_response_code(500); echo "bad extension\n"; exit; }
+if (!file_exists($path)) { http_response_code(204); echo "no file\n"; exit; }
+if (@unlink($path)) { http_response_code(200); echo "deleted\n"; exit; }
+http_response_code(500); echo "delete failed\n";
 EOF
 
-  # v1.3.2: README includes comment contents (with requested wording tweak)
-  say "Schreibe README_WARTEZIMMER.txt (v1.3.2 Ergänzung)"
+  say "Schreibe README_WARTEZIMMER.txt"
   cat >"${WEBROOT_DIR}/README_WARTEZIMMER.txt" <<EOF
 ${APP_NAME} v${VERSION}
 
@@ -942,7 +925,15 @@ Wichtig: Loeschskripte anpassen
 - Die Dateien loesche-sprechzimmer1.php / loesche-sprechzimmer2.php loeschen jeweils eine hart codierte GDT-Datei.
 - Wenn du Dateinamen oder Pfade aenderst, muessen diese Loeschskripte entsprechend angepasst werden.
 
+Name-Format (optional, Abkuerzung)
+- In wartezimmer.json -> name_format:
+  - enabled=false: normal (z.B. "Thomas Kienzle")
+  - enabled=true: Abkuerzung nach Konfiguration
+    Beispiel (letters=1 / letters=3, dot=true): "T. Kie."
+  - Leerzeichen und Bindestriche werden fuer das Zaehlen der Buchstaben ignoriert.
+
 Audio:
+- Default chime: sounds/jsbach.m4a (wird vom Installer heruntergeladen)
 - wartezimmer.json -> audio.video_sound_enabled (default false)
 - wartezimmer.json -> audio.video_volume (0..1)
 - wartezimmer.json -> audio.chime_volume (0..1)
@@ -1011,7 +1002,7 @@ EOF
 }
 
 install_backend() {
-  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd (unverändert)"
+  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd"
 
   cat >/usr/local/bin/infodisplay-backend.py <<'EOF'
 #!/usr/bin/env python3
@@ -1021,7 +1012,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from aiohttp import web, ClientSession, ClientTimeout
 
@@ -1090,7 +1081,7 @@ class Logger:
                     pass
 
 
-def parse_name_from_gdt(gdt_text: str) -> str:
+def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
     firstname = ""
     lastname = ""
 
@@ -1111,7 +1102,54 @@ def parse_name_from_gdt(gdt_text: str) -> str:
         if firstname and lastname:
             break
 
-    out = (firstname + " " + lastname).strip()
+    return firstname, lastname
+
+
+def _take_letters_ignoring_separators(s: str, n: int) -> str:
+    if n <= 0:
+        return ""
+    out = []
+    count = 0
+    for ch in s.strip():
+        if ch in (" ", "\t", "-", "–", "—"):
+            continue
+        out.append(ch)
+        count += 1
+        if count >= n:
+            break
+    return "".join(out)
+
+
+def format_name(first: str, last: str, cfg: Dict[str, Any]) -> str:
+    nf = cfg.get("name_format", {})
+    if not isinstance(nf, dict) or not bool(nf.get("enabled", False)):
+        full = (first + " " + last).strip()
+        return full if full else "Aufruf"
+
+    fnc = nf.get("first_name", {})
+    lnc = nf.get("last_name", {})
+    if not isinstance(fnc, dict):
+        fnc = {}
+    if not isinstance(lnc, dict):
+        lnc = {}
+
+    first_part = ""
+    if first.strip() and bool(fnc.get("enabled", True)):
+        letters = int(fnc.get("letters", 1) or 1)
+        dot = bool(fnc.get("dot", True))
+        first_part = _take_letters_ignoring_separators(first, max(1, letters))
+        if dot and first_part:
+            first_part += "."
+
+    last_part = ""
+    if last.strip() and bool(lnc.get("enabled", True)):
+        letters = int(lnc.get("letters", 3) or 3)
+        dot = bool(lnc.get("dot", True))
+        last_part = _take_letters_ignoring_separators(last, max(1, letters))
+        if dot and last_part:
+            last_part += "."
+
+    out = (first_part + " " + last_part).strip()
     return out if out else "Aufruf"
 
 
@@ -1239,8 +1277,8 @@ async def poll_loop(app: web.Application) -> None:
         rooms = fetch_cfg.get("rooms", []) if isinstance(fetch_cfg.get("rooms", []), list) else []
 
         sound_dir = str(cfg.get("sound_dir", "sounds")).strip() or "sounds"
-        default_sound = str(cfg.get("default_sound", "chime.mp3")).strip() or "chime.mp3"
-        display_seconds = int(cfg.get("display_seconds", 20))
+        default_sound = str(cfg.get("default_sound", "jsbach.m4a")).strip() or "jsbach.m4a"
+        display_seconds = int(cfg.get("display_seconds", 10))
 
         if not enabled or not rooms:
             await asyncio.sleep(1.0)
@@ -1271,7 +1309,9 @@ async def poll_loop(app: web.Application) -> None:
                     if gdt_text is None:
                         break
 
-                    name = parse_name_from_gdt(gdt_text)
+                    first, last = parse_first_last_from_gdt(gdt_text)
+                    name = format_name(first, last, cfg)
+
                     payload = {
                         "type": "call",
                         "source_id": rid,
@@ -1452,7 +1492,6 @@ main() {
   ensure_user_infodisplay
 
   ask_hostname_and_set_robust
-
   ask_wlan_enable_and_configure || true
 
   configure_firewall_wlan_only
@@ -1469,16 +1508,8 @@ main() {
 
   say "Fertig. Reboot empfohlen."
   echo
-  echo "URLs:"
-  echo "  - Web:   http://<pi-ip>/wartezimmer.php"
-  echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
-  echo
-  echo "Hostname-Hinweis:"
-  echo "  - /etc/hostname + /etc/hosts + (falls vorhanden) /boot/firmware/user-data hostname: gesetzt"
-  echo
-  echo "Firewall:"
-  echo "  - eth0: offen"
-  echo "  - wlan0: inbound blockiert (Ping+DHCP+established erlaubt)"
+  echo "Hinweis Hostname (v1.3.4):"
+  echo "  - /etc/hostname + /etc/hosts + (falls vorhanden) /boot/firmware/user-data hostname: wird ZEILENWEISE ersetzt (kein Anhaengen)."
 }
 
 main "$@"
