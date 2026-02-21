@@ -94,7 +94,7 @@ chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
 
-Für den **Wartezimmer-Aufrufschirm* ZWEITER Raspberry pi:
+Für den **Wartezimmer-Aufrufschirm** ZWEITER Raspberry pi:
 
 ```bash
 wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/wartezimmer.sh
