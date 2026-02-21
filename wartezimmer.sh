@@ -117,7 +117,7 @@ apt_install() {
     python3 python3-aiohttp python3-requests
 }
 
-# v1.3.4 FIX: replace complete hostname line, not just the token
+# v1.3.4 FIX: replace complete hostname line, not just the token (idempotent)
 patch_cloud_user_data_hostname() {
   local hn="$1"
   local ud="/boot/firmware/user-data"
@@ -128,14 +128,14 @@ patch_cloud_user_data_hostname() {
 
   backup_file "$ud"
 
-  python3 - <<PY
-import re, pathlib
-hn = ${hn!r}
-p = pathlib.Path(${ud!r})
+  HN="$hn" UD="$ud" python3 - <<'PY'
+import os, re, pathlib
+hn = os.environ["HN"]
+ud = os.environ["UD"]
+p = pathlib.Path(ud)
 t = p.read_text(encoding="utf-8", errors="replace")
-# Replace the whole line once (keep indentation + key formatting)
-t2, n = re.subn(r'(?m)^(\\s*hostname\\s*:\\s*).*$',
-                r'\\1' + hn, t, count=1)
+t2, n = re.subn(r'(?m)^(\s*hostname\s*:\s*).*$',
+                r'\1' + hn, t, count=1)
 p.write_text(t2, encoding="utf-8")
 print("patched hostname lines:", n)
 PY
@@ -307,7 +307,6 @@ configure_apache_open_lan() {
 
   backup_file /etc/apache2/ports.conf
   cat >/etc/apache2/ports.conf <<'EOF'
-# Managed by fragebogenpi wartezimmerbildschirm installer
 Listen 0.0.0.0:80
 
 <IfModule ssl_module>
@@ -321,9 +320,7 @@ EOF
 
   backup_file /etc/apache2/sites-available/000-default.conf
   cat >/etc/apache2/sites-available/000-default.conf <<'EOF'
-# Managed by fragebogenpi wartezimmerbildschirm installer
 <VirtualHost *:80>
-  ServerAdmin webmaster@localhost
   DocumentRoot /var/www/html
 
   ErrorLog /var/www/html/logs/apache_error.log
@@ -374,6 +371,118 @@ install_webroot_files() {
     "${WEBROOT_DIR}/logs"
 
   bootstrap_sound_file
+
+  say "Schreibe helper/list_media.php"
+  cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
+<?php
+header("Content-Type: application/json; charset=utf-8");
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
+
+$kind = isset($_GET["kind"]) ? $_GET["kind"] : "";
+$allowed = ["videos", "images", "sounds"];
+if (!in_array($kind, $allowed, true)) {
+  http_response_code(400);
+  echo json_encode(["error" => "invalid kind"], JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+$base = realpath(__DIR__ . "/..");
+$dir  = realpath($base . "/" . $kind);
+if ($base === false || $dir === false || strpos($dir, $base . DIRECTORY_SEPARATOR) !== 0) {
+  http_response_code(500);
+  echo json_encode(["error" => "path error"], JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+$exts = [];
+if ($kind === "videos") $exts = ["mp4", "m4v"];
+if ($kind === "images") $exts = ["jpg", "jpeg", "png", "webp"];
+if ($kind === "sounds") $exts = ["mp3", "m4a"];
+
+$files = [];
+$dh = opendir($dir);
+if ($dh !== false) {
+  while (($f = readdir($dh)) !== false) {
+    if ($f === "." || $f === "..") continue;
+    if (strpos($f, '.') === 0) continue;    // .* and ._*
+    if (strpos($f, '._') === 0) continue;
+    if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
+
+    $p = $dir . DIRECTORY_SEPARATOR . $f;
+    if (!is_file($p)) continue;
+
+    $e = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+    if (!in_array($e, $exts, true)) continue;
+
+    $files[] = $f;
+  }
+  closedir($dh);
+}
+
+sort($files, SORT_STRING);
+echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
+EOF
+
+  say "Schreibe wartezimmer.json"
+  cat >"${CONFIG_JSON}" <<'EOF'
+{
+  "version": "1.3.4",
+  "mode": "video",
+  "display_seconds": 10,
+  "video_dir": "videos",
+  "image_dir": "images",
+  "sound_dir": "sounds",
+  "default_sound": "jsbach.m4a",
+  "slideshow_interval_seconds": 10,
+  "playlist_restart_on_call_end": false,
+
+  "audio": {
+    "video_sound_enabled": false,
+    "video_volume": 0.15,
+    "chime_volume": 1.0
+  },
+
+  "name_format": {
+    "enabled": false,
+    "first_name": { "enabled": true, "letters": 1, "dot": true },
+    "last_name":  { "enabled": true, "letters": 3, "dot": true }
+  },
+
+  "fetch": {
+    "enabled": true,
+    "poll_interval_ms": 500,
+    "max_jobs_per_room_per_cycle": 10,
+    "rooms": [
+      {
+        "id": "sprechzimmer1",
+        "target": "Bitte ins Sprechzimmer 1",
+        "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
+        "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
+        "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
+        "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
+        "_comment3": "die datei loesche muss editiert werden je nach name den man waehlt",
+        "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
+        "enabled": true
+      },
+      {
+        "id": "sprechzimmer2",
+        "target": "Bitte ins Sprechzimmer 2",
+        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
+        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
+        "enabled": true
+      }
+    ]
+  },
+
+  "logging": {
+    "enabled": false,
+    "sink": "file",
+    "level": "debug",
+    "log_file": "/var/www/html/logs/backend.log"
+  }
+}
+EOF
 
   say "Schreibe wartezimmer.php"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
@@ -757,119 +866,7 @@ header("Pragma: no-cache");
 </html>
 EOF
 
-  say "Schreibe helper/list_media.php (filtert dotfiles/._*; sounds mp3+m4a)"
-  cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
-<?php
-header("Content-Type: application/json; charset=utf-8");
-header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
-header("Pragma: no-cache");
-
-$kind = isset($_GET["kind"]) ? $_GET["kind"] : "";
-$allowed = ["videos", "images", "sounds"];
-if (!in_array($kind, $allowed, true)) {
-  http_response_code(400);
-  echo json_encode(["error" => "invalid kind"], JSON_UNESCAPED_UNICODE);
-  exit;
-}
-
-$base = realpath(__DIR__ . "/..");
-$dir  = realpath($base . "/" . $kind);
-if ($base === false || $dir === false || strpos($dir, $base . DIRECTORY_SEPARATOR) !== 0) {
-  http_response_code(500);
-  echo json_encode(["error" => "path error"], JSON_UNESCAPED_UNICODE);
-  exit;
-}
-
-$exts = [];
-if ($kind === "videos") $exts = ["mp4", "m4v"];
-if ($kind === "images") $exts = ["jpg", "jpeg", "png", "webp"];
-if ($kind === "sounds") $exts = ["mp3", "m4a"];
-
-$files = [];
-$dh = opendir($dir);
-if ($dh !== false) {
-  while (($f = readdir($dh)) !== false) {
-    if ($f === "." || $f === "..") continue;
-    if (strpos($f, '.') === 0) continue;    // .* and ._*
-    if (strpos($f, '._') === 0) continue;
-    if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
-
-    $p = $dir . DIRECTORY_SEPARATOR . $f;
-    if (!is_file($p)) continue;
-
-    $e = strtolower(pathinfo($f, PATHINFO_EXTENSION));
-    if (!in_array($e, $exts, true)) continue;
-
-    $files[] = $f;
-  }
-  closedir($dh);
-}
-
-sort($files, SORT_STRING);
-echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
-EOF
-
-  say "Schreibe wartezimmer.json"
-  cat >"${CONFIG_JSON}" <<'EOF'
-{
-  "version": "1.3.4",
-  "mode": "video",
-  "display_seconds": 10,
-  "video_dir": "videos",
-  "image_dir": "images",
-  "sound_dir": "sounds",
-  "default_sound": "jsbach.m4a",
-  "slideshow_interval_seconds": 10,
-  "playlist_restart_on_call_end": false,
-
-  "audio": {
-    "video_sound_enabled": false,
-    "video_volume": 0.15,
-    "chime_volume": 1.0
-  },
-
-  "name_format": {
-    "enabled": false,
-    "first_name": { "enabled": true, "letters": 1, "dot": true },
-    "last_name":  { "enabled": true, "letters": 3, "dot": true }
-  },
-
-  "fetch": {
-    "enabled": true,
-    "poll_interval_ms": 500,
-    "max_jobs_per_room_per_cycle": 10,
-    "rooms": [
-      {
-        "id": "sprechzimmer1",
-        "target": "Bitte ins Sprechzimmer 1",
-        "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
-        "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
-        "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
-        "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
-        "_comment3": "die datei loesche muss editiert werden je nach name den man waehlt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
-        "enabled": true
-      },
-      {
-        "id": "sprechzimmer2",
-        "target": "Bitte ins Sprechzimmer 2",
-        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
-        "enabled": true
-      }
-    ]
-  },
-
-  "logging": {
-    "enabled": false,
-    "sink": "file",
-    "level": "debug",
-    "log_file": "/var/www/html/logs/backend.log"
-  }
-}
-EOF
-
-  say "Schreibe loesche-sprechzimmer1.php"
+  say "Schreibe loesche-sprechzimmer1.php + loesche-sprechzimmer2.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
@@ -880,8 +877,6 @@ if (!file_exists($path)) { http_response_code(204); echo "no file\n"; exit; }
 if (@unlink($path)) { http_response_code(200); echo "deleted\n"; exit; }
 http_response_code(500); echo "delete failed\n";
 EOF
-
-  say "Schreibe loesche-sprechzimmer2.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
@@ -967,7 +962,6 @@ configure_samba() {
   backup_file /etc/samba/smb.conf
 
   cat >/etc/samba/smb.conf <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
 [global]
    workgroup = WORKGROUP
    server string = ${APP_NAME}
@@ -1402,7 +1396,6 @@ EOF
 configure_tmpfiles_for_chrome() {
   say "tmpfiles.d: RAM-Verzeichnisse für Chromium unter /run"
   cat >/etc/tmpfiles.d/wartezimmer.conf <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
 d ${RUN_CHROME_DIR} 0755 ${KIOSK_USER} ${KIOSK_USER} -
 EOF
   systemd-tmpfiles --create /etc/tmpfiles.d/wartezimmer.conf >/dev/null 2>&1 || true
@@ -1414,7 +1407,6 @@ configure_kiosk() {
 
   mkdir -p /etc/lightdm/lightdm.conf.d
   cat >/etc/lightdm/lightdm.conf.d/50-wartezimmer.conf <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
 [Seat:*]
 autologin-user=${KIOSK_USER}
 autologin-user-timeout=0
@@ -1432,8 +1424,6 @@ EOF
   fi
 
   cat >"${KIOSK_HOME}/.config/openbox/autostart" <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
-
 unclutter -idle 0.5 -root &
 
 xset s off
@@ -1453,20 +1443,20 @@ for i in \$(seq 1 240); do
   sleep 0.5
 done
 
-${chrome_cmd} \\
-  --kiosk \\
-  --noerrdialogs \\
-  --disable-infobars \\
-  --disable-session-crashed-bubble \\
-  --autoplay-policy=no-user-gesture-required \\
-  --lang=de-DE \\
-  --disable-background-timer-throttling \\
-  --disable-renderer-backgrounding \\
-  --disable-backgrounding-occluded-windows \\
-  --user-data-dir="${RUN_CHROME_DIR}/profile" \\
-  --disk-cache-dir="${RUN_CHROME_DIR}/cache" \\
-  --disable-pinch \\
-  --overscroll-history-navigation=0 \\
+${chrome_cmd} \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --autoplay-policy=no-user-gesture-required \
+  --lang=de-DE \
+  --disable-background-timer-throttling \
+  --disable-renderer-backgrounding \
+  --disable-backgrounding-occluded-windows \
+  --user-data-dir="${RUN_CHROME_DIR}/profile" \
+  --disk-cache-dir="${RUN_CHROME_DIR}/cache" \
+  --disable-pinch \
+  --overscroll-history-navigation=0 \
   "http://127.0.0.1/wartezimmer.php" &
 
 sleep 1.5
@@ -1509,7 +1499,7 @@ main() {
   say "Fertig. Reboot empfohlen."
   echo
   echo "Hinweis Hostname (v1.3.4):"
-  echo "  - /etc/hostname + /etc/hosts + (falls vorhanden) /boot/firmware/user-data hostname: wird ZEILENWEISE ersetzt (kein Anhaengen)."
+  echo "  - /boot/firmware/user-data: komplette Zeile 'hostname: ...' wird ersetzt (kein Anhaengen)."
 }
 
 main "$@"
