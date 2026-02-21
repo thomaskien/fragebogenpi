@@ -34,4 +34,6 @@ jq -r '.. | objects | .url? // empty' "$tmp" \
   done
 
 #chromium akzeptiert auch mov-dateien in mp4 umbenannt!!
+cd Aerial-H264
+for f in ./*.mov; do [ -e "$f" ] || continue; mv -- "$f" "${f%.mov}.mp4"; done
 
