@@ -93,6 +93,18 @@ wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/f
 chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
+
+Für den **Wartezimmer-Aufrufschirm* ZWEITER Raspberry pi:
+
+```bash
+wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/wartezimmer.sh
+chmod +x fragebogenpi.sh
+sudo bash ./fragebogenpi.sh
+```
+
+
+
+
 <img src="https://github.com/thomaskien/fragebogenpi/blob/main/Screenshot%202026-01-31%20at%2021.04.02.png" alt="drawing" width="700"/>
 
 Im T2med muss man geräte anlegen, die beispieldateien sind runterzuladen z.B. GDTGeraet_Selfie_Konfiguration.json
