@@ -94,12 +94,12 @@ chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
 
-Für den **Wartezimmer-Aufrufschirm** ZWEITER Raspberry pi:
+Für den **Wartezimmer-Aufrufschirm** auf ZWEITEM Raspberry pi:
 
 ```bash
 wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/wartezimmer.sh
-chmod +x fragebogenpi.sh
-sudo bash ./fragebogenpi.sh
+chmod +x wartezimmer.sh
+sudo bash ./wartezimmer.sh
 ```
 
 
