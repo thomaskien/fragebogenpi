@@ -8,8 +8,14 @@ Ziel ist:
 - Daten strukturiert in das Praxisverwaltungssystem zu bekommen
 - Entwickelt für T2med -> modifizierbar für andere systeme
 - **Anamnesebögen für Neupatienten**
-- **Patientenfoto für die Kartei**
-- **Befundfotos direkt in die Kartei vom Handy**
+- Patientenfoto für die Kartei
+- **Patientenaufruf auf einem Bildschirm**
+- Befundfotos direkt in die Kartei vom Handy
+
+
+[![Video-Titel](https://img.youtube.com/vi/nMGKcn7A4_Y/hqdefault.jpg)](https://www.youtube.com/watch?v=nMGKcn7A4_Y)
+
+
 
 
 iPad:
