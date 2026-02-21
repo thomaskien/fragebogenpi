@@ -32,5 +32,6 @@ jq -r '.. | objects | .url? // empty' "$tmp" \
     fn="${fn%%\?*}"
     wget --no-check-certificate -c -O "$OUTDIR/$fn" "$url"
   done
+#chromium akzeptiert auch die mov-dateien in mp4 umbenannt
 cd Aerial-H264
 mv *.mov *.mp4
