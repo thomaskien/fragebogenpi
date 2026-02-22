@@ -9,7 +9,7 @@ Ziel ist:
 - Entwickelt für T2med -> modifizierbar für andere systeme
 - **Anamnesebögen für Neupatienten**
 - Patientenfoto für die Kartei
-- **Patientenaufruf auf einem Bildschirm**
+- optional: **Patientenaufruf auf einem Bildschirm**
 - Befundfotos direkt in die Kartei vom Handy
 
 
