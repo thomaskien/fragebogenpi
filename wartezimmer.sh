@@ -3,8 +3,8 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.4
-# Stand:   2026-02-21
+# Version: 1.5
+# Stand:   2026-02-22
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
@@ -46,11 +46,14 @@ set -euo pipefail
 #     - Audio: default_sound=jsbach.m4a; Sound-Bootstrap (curl -fL + retries, atomar); list_media.php listet mp3+m4a.
 #     - Backend: optionales Name-Abkürzen per name_format (Zählen ohne Leerzeichen/Bindestriche).
 #     - Frontend: Chime robust (pause+seek+play); während Meldung Video-Audio ducken und danach restore.
-#   - Kiosk/Boot-Setup (configure_kiosk) NICHT umgebaut.
+# - 1.5:
+#   - Browser im Kiosk auf Firefox umgestellt (konservativ, restliche Architektur unverändert).
+#   - Firefox-Profil "kiosk" wird SSH-sicher (ohne GUI-Start) per profiles.ini + Ordner + user.js erzeugt/verwaltet.
+#   - Beispielvideo wird gebootstrapped nach /var/www/html/videos/zzz_beispielvideo.mp4 (fail-fast, retries, atomar; nur wenn fehlend).
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.4"
+VERSION="1.5"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -62,12 +65,12 @@ INFODISPLAY_GROUP="infodisplay"
 KIOSK_USER="pi"
 KIOSK_HOME="/home/${KIOSK_USER}"
 
-# RAM dirs
-RUN_CHROME_DIR="/run/wartezimmer-chromium"
-
-# Sound bootstrap
+# Bootstrap assets
 JSBACH_URL="https://github.com/thomaskien/fragebogenpi/raw/refs/heads/main/jsbach.m4a"
 JSBACH_DEST="${WEBROOT_DIR}/sounds/jsbach.m4a"
+
+EXAMPLEVIDEO_URL="https://github.com/thomaskien/fragebogenpi/raw/refs/heads/main/zzz_beispielvideo.mp4"
+EXAMPLEVIDEO_DEST="${WEBROOT_DIR}/videos/zzz_beispielvideo.mp4"
 
 say() { echo -e "\n### $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -127,7 +130,7 @@ apt_install() {
     wpasupplicant wireless-tools \
     xserver-xorg xinit x11-xserver-utils \
     lightdm openbox \
-    chromium \
+    firefox-esr \
     unclutter-xfixes \
     wmctrl xdotool \
     python3 python3-aiohttp python3-requests
@@ -159,12 +162,10 @@ dst = sys.argv[3]
 with open(src, "r", encoding="utf-8", errors="replace") as fp:
     data = fp.read()
 
-# replace whole line, only once
 pat = re.compile(r'^(\s*hostname\s*:\s*).*$',
                  re.MULTILINE)
 new, n = pat.subn(lambda m: m.group(1) + hn, data, count=1)
 
-# If no replacement happened, keep original (idempotent / safe)
 if n == 0:
     new = data
 
@@ -172,7 +173,6 @@ with open(dst, "w", encoding="utf-8") as fp:
     fp.write(new)
 PY
 
-  # atomic-ish move (same filesystem)
   mv -f "$tmp" "$f"
 }
 
@@ -316,22 +316,6 @@ EOF
   systemctl restart nftables
 }
 
-configure_chromium_policy() {
-  say "Chromium Policy: Übersetzungsleiste deaktivieren (TranslateEnabled=false)"
-  mkdir -p /etc/chromium/policies/managed
-  cat >/etc/chromium/policies/managed/00-disable-translate.json <<'EOF'
-{
-  "TranslateEnabled": false
-}
-EOF
-  mkdir -p /etc/chromium-browser/policies/managed || true
-  cat >/etc/chromium-browser/policies/managed/00-disable-translate.json <<'EOF'
-{
-  "TranslateEnabled": false
-}
-EOF
-}
-
 configure_apache_open_lan() {
   say "Apache: im LAN erreichbar (0.0.0.0:80)"
   mkdir -p "${WEBROOT_DIR}/logs"
@@ -388,29 +372,34 @@ EOF
   systemctl restart apache2
 }
 
-download_jsbach_sound() {
-  say "Sound-Bootstrap: jsbach.m4a herunterladen (fail-fast, retries, atomar)"
-  mkdir -p "${WEBROOT_DIR}/sounds"
+download_asset_if_missing() {
+  # download only if missing or empty; fail-fast; retries; atomic move
+  local url="$1"
+  local dest="$2"
+
+  if [[ -s "$dest" ]]; then
+    return 0
+  fi
+
+  local d
+  d="$(dirname "$dest")"
+  mkdir -p "$d"
 
   local tmp
-  tmp="$(mktemp "${WEBROOT_DIR}/sounds/.jsbach.m4a.tmp.XXXXXX")"
+  tmp="$(mktemp "${d}/.$(basename "$dest").tmp.XXXXXX")"
 
-  # curl fail-fast + retries
-  # --retry-all-errors: auch bei transienten Netzwerkfehlern
-  if ! curl -fL --retry 6 --retry-delay 1 --retry-all-errors -o "$tmp" "$JSBACH_URL"; then
+  if ! curl -fL --retry 6 --retry-delay 1 --retry-all-errors -o "$tmp" "$url"; then
     rm -f "$tmp" || true
-    die "Download fehlgeschlagen: ${JSBACH_URL}"
+    die "Download fehlgeschlagen: ${url}"
   fi
 
-  # sanity: non-empty
   if [[ ! -s "$tmp" ]]; then
     rm -f "$tmp" || true
-    die "Download ist leer: ${JSBACH_URL}"
+    die "Download ist leer: ${url}"
   fi
 
-  # atomar move ins Ziel
-  mv -f "$tmp" "$JSBACH_DEST"
-  chmod 0664 "$JSBACH_DEST" || true
+  mv -f "$tmp" "$dest"
+  chmod 0664 "$dest" || true
 }
 
 install_webroot_files() {
@@ -423,7 +412,9 @@ install_webroot_files() {
     "${WEBROOT_DIR}/helper" \
     "${WEBROOT_DIR}/logs"
 
-  download_jsbach_sound
+  say "Bootstrap: jsbach.m4a + Beispielvideo (falls fehlend)"
+  download_asset_if_missing "$JSBACH_URL" "$JSBACH_DEST"
+  download_asset_if_missing "$EXAMPLEVIDEO_URL" "$EXAMPLEVIDEO_DEST"
 
   say "Schreibe wartezimmer.php (Footer nur bei Meldung, Self-Heal, Audio-Config, Ducking/Chime-Robustheit)"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
@@ -568,7 +559,6 @@ header("Pragma: no-cache");
   }
 
   async function ensurePlaylist(kind) {
-    // Retry until we have at least one file
     for (let i = 0; i < 60; i++) { // ~60s max
       const files = await listMedia(kind);
       if (files.length > 0) return files;
@@ -708,7 +698,6 @@ header("Pragma: no-cache");
   async function resumeNormal() {
     pausedByCall = false;
 
-    // Restore audio state if we ducked
     if (duckActive && videoEl) {
       try {
         if (prevMuted !== null) videoEl.muted = prevMuted;
@@ -718,7 +707,6 @@ header("Pragma: no-cache");
       prevMuted = null;
       prevVolume = null;
 
-      // re-apply config (source of truth)
       try { applyVideoAudioConfig(); } catch(e) {}
     }
 
@@ -733,7 +721,6 @@ header("Pragma: no-cache");
 
   async function playChime(soundPath) {
     try {
-      // Robust chime playback
       chime.pause();
       chime.currentTime = 0;
       chime.volume = chimeVolume;
@@ -760,8 +747,6 @@ header("Pragma: no-cache");
     ovSource.textContent = source || "";
     overlay.style.display = "flex";
     footer.style.display = "block";
-
-    // During call overlay: duck video audio so chime isn't drowned
     duckVideoAudioForCall();
   }
 
@@ -796,7 +781,6 @@ header("Pragma: no-cache");
     };
   }
 
-  // Refocus/visibility self-heal (replaces manual Alt-Tab)
   function installFocusHeal() {
     const heal = async () => {
       if (pausedByCall) return;
@@ -814,7 +798,6 @@ header("Pragma: no-cache");
   connectEvents();
   installFocusHeal();
 
-  // Config reload (read-only)
   setInterval(async () => {
     try {
       const oldMode = mode;
@@ -887,7 +870,7 @@ EOF
   say "Schreibe wartezimmer.json (rooms 1+2, display_seconds=10, comments, name_format, default_sound=jsbach.m4a)"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.4",
+  "version": "1.5",
 
   "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
   "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
@@ -1029,6 +1012,9 @@ Audio:
 - wartezimmer.json -> audio.video_volume (0..1)
 - wartezimmer.json -> audio.chime_volume (0..1)
 - default_sound: jsbach.m4a (liegt in /var/www/html/sounds/)
+
+Video:
+- Beispielvideo (falls fehlend): /var/www/html/videos/zzz_beispielvideo.mp4
 
 Firewall:
 - eth0 offen
@@ -1209,7 +1195,6 @@ def _abbr_component(text: str, letters: int, dot: bool, enabled: bool) -> str:
     if not enabled:
         return text.strip()
 
-    # min 1
     try:
         n = int(letters)
     except Exception:
@@ -1217,7 +1202,6 @@ def _abbr_component(text: str, letters: int, dot: bool, enabled: bool) -> str:
     if n < 1:
         n = 1
 
-    # counting ignores: space, tab, "-", "–", "—"
     ignore = {" ", "\t", "-", "–", "—"}
     out_chars: List[str] = []
     count = 0
@@ -1519,19 +1503,106 @@ EOF
   systemctl enable --now infodisplay-backend.service
 }
 
-configure_tmpfiles_for_chrome() {
-  say "tmpfiles.d: RAM-Verzeichnisse für Chromium unter /run"
-  cat >/etc/tmpfiles.d/wartezimmer.conf <<EOF
-# Managed by ${APP_NAME} installer v${VERSION}
-d ${RUN_CHROME_DIR} 0755 ${KIOSK_USER} ${KIOSK_USER} -
+ensure_firefox_kiosk_profile_ssh_safe() {
+  # SSH-sicher: kein Firefox-Start nötig; Profil per files anlegen.
+  say "Firefox: Kiosk-Profil 'kiosk' SSH-sicher anlegen (profiles.ini + user.js)"
+
+  ensure_kiosk_user
+
+  local user="$KIOSK_USER"
+  local home="$KIOSK_HOME"
+
+  local base="${home}/.mozilla/firefox"
+  local ini="${base}/profiles.ini"
+
+  mkdir -p "$base"
+  chown -R "$user:$user" "${home}/.mozilla" || true
+
+  # 1) profiles.ini sicherstellen
+  if [[ ! -f "$ini" ]]; then
+    cat >"$ini" <<'EOF'
+[General]
+StartWithLastProfile=1
 EOF
-  systemd-tmpfiles --create /etc/tmpfiles.d/wartezimmer.conf >/dev/null 2>&1 || true
+    chown "$user:$user" "$ini"
+    chmod 0644 "$ini"
+  fi
+
+  # 2) bestehenden kiosk-Profilpfad finden, sonst anlegen
+  local profile_rel=""
+  profile_rel="$(awk -F= '
+    $0 ~ /^\[Profile/ {inprof=1; name=""; path="";}
+    inprof && $1=="Name" {name=$2}
+    inprof && $1=="Path" {path=$2}
+    inprof && $0 ~ /^\[/ && NR>1 {inprof=0}
+    END {}
+  ' "$ini" >/dev/null 2>&1; true)"
+
+  profile_rel="$(awk -F= '
+    $0 ~ /^\[Profile/ {in=1; name=""; path=""}
+    in && $1=="Name" {name=$2}
+    in && $1=="Path" {path=$2}
+    in && $0 ~ /^$/ { if (name=="kiosk" && path!="") {print path; exit} }
+    END { }
+  ' "$ini" 2>/dev/null || true)"
+
+  if [[ -z "$profile_rel" ]]; then
+    # Profile-ID bestimmen: nächster freier Index
+    local n
+    n="$(awk '
+      $0 ~ /^\[Profile[0-9]+\]/ {
+        gsub(/^\[Profile|\]$/,"",$0);
+        sub(/^Profile/,"",$0);
+        if ($0+0>m) m=$0+0
+      }
+      END {print (m+1)}
+    ' "$ini" 2>/dev/null || echo "0")"
+
+    profile_rel="kiosk.profile"
+    cat >>"$ini" <<EOF
+
+[Profile${n}]
+Name=kiosk
+IsRelative=1
+Path=${profile_rel}
+EOF
+  fi
+
+  local profile_dir="${base}/${profile_rel}"
+  mkdir -p "$profile_dir"
+
+  # 3) user.js schreiben (Autoplay + weniger Dialoge)
+  cat >"${profile_dir}/user.js" <<'PREFS'
+/*** KIOSK: Autoplay erlauben (Audio + Video) ***/
+user_pref("media.autoplay.default", 0);                  // 0=Allow
+user_pref("media.autoplay.blocking_policy", 0);          // liberal
+user_pref("media.autoplay.block-webaudio", false);       // WICHTIG
+user_pref("media.autoplay.allow-muted", true);
+
+/*** Permission-Defaults (Autoplay) explizit erlauben ***/
+user_pref("permissions.default.autoplay", 0);
+
+/*** weniger Dialoge ***/
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.tabs.warnOnClose", false);
+user_pref("browser.warnOnQuit", false);
+PREFS
+
+  # 4) Site-Permissions entfernen (kann Autoplay blocken)
+  rm -f "${profile_dir}/permissions.sqlite" \
+        "${profile_dir}/content-prefs.sqlite" \
+        "${profile_dir}/content-prefs.sqlite-wal" \
+        "${profile_dir}/content-prefs.sqlite-shm" || true
+
+  chown -R "$user:$user" "${home}/.mozilla/firefox"
+  chmod 0644 "${profile_dir}/user.js" || true
 }
 
 configure_kiosk() {
-  say "Kiosk: Autologin + Openbox autostart + Chromium (maximale Robustheit)"
+  say "Kiosk: Autologin + Openbox autostart + Firefox (maximale Robustheit)"
 
   ensure_kiosk_user
+  ensure_firefox_kiosk_profile_ssh_safe
 
   mkdir -p /etc/lightdm/lightdm.conf.d
   cat >/etc/lightdm/lightdm.conf.d/50-wartezimmer.conf <<EOF
@@ -1545,11 +1616,11 @@ EOF
   mkdir -p "${KIOSK_HOME}/.config/openbox"
   chown -R "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config"
 
-  local chrome_cmd="chromium"
-  if command -v chromium-browser >/dev/null 2>&1; then
-    chrome_cmd="chromium-browser"
-  elif command -v chromium >/dev/null 2>&1; then
-    chrome_cmd="chromium"
+  local ff_cmd="firefox-esr"
+  if command -v firefox-esr >/dev/null 2>&1; then
+    ff_cmd="firefox-esr"
+  elif command -v firefox >/dev/null 2>&1; then
+    ff_cmd="firefox"
   fi
 
   cat >"${KIOSK_HOME}/.config/openbox/autostart" <<EOF
@@ -1563,17 +1634,14 @@ xset s off
 xset s noblank
 xset -dpms
 
-mkdir -p "${RUN_CHROME_DIR}"
-
 # Warten, bis lokale Endpunkte wirklich funktionieren (statt nur sleep):
 # 1) wartezimmer.php (HTTP 200)
 # 2) wartezimmer.json (HTTP 200)
-# 3) Playlist liefert mindestens 1 Datei
+# 3) Playlist liefert mindestens 1 Video-Datei
 for i in \$(seq 1 240); do
   if curl -fsS "http://127.0.0.1/wartezimmer.php" >/dev/null 2>&1 && \
      curl -fsS "http://127.0.0.1/wartezimmer.json" >/dev/null 2>&1 && \
      curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '"files":\['; then
-    # Optional: echte Dateiliste prüfen
     if curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '\.mp4"\|\.m4v"'; then
       break
     fi
@@ -1581,27 +1649,7 @@ for i in \$(seq 1 240); do
   sleep 0.5
 done
 
-${chrome_cmd} \\
-  --kiosk \\
-  --noerrdialogs \\
-  --disable-infobars \\
-  --disable-session-crashed-bubble \\
-  --autoplay-policy=no-user-gesture-required \\
-  --lang=de-DE \\
-  --disable-background-timer-throttling \\
-  --disable-renderer-backgrounding \\
-  --disable-backgrounding-occluded-windows \\
-  --user-data-dir="${RUN_CHROME_DIR}/profile" \\
-  --disk-cache-dir="${RUN_CHROME_DIR}/cache" \\
-  --disable-pinch \\
-  --overscroll-history-navigation=0 \\
-  "http://127.0.0.1/wartezimmer.php" &
-
-# Chromium in Vordergrund holen + einmaliges Reload (ersetzt Alt-Tab + F5)
-sleep 1.5
-wmctrl -a Chromium >/dev/null 2>&1 || true
-sleep 0.3
-xdotool key F5 >/dev/null 2>&1 || true
+${ff_cmd} -P kiosk --kiosk --no-remote "http://127.0.0.1/wartezimmer.php" &
 EOF
 
   chown "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config/openbox/autostart"
@@ -1623,11 +1671,9 @@ main() {
   ask_hostname_and_set_robust
 
   # WLAN optional; Firewall-Regeln gelten besonders für wlan0, aber können immer aktiv sein.
-  # (Falls wlan0 nicht existiert, ist das kein Problem — nftables matcht dann einfach nichts.)
   ask_wlan_enable_and_configure || true
 
   configure_firewall_wlan_only
-  configure_chromium_policy
 
   install_webroot_files
   configure_permissions_and_samba_ready
@@ -1635,7 +1681,6 @@ main() {
   configure_samba
 
   install_backend
-  configure_tmpfiles_for_chrome
   configure_kiosk
 
   say "Fertig. Reboot empfohlen."
@@ -1650,6 +1695,9 @@ main() {
   echo
   echo "Audio-Konfig:"
   echo "  - ${CONFIG_JSON} -> audio.video_sound_enabled / audio.video_volume / audio.chime_volume"
+  echo
+  echo "Firefox Kiosk Start (manuell, falls nötig):"
+  echo "  - sudo -u ${KIOSK_USER} firefox-esr -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php"
 }
 
 main "$@"
