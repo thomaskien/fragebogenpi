@@ -843,6 +843,7 @@ EOF
 
   "mode": "video",
   "display_seconds": 10,
+  "call_gap_seconds": 15,
   "video_dir": "videos",
   "image_dir": "images",
   "sound_dir": "sounds",
@@ -864,7 +865,7 @@ EOF
 
   "fetch": {
     "enabled": true,
-    "poll_interval_ms": 500,
+    "poll_interval_ms": 3000,
     "max_jobs_per_room_per_cycle": 10,
     "rooms": [
       {
@@ -1050,6 +1051,12 @@ install_backend() {
   cat >/usr/local/bin/infodisplay-backend.py <<'EOF'
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#
+# infodisplay-backend.py — fragebogenpi wartezimmerbildschirm backend (SSE + GDT fetch/delete)
+#
+# Änderung (neu): optionaler Mindestabstand zwischen Aufrufen:
+#   wartezimmer.json: "call_gap_seconds": 5
+#   -> nach jedem veröffentlichten Call-Event wird mindestens call_gap_seconds gewartet.
 
 import asyncio
 import json
@@ -1125,6 +1132,12 @@ class Logger:
 
 
 def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
+    """
+    Use ONLY:
+      3102 = Vorname
+      3101 = Nachname
+    Typical line: LLLFFFF<value> (LLL length ignored).
+    """
     firstname = ""
     lastname = ""
 
@@ -1159,6 +1172,7 @@ def _abbr_component(text: str, letters: int, dot: bool, enabled: bool) -> str:
     if n < 1:
         n = 1
 
+    # counting ignores: space, tab, "-", "–", "—"
     ignore = {" ", "\t", "-", "–", "—"}
     out_chars: List[str] = []
     count = 0
@@ -1185,8 +1199,8 @@ def format_name(cfg: Dict[str, Any], firstname: str, lastname: str) -> str:
         nf = {}
 
     enabled = bool(nf.get("enabled", False))
-    full = (firstname + " " + lastname).strip()
 
+    full = (firstname + " " + lastname).strip()
     if not enabled:
         return full if full else "Aufruf"
 
@@ -1341,6 +1355,10 @@ async def poll_loop(app: web.Application) -> None:
         default_sound = str(cfg.get("default_sound", "jsbach.m4a")).strip() or "jsbach.m4a"
         display_seconds = int(cfg.get("display_seconds", 10))
 
+        call_gap_seconds = int(cfg.get("call_gap_seconds", 0))
+        if call_gap_seconds < 0:
+            call_gap_seconds = 0
+
         if not enabled or not rooms:
             await asyncio.sleep(1.0)
             continue
@@ -1389,6 +1407,10 @@ async def poll_loop(app: web.Application) -> None:
                         break
 
                     jobs_done += 1
+
+                    # Mindestabstand zwischen Aufrufen
+                    if call_gap_seconds > 0:
+                        await asyncio.sleep(call_gap_seconds)
 
                 await asyncio.sleep(0.05)
 
