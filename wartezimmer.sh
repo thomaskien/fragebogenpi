@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.1
+# Version: 1.5.2
 # Stand:   2026-02-22
 # Autor:   Dr. Thomas Kienzle
 #
@@ -13,7 +13,6 @@ set -euo pipefail
 # - 1.1:
 #   - Webroot /var/www/html (kein Unterverzeichnis), Startseite wartezimmer.php.
 #   - Samba Guest RW + setgid-Rechte, Fetch aktiviert (localhost), Löschskript.
-#   - Firewall temporär deaktiviert, Webserver im LAN offen.
 # - 1.2:
 #   - Footer eingeblendet (später nur bei Meldung gewünscht), Hostname/WLAN-Abfragen ergänzt,
 #     Logging wieder deaktiviert, Boot-Refresh-Fix per simplem wait-loop vorbereitet.
@@ -25,39 +24,39 @@ set -euo pipefail
 #     - Web-App Self-Heal: skip invalid videos (onerror), Watchdog-Retry, focus/visibility retry,
 #       Retry wenn Playlist leer.
 #   - Dotfiles/AppleDouble werden nicht mehr gelistet (._* und .* werden gefiltert).
-#   - Footer erscheint NUR während der Aufruf-Meldung (Overlay) und zeigt:
-#     "Dr. Thomas Kienzle · fragebogenpi.de wartezimmerbildschirm · v1.3"
+#   - Footer erscheint NUR während der Aufruf-Meldung (Overlay).
 #   - Hostname-Abfrage + robustes Setzen (Default: "wartezimmer") inkl. Verifikation.
 #   - WLAN: erst Abfrage "WLAN aktivieren?" → nur dann SSID/Passwort (Default SSID: "fragebogenpi").
 #   - Firewall via nftables wieder aktiv:
 #     - wlan0 inbound dicht (nur established/related, DHCP, Ping)
 #     - eth0 vollständig offen (keine Einschränkungen im LAN)
-#   - Audio-Konfig in wartezimmer.json:
-#     - video_sound_enabled (default false)
-#     - video_volume (default 0.15)
-#     - chime_volume (default 1.0)
-#   - Backend: parst ausschließlich 3102 (Vorname) + 3101 (Nachname) aus GDT, Fetch aktiv,
-#     Logging default AUS (per JSON einschaltbar).
+#   - Audio-Konfig in wartezimmer.json.
+#   - Backend: parst ausschließlich 3102 (Vorname) + 3101 (Nachname) aus GDT.
 # - 1.4:
 #   - Feature-Nachbau aller Erweiterungen seit 1.3 (bis inkl. 1.3.5), konservativ auf 1.3-Basis:
 #     - Hostname zusätzlich in /boot/firmware/user-data (cloud-init) patchen: ganze "hostname:"-Zeile ersetzen (idempotent).
 #     - wartezimmer.json: display_seconds=10; rooms=sprechzimmer1+2; gültige _comment0.._comment3 Hinweise.
 #     - Webroot: loesche-sprechzimmer2.php ergänzt; README erweitert inkl. Sicherheitssatz.
-#     - Audio: default_sound=jsbach.m4a; Sound-Bootstrap (curl -fL + retries, atomar); list_media.php listet mp3+m4a.
+#     - Audio: default_sound=jsbach.m4a; Sound-Bootstrap; list_media.php listet mp3+m4a.
 #     - Backend: optionales Name-Abkürzen per name_format (Zählen ohne Leerzeichen/Bindestriche).
-#     - Frontend: Chime robust (pause+seek+play); während Meldung Video-Audio ducken und danach restore.
-# - 1.5:
+#     - Frontend: Chime robust; während Meldung Video-Audio ducken und danach restore.
+# - 1.5.0:
 #   - Browser im Kiosk auf Firefox umgestellt (konservativ, restliche Architektur unverändert).
 #   - Beispielvideo wird gebootstrapped nach /var/www/html/videos/zzz_beispielvideo.mp4 (fail-fast, retries, atomar; nur wenn fehlend).
 # - 1.5.1:
-#   - KORREKTUR: Firefox-Kioskprofil wird nicht mehr "installer-seitig" (headless) erzeugt, sondern
-#     bei JEDEM BOOT im Openbox-Autostart (X läuft), exakt nach bewährtem Schema:
-#       firefox -CreateProfile kiosk; profiles.ini parsen; user.js schreiben; permissions/content-prefs löschen; dann Firefox starten.
-#   - Profilpfad wie in der Praxis erprobt: ~/.config/mozilla/firefox (nicht ~/.mozilla).
+#   - Versuch: Firefox-Kioskprofil per Script im Autostart sicherstellen (Prepare-Script), zeigte in der Praxis noch Profilmanager.
+# - 1.5.2:
+#   - Firefox-Kiosk-Startpfad im Openbox-Autostart exakt nach dem praxiserprobten Ablauf:
+#     - firefox -CreateProfile kiosk
+#     - profiles.ini parsen (INI="$HOME_DIR/.mozilla/firefox/profiles.ini")
+#     - user.js schreiben, permissions/content-prefs reset
+#     - dann firefox -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php
+#     - Umsetzung sauber als Script ohne sudo/EOF/echo.
+#   - Installer: am Ende Abfrage „Reboot jetzt?“ und bei Bestätigung reboot.
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.1"
+VERSION="1.5.2"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -835,7 +834,7 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
 
   "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
   "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
@@ -1343,8 +1342,8 @@ async def poll_loop(app: web.Application) -> None:
         display_seconds = int(cfg.get("display_seconds", 10))
 
         if not enabled or not rooms:
-          await asyncio.sleep(1.0)
-          continue
+            await asyncio.sleep(1.0)
+            continue
 
         async with ClientSession(timeout=timeout) as session:
             for room in rooms:
@@ -1461,9 +1460,9 @@ EOF
   systemctl enable --now infodisplay-backend.service
 }
 
-install_firefox_prepare_script() {
-  say "Installiere /usr/local/bin/wartezimmer_firefox_prepare.sh (läuft bei jedem Boot im Openbox Autostart)"
-  cat >/usr/local/bin/wartezimmer_firefox_prepare.sh <<'EOF'
+install_firefox_kiosk_script() {
+  say "Installiere /usr/local/bin/wartezimmer_firefox_kiosk.sh"
+  cat >/usr/local/bin/wartezimmer_firefox_kiosk.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1473,46 +1472,39 @@ URL="${2:-http://127.0.0.1/wartezimmer.php}"
 HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 [[ -n "$HOME_DIR" ]] || HOME_DIR="/home/${USER_NAME}"
 
-BASE="$HOME_DIR/.config/mozilla/firefox"
-INI="$BASE/profiles.ini"
+export HOME="$HOME_DIR"
+
+# Firefox binary robust wählen
+FF="firefox"
+if command -v firefox-esr >/dev/null 2>&1; then
+  FF="firefox-esr"
+elif command -v firefox >/dev/null 2>&1; then
+  FF="firefox"
+fi
+
+BASE="$HOME_DIR/.mozilla/firefox"
+INI="$HOME_DIR/.mozilla/firefox/profiles.ini"
 
 mkdir -p "$BASE"
 
 # Profil "kiosk" anlegen (falls noch nicht vorhanden)
-# (GUI-Session ist da; genau dafür läuft das Script im Openbox-Autostart)
-firefox -CreateProfile "kiosk" >/dev/null 2>&1 || true
+"$FF" -CreateProfile "kiosk" >/dev/null 2>&1 || true
 
-# profiles.ini muss existieren
-[[ -f "$INI" ]] || {
-  # fallback: firefox hat evtl. woanders geschrieben; wir erzeugen eine minimale INI,
-  # damit die folgende Logik nie "leer" läuft.
-  cat >"$INI" <<'PINI'
-[General]
-StartWithLastProfile=1
-PINI
-}
+# profiles.ini muss existieren (mit kurzer Warte-/Retry-Schleife)
+for _i in $(seq 1 50); do
+  [[ -f "$INI" ]] && break
+  sleep 0.1
+done
+[[ -f "$INI" ]]
 
+# Pfad zum Profil "kiosk" aus profiles.ini holen
 PROFILE_REL="$(awk -F= '
   $0 ~ /^\[Profile/ {inprof=0}
   $0 ~ /^Name=kiosk$/ {inprof=1}
   inprof && $1=="Path" {print $2; exit}
-' "$INI" || true)"
+' "$INI")"
 
-# Wenn Pfad nicht gefunden wurde, nochmal versuchen (manche INIs haben kein Leerzeilen-Blockende)
-if [[ -z "$PROFILE_REL" ]]; then
-  PROFILE_REL="$(awk -F= '
-    $0 ~ /^\[Profile/ {in=1; name=""; path=""}
-    in && $1=="Name" {name=$2}
-    in && $1=="Path" {path=$2}
-    in && name=="kiosk" && path!="" {print path; exit}
-  ' "$INI" || true)"
-fi
-
-# Ohne Profile_REL würde Firefox sonst Profil-Manager zeigen: harte Bremse mit klarer Fehlermeldung.
-[[ -n "$PROFILE_REL" ]] || {
-  echo "ERROR: Konnte Path fuer Profil 'kiosk' nicht aus profiles.ini ermitteln: $INI" >&2
-  exit 1
-}
+[[ -n "$PROFILE_REL" ]]
 
 PROFILE_DIR="$BASE/$PROFILE_REL"
 mkdir -p "$PROFILE_DIR"
@@ -1540,20 +1532,21 @@ rm -f "$PROFILE_DIR/permissions.sqlite" \
       "$PROFILE_DIR/content-prefs.sqlite-wal" \
       "$PROFILE_DIR/content-prefs.sqlite-shm" || true
 
-# Ownership korrigieren (falls root mal etwas angefasst hat)
-chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.config/mozilla" 2>/dev/null || true
+# Ownership korrigieren (nur wenn als root gestartet)
+if [[ "${EUID}" -eq 0 ]]; then
+  chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.mozilla/firefox" || true
+fi
 
-# Firefox starten
-exec firefox -P kiosk --kiosk --no-remote "$URL"
+exec "$FF" -P kiosk --kiosk --no-remote "$URL"
 EOF
-  chmod +x /usr/local/bin/wartezimmer_firefox_prepare.sh
+  chmod +x /usr/local/bin/wartezimmer_firefox_kiosk.sh
 }
 
 configure_kiosk() {
   say "Kiosk: Autologin + Openbox autostart + Firefox"
 
   ensure_kiosk_user
-  install_firefox_prepare_script
+  install_firefox_kiosk_script
 
   mkdir -p /etc/lightdm/lightdm.conf.d
   cat >/etc/lightdm/lightdm.conf.d/50-wartezimmer.conf <<EOF
@@ -1586,8 +1579,7 @@ for i in \$(seq 1 240); do
   sleep 0.5
 done
 
-# Firefox Profil + Autoplay-Settings bei JEDEM Boot sicherstellen und dann Firefox starten
-/usr/local/bin/wartezimmer_firefox_prepare.sh "${KIOSK_USER}" "http://127.0.0.1/wartezimmer.php"
+/usr/local/bin/wartezimmer_firefox_kiosk.sh "${KIOSK_USER}" "http://127.0.0.1/wartezimmer.php"
 EOF
 
   chown "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config/openbox/autostart"
@@ -1595,6 +1587,19 @@ EOF
 
   systemctl set-default graphical.target
   systemctl enable lightdm
+}
+
+ask_reboot_now() {
+  # Nur wenn interaktiv (TTY)
+  if [[ ! -t 0 ]]; then
+    return 0
+  fi
+  echo
+  local ans
+  read -r -p "Reboot jetzt? [y/N]: " ans
+  if [[ "$ans" =~ ^([yY]|yes|YES)$ ]]; then
+    reboot
+  fi
 }
 
 main() {
@@ -1619,7 +1624,7 @@ main() {
   install_backend
   configure_kiosk
 
-  say "Fertig. Reboot empfohlen."
+  say "Fertig."
   echo
   echo "Wichtige URLs:"
   echo "  - Web:   http://<pi-ip>/wartezimmer.php"
@@ -1627,6 +1632,8 @@ main() {
   echo
   echo "Firefox Kiosk Start (manuell, falls nötig):"
   echo "  - sudo -u ${KIOSK_USER} firefox-esr -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php"
+
+  ask_reboot_now
 }
 
 main "$@"
