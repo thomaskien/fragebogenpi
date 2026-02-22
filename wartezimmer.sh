@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5
+# Version: 1.5.1
 # Stand:   2026-02-22
 # Autor:   Dr. Thomas Kienzle
 #
@@ -48,12 +48,16 @@ set -euo pipefail
 #     - Frontend: Chime robust (pause+seek+play); während Meldung Video-Audio ducken und danach restore.
 # - 1.5:
 #   - Browser im Kiosk auf Firefox umgestellt (konservativ, restliche Architektur unverändert).
-#   - Firefox-Profil "kiosk" wird SSH-sicher (ohne GUI-Start) per profiles.ini + Ordner + user.js erzeugt/verwaltet.
 #   - Beispielvideo wird gebootstrapped nach /var/www/html/videos/zzz_beispielvideo.mp4 (fail-fast, retries, atomar; nur wenn fehlend).
+# - 1.5.1:
+#   - KORREKTUR: Firefox-Kioskprofil wird nicht mehr "installer-seitig" (headless) erzeugt, sondern
+#     bei JEDEM BOOT im Openbox-Autostart (X läuft), exakt nach bewährtem Schema:
+#       firefox -CreateProfile kiosk; profiles.ini parsen; user.js schreiben; permissions/content-prefs löschen; dann Firefox starten.
+#   - Profilpfad wie in der Praxis erprobt: ~/.config/mozilla/firefox (nicht ~/.mozilla).
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5"
+VERSION="1.5.1"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -102,7 +106,6 @@ ensure_user_infodisplay() {
     return 0
   fi
   say "Lege Benutzer an: ${INFODISPLAY_USER}"
-  # Wichtig: Primärgruppe explizit setzen, sonst: "group exists"
   useradd -r -m -d "/var/lib/${INFODISPLAY_USER}" -s /usr/sbin/nologin -g "${INFODISPLAY_GROUP}" "${INFODISPLAY_USER}"
 }
 
@@ -137,10 +140,6 @@ apt_install() {
 }
 
 patch_cloud_init_user_data_hostname() {
-  # Ab 1.3.2: /boot/firmware/user-data (cloud-init) patchen:
-  # Wenn Datei existiert und eine Zeile "hostname:" enthält:
-  #   ersetze die ganze Zeile durch "hostname: <hn>"
-  # Idempotent: nur einmal ersetzen (count=1).
   local hn="$1"
   local f="/boot/firmware/user-data"
 
@@ -158,17 +157,13 @@ import re, sys
 hn = sys.argv[1]
 src = sys.argv[2]
 dst = sys.argv[3]
-
 with open(src, "r", encoding="utf-8", errors="replace") as fp:
     data = fp.read()
-
 pat = re.compile(r'^(\s*hostname\s*:\s*).*$',
                  re.MULTILINE)
 new, n = pat.subn(lambda m: m.group(1) + hn, data, count=1)
-
 if n == 0:
     new = data
-
 with open(dst, "w", encoding="utf-8") as fp:
     fp.write(new)
 PY
@@ -188,10 +183,8 @@ ask_hostname_and_set_robust() {
 
   say "Setze Hostname auf: $hn"
 
-  # 1) persistent
   echo "$hn" >/etc/hostname
 
-  # 2) /etc/hosts 127.0.1.1
   backup_file /etc/hosts
   if grep -qE '^127\.0\.1\.1' /etc/hosts; then
     sed -i -E "s/^127\.0\.1\.1\s+.*/127.0.1.1\t${hn}/" /etc/hosts
@@ -199,18 +192,14 @@ ask_hostname_and_set_robust() {
     echo -e "127.0.1.1\t${hn}" >>/etc/hosts
   fi
 
-  # 3) immediate kernel hostname
   hostname "$hn" || true
 
-  # 4) also via hostnamectl if available
   if command -v hostnamectl >/dev/null 2>&1; then
     hostnamectl set-hostname "$hn" || true
   fi
 
-  # 5) cloud-init user-data patch (if present)
   patch_cloud_init_user_data_hostname "$hn" || true
 
-  # 6) verify
   local cur
   cur="$(hostname || true)"
   if [[ "$cur" != "$hn" ]]; then
@@ -285,7 +274,7 @@ table inet filter {
     # LAN: alles offen
     iif "eth0" accept
 
-    # WLAN: DHCP client replies (for wpa_supplicant/dhcpcd)
+    # WLAN: DHCP client replies
     iif "wlan0" udp sport 67 udp dport 68 accept
     iif "wlan0" udp sport 547 udp dport 546 accept
 
@@ -296,7 +285,6 @@ table inet filter {
     # WLAN: sonst nichts rein
     iif "wlan0" drop
 
-    # Default: akzeptiere nichts Unerwartetes
     drop
   }
 
@@ -352,7 +340,6 @@ EOF
 
   DirectoryIndex wartezimmer.php index.php index.html
 
-  # Disable PHP execution inside media folders
   <Directory /var/www/html/videos>
     php_admin_flag engine off
   </Directory>
@@ -373,7 +360,6 @@ EOF
 }
 
 download_asset_if_missing() {
-  # download only if missing or empty; fail-fast; retries; atomic move
   local url="$1"
   local dest="$2"
 
@@ -416,7 +402,7 @@ install_webroot_files() {
   download_asset_if_missing "$JSBACH_URL" "$JSBACH_DEST"
   download_asset_if_missing "$EXAMPLEVIDEO_URL" "$EXAMPLEVIDEO_DEST"
 
-  say "Schreibe wartezimmer.php (Footer nur bei Meldung, Self-Heal, Audio-Config, Ducking/Chime-Robustheit)"
+  say "Schreibe wartezimmer.php"
   cat >"${WEBROOT_DIR}/wartezimmer.php" <<EOF
 <?php
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
@@ -467,7 +453,7 @@ header("Pragma: no-cache");
       background: rgba(0,0,0,0.35);
       text-shadow: 0 1px 2px rgba(0,0,0,0.7);
       pointer-events: none;
-      display: none; /* nur bei Meldung */
+      display: none;
       z-index: 11;
     }
   </style>
@@ -503,7 +489,6 @@ header("Pragma: no-cache");
   let slideshowInterval = 10;
   let restartAfterCall = false;
 
-  // audio config
   let videoSoundEnabled = false;
   let videoVolume = 0.15;
   let chimeVolume = 1.0;
@@ -518,7 +503,6 @@ header("Pragma: no-cache");
   let videoWatchdog = null;
   let starting = false;
 
-  // ducking state
   let duckActive = false;
   let prevMuted = null;
   let prevVolume = null;
@@ -559,7 +543,7 @@ header("Pragma: no-cache");
   }
 
   async function ensurePlaylist(kind) {
-    for (let i = 0; i < 60; i++) { // ~60s max
+    for (let i = 0; i < 60; i++) {
       const files = await listMedia(kind);
       if (files.length > 0) return files;
       await new Promise(res => setTimeout(res, 1000));
@@ -588,9 +572,7 @@ header("Pragma: no-cache");
     try {
       applyVideoAudioConfig();
       const p = videoEl.play();
-      if (p && typeof p.then === 'function') {
-        await p;
-      }
+      if (p && typeof p.then === 'function') await p;
       return true;
     } catch (e) {
       return false;
@@ -608,7 +590,6 @@ header("Pragma: no-cache");
     if (!videoEl) return;
 
     videoEl.addEventListener('error', () => { skipVideo('error'); });
-    videoEl.addEventListener('stalled', () => { /* watchdog handles */ });
     videoEl.addEventListener('ended', () => { skipVideo('ended'); });
 
     let lastOk = Date.now();
@@ -620,16 +601,12 @@ header("Pragma: no-cache");
     videoWatchdog = setInterval(async () => {
       if (pausedByCall) return;
       if (!videoEl) return;
-
       const age = Date.now() - lastOk;
       if (age < 2500) return;
 
       const ok = await tryPlayVideo();
-      if (!ok) {
-        await skipVideo('watchdog');
-      } else {
-        lastOk = Date.now();
-      }
+      if (!ok) await skipVideo('watchdog');
+      else lastOk = Date.now();
     }, 1000);
   }
 
@@ -679,12 +656,8 @@ header("Pragma: no-cache");
     try {
       pausedByCall = false;
       stopSlideshowTimer();
-
-      if (mode === "slideshow") {
-        await startSlideshowMode();
-      } else {
-        await startVideoMode();
-      }
+      if (mode === "slideshow") await startSlideshowMode();
+      else await startVideoMode();
     } finally {
       starting = false;
     }
@@ -706,7 +679,6 @@ header("Pragma: no-cache");
       duckActive = false;
       prevMuted = null;
       prevVolume = null;
-
       try { applyVideoAudioConfig(); } catch(e) {}
     }
 
@@ -714,9 +686,7 @@ header("Pragma: no-cache");
       await startNormalMode();
       return;
     }
-    if (videoEl) {
-      await tryPlayVideo();
-    }
+    if (videoEl) await tryPlayVideo();
   }
 
   async function playChime(soundPath) {
@@ -811,7 +781,7 @@ header("Pragma: no-cache");
 </html>
 EOF
 
-  say "Schreibe helper/list_media.php (filtert dotfiles/._*; sounds: mp3+m4a)"
+  say "Schreibe helper/list_media.php"
   cat >"${WEBROOT_DIR}/helper/list_media.php" <<'EOF'
 <?php
 header("Content-Type: application/json; charset=utf-8");
@@ -844,12 +814,7 @@ $dh = opendir($dir);
 if ($dh !== false) {
   while (($f = readdir($dh)) !== false) {
     if ($f === "." || $f === "..") continue;
-
-    // Skip dotfiles + AppleDouble (._*)
-    if (strpos($f, '.') === 0) continue;          // .* including .DS_Store and ._*
-    if (strpos($f, '._') === 0) continue;         // redundant, but explicit
-
-    // Skip common junk
+    if (strpos($f, '.') === 0) continue;  // dotfiles + AppleDouble (._*)
     if ($f === "Thumbs.db" || $f === "desktop.ini") continue;
 
     $p = $dir . DIRECTORY_SEPARATOR . $f;
@@ -867,10 +832,10 @@ sort($files, SORT_STRING);
 echo json_encode(["files" => $files], JSON_UNESCAPED_UNICODE);
 EOF
 
-  say "Schreibe wartezimmer.json (rooms 1+2, display_seconds=10, comments, name_format, default_sound=jsbach.m4a)"
+  say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5",
+  "version": "1.5.1",
 
   "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
   "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
@@ -929,7 +894,7 @@ EOF
 }
 EOF
 
-  say "Schreibe loesche-sprechzimmer1.php (hardcoded delete)"
+  say "Schreibe loesche-sprechzimmer1.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
@@ -955,7 +920,7 @@ http_response_code(500);
 echo "delete failed\n";
 EOF
 
-  say "Schreibe loesche-sprechzimmer2.php (hardcoded delete)"
+  say "Schreibe loesche-sprechzimmer2.php"
   cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
 <?php
 header("Content-Type: text/plain; charset=utf-8");
@@ -1043,7 +1008,6 @@ configure_permissions_and_samba_ready() {
 
 configure_samba() {
   say "Samba: Guest RW Share auf gesamtes Webroot (/var/www/html)"
-
   backup_file /etc/samba/smb.conf
 
   cat >/etc/samba/smb.conf <<EOF
@@ -1162,12 +1126,6 @@ class Logger:
 
 
 def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
-    """
-    Use ONLY:
-      3102 = Vorname
-      3101 = Nachname
-    Typical line: LLLFFFF<value> (LLL length ignored).
-    """
     firstname = ""
     lastname = ""
 
@@ -1228,8 +1186,8 @@ def format_name(cfg: Dict[str, Any], firstname: str, lastname: str) -> str:
         nf = {}
 
     enabled = bool(nf.get("enabled", False))
-
     full = (firstname + " " + lastname).strip()
+
     if not enabled:
         return full if full else "Aufruf"
 
@@ -1385,8 +1343,8 @@ async def poll_loop(app: web.Application) -> None:
         display_seconds = int(cfg.get("display_seconds", 10))
 
         if not enabled or not rooms:
-            await asyncio.sleep(1.0)
-            continue
+          await asyncio.sleep(1.0)
+          continue
 
         async with ClientSession(timeout=timeout) as session:
             for room in rooms:
@@ -1503,76 +1461,64 @@ EOF
   systemctl enable --now infodisplay-backend.service
 }
 
-ensure_firefox_kiosk_profile_ssh_safe() {
-  # SSH-sicher: kein Firefox-Start nötig; Profil per files anlegen.
-  say "Firefox: Kiosk-Profil 'kiosk' SSH-sicher anlegen (profiles.ini + user.js)"
+install_firefox_prepare_script() {
+  say "Installiere /usr/local/bin/wartezimmer_firefox_prepare.sh (läuft bei jedem Boot im Openbox Autostart)"
+  cat >/usr/local/bin/wartezimmer_firefox_prepare.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
 
-  ensure_kiosk_user
+USER_NAME="${1:-pi}"
+URL="${2:-http://127.0.0.1/wartezimmer.php}"
 
-  local user="$KIOSK_USER"
-  local home="$KIOSK_HOME"
+HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+[[ -n "$HOME_DIR" ]] || HOME_DIR="/home/${USER_NAME}"
 
-  local base="${home}/.mozilla/firefox"
-  local ini="${base}/profiles.ini"
+BASE="$HOME_DIR/.config/mozilla/firefox"
+INI="$BASE/profiles.ini"
 
-  mkdir -p "$base"
-  chown -R "$user:$user" "${home}/.mozilla" || true
+mkdir -p "$BASE"
 
-  # 1) profiles.ini sicherstellen
-  if [[ ! -f "$ini" ]]; then
-    cat >"$ini" <<'EOF'
+# Profil "kiosk" anlegen (falls noch nicht vorhanden)
+# (GUI-Session ist da; genau dafür läuft das Script im Openbox-Autostart)
+firefox -CreateProfile "kiosk" >/dev/null 2>&1 || true
+
+# profiles.ini muss existieren
+[[ -f "$INI" ]] || {
+  # fallback: firefox hat evtl. woanders geschrieben; wir erzeugen eine minimale INI,
+  # damit die folgende Logik nie "leer" läuft.
+  cat >"$INI" <<'PINI'
 [General]
 StartWithLastProfile=1
-EOF
-    chown "$user:$user" "$ini"
-    chmod 0644 "$ini"
-  fi
+PINI
+}
 
-  # 2) bestehenden kiosk-Profilpfad finden, sonst anlegen
-  local profile_rel=""
-  profile_rel="$(awk -F= '
-    $0 ~ /^\[Profile/ {inprof=1; name=""; path="";}
-    inprof && $1=="Name" {name=$2}
-    inprof && $1=="Path" {path=$2}
-    inprof && $0 ~ /^\[/ && NR>1 {inprof=0}
-    END {}
-  ' "$ini" >/dev/null 2>&1; true)"
+PROFILE_REL="$(awk -F= '
+  $0 ~ /^\[Profile/ {inprof=0}
+  $0 ~ /^Name=kiosk$/ {inprof=1}
+  inprof && $1=="Path" {print $2; exit}
+' "$INI" || true)"
 
-  profile_rel="$(awk -F= '
+# Wenn Pfad nicht gefunden wurde, nochmal versuchen (manche INIs haben kein Leerzeilen-Blockende)
+if [[ -z "$PROFILE_REL" ]]; then
+  PROFILE_REL="$(awk -F= '
     $0 ~ /^\[Profile/ {in=1; name=""; path=""}
     in && $1=="Name" {name=$2}
     in && $1=="Path" {path=$2}
-    in && $0 ~ /^$/ { if (name=="kiosk" && path!="") {print path; exit} }
-    END { }
-  ' "$ini" 2>/dev/null || true)"
+    in && name=="kiosk" && path!="" {print path; exit}
+  ' "$INI" || true)"
+fi
 
-  if [[ -z "$profile_rel" ]]; then
-    # Profile-ID bestimmen: nächster freier Index
-    local n
-    n="$(awk '
-      $0 ~ /^\[Profile[0-9]+\]/ {
-        gsub(/^\[Profile|\]$/,"",$0);
-        sub(/^Profile/,"",$0);
-        if ($0+0>m) m=$0+0
-      }
-      END {print (m+1)}
-    ' "$ini" 2>/dev/null || echo "0")"
+# Ohne Profile_REL würde Firefox sonst Profil-Manager zeigen: harte Bremse mit klarer Fehlermeldung.
+[[ -n "$PROFILE_REL" ]] || {
+  echo "ERROR: Konnte Path fuer Profil 'kiosk' nicht aus profiles.ini ermitteln: $INI" >&2
+  exit 1
+}
 
-    profile_rel="kiosk.profile"
-    cat >>"$ini" <<EOF
+PROFILE_DIR="$BASE/$PROFILE_REL"
+mkdir -p "$PROFILE_DIR"
 
-[Profile${n}]
-Name=kiosk
-IsRelative=1
-Path=${profile_rel}
-EOF
-  fi
-
-  local profile_dir="${base}/${profile_rel}"
-  mkdir -p "$profile_dir"
-
-  # 3) user.js schreiben (Autoplay + weniger Dialoge)
-  cat >"${profile_dir}/user.js" <<'PREFS'
+# Autoplay + Audio sauber erlauben (inkl. WebAudio)
+cat >"$PROFILE_DIR/user.js" <<'PREFS'
 /*** KIOSK: Autoplay erlauben (Audio + Video) ***/
 user_pref("media.autoplay.default", 0);                  // 0=Allow
 user_pref("media.autoplay.blocking_policy", 0);          // liberal
@@ -1588,21 +1534,26 @@ user_pref("browser.tabs.warnOnClose", false);
 user_pref("browser.warnOnQuit", false);
 PREFS
 
-  # 4) Site-Permissions entfernen (kann Autoplay blocken)
-  rm -f "${profile_dir}/permissions.sqlite" \
-        "${profile_dir}/content-prefs.sqlite" \
-        "${profile_dir}/content-prefs.sqlite-wal" \
-        "${profile_dir}/content-prefs.sqlite-shm" || true
+# Eventuell gespeicherte Site-Permissions entfernen (kann Autoplay blocken)
+rm -f "$PROFILE_DIR/permissions.sqlite" \
+      "$PROFILE_DIR/content-prefs.sqlite" \
+      "$PROFILE_DIR/content-prefs.sqlite-wal" \
+      "$PROFILE_DIR/content-prefs.sqlite-shm" || true
 
-  chown -R "$user:$user" "${home}/.mozilla/firefox"
-  chmod 0644 "${profile_dir}/user.js" || true
+# Ownership korrigieren (falls root mal etwas angefasst hat)
+chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.config/mozilla" 2>/dev/null || true
+
+# Firefox starten
+exec firefox -P kiosk --kiosk --no-remote "$URL"
+EOF
+  chmod +x /usr/local/bin/wartezimmer_firefox_prepare.sh
 }
 
 configure_kiosk() {
-  say "Kiosk: Autologin + Openbox autostart + Firefox (maximale Robustheit)"
+  say "Kiosk: Autologin + Openbox autostart + Firefox"
 
   ensure_kiosk_user
-  ensure_firefox_kiosk_profile_ssh_safe
+  install_firefox_prepare_script
 
   mkdir -p /etc/lightdm/lightdm.conf.d
   cat >/etc/lightdm/lightdm.conf.d/50-wartezimmer.conf <<EOF
@@ -1616,40 +1567,27 @@ EOF
   mkdir -p "${KIOSK_HOME}/.config/openbox"
   chown -R "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config"
 
-  local ff_cmd="firefox-esr"
-  if command -v firefox-esr >/dev/null 2>&1; then
-    ff_cmd="firefox-esr"
-  elif command -v firefox >/dev/null 2>&1; then
-    ff_cmd="firefox"
-  fi
-
   cat >"${KIOSK_HOME}/.config/openbox/autostart" <<EOF
 # Managed by ${APP_NAME} installer v${VERSION}
 
-# Cursor verstecken
 unclutter -idle 0.5 -root &
 
-# DPMS/Screensaver aus (gegen schwarzes Bild / Throttling)
 xset s off
 xset s noblank
 xset -dpms
 
-# Warten, bis lokale Endpunkte wirklich funktionieren (statt nur sleep):
-# 1) wartezimmer.php (HTTP 200)
-# 2) wartezimmer.json (HTTP 200)
-# 3) Playlist liefert mindestens 1 Video-Datei
+# Warten bis lokale Endpunkte funktionieren + mindestens 1 Video vorhanden ist
 for i in \$(seq 1 240); do
   if curl -fsS "http://127.0.0.1/wartezimmer.php" >/dev/null 2>&1 && \
      curl -fsS "http://127.0.0.1/wartezimmer.json" >/dev/null 2>&1 && \
-     curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '"files":\['; then
-    if curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '\.mp4"\|\.m4v"'; then
+     curl -fsS "http://127.0.0.1/helper/list_media.php?kind=videos" | grep -q '\.mp4"\|\.m4v"'; then
       break
-    fi
   fi
   sleep 0.5
 done
 
-${ff_cmd} -P kiosk --kiosk --no-remote "http://127.0.0.1/wartezimmer.php" &
+# Firefox Profil + Autoplay-Settings bei JEDEM Boot sicherstellen und dann Firefox starten
+/usr/local/bin/wartezimmer_firefox_prepare.sh "${KIOSK_USER}" "http://127.0.0.1/wartezimmer.php"
 EOF
 
   chown "${KIOSK_USER}:${KIOSK_USER}" "${KIOSK_HOME}/.config/openbox/autostart"
@@ -1669,8 +1607,6 @@ main() {
   ensure_user_infodisplay
 
   ask_hostname_and_set_robust
-
-  # WLAN optional; Firewall-Regeln gelten besonders für wlan0, aber können immer aktiv sein.
   ask_wlan_enable_and_configure || true
 
   configure_firewall_wlan_only
@@ -1688,13 +1624,6 @@ main() {
   echo "Wichtige URLs:"
   echo "  - Web:   http://<pi-ip>/wartezimmer.php"
   echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
-  echo
-  echo "Firewall:"
-  echo "  - eth0: offen"
-  echo "  - wlan0: inbound blockiert (Ping+DHCP+established erlaubt)"
-  echo
-  echo "Audio-Konfig:"
-  echo "  - ${CONFIG_JSON} -> audio.video_sound_enabled / audio.video_volume / audio.chime_volume"
   echo
   echo "Firefox Kiosk Start (manuell, falls nötig):"
   echo "  - sudo -u ${KIOSK_USER} firefox-esr -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php"
