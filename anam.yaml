@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.2.4
+# Version 2.3.0
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -44,11 +44,29 @@
 #        * Blutverduenner: Praeparat-Liste erweitert (Eliquis, Lixiana, Xarelto, Clopidogrel, Prasugrel)
 #          vor "Sonstiges"
 #        * Blutverduenner: Grund um "kuenstliche Herzklappe" ergaenzt
+# - 2.3.0: Folgeformulare koennen bei passenden Antworten ueber
+#          follow_up_forms angefordert werden. Beispiel fuer ein spaeter
+#          bereitgestelltes act.yaml:
+#          - form: act
+#            when:
+#              id: asthma
+#              equals: true
 
 meta:
   title: "Anamnese"
-  version: "2.2.4"
+  version: "2.3.0"
   language: "de"
+
+# Folgeformulare werden nach dem Absenden als neue -i.gdt angelegt.
+# Die Ziel-YAML-Datei muss im selben Formular-Share vorhanden sein.
+# Beispiel:
+# follow_up_forms:
+#   - form: act
+#     when:
+#       id: asthma
+#       equals: true
+
+follow_up_forms: []
 
 sections:
 

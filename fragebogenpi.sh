@@ -4,11 +4,15 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.6.4
+# Version: 1.7.0
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.7.0 (2026-07-18)
+#   * Tablet-Formularbetrieb unterstützt bedingte Folgeformulare aus YAML.
+#   * tablet.php legt Folgeaufträge als neue -i.gdt im bestehenden GDT-Ordner an.
 #
 # - 1.6.4 (2026-07-18)
 #   * Neuer Tablet-/Formularbetrieb ergänzt:
@@ -342,7 +346,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.6.4"
+VERSION="1.7.0"
 STEP_NO=0
 
 banner() {

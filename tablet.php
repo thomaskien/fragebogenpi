@@ -2,10 +2,17 @@
 declare(strict_types=1);
 
 /*
- * tablet.php v1.6.4
+ * tablet.php v1.7.0
  * fragebogenpi.de von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
+ * - v1.7.0:
+ *   + YAML kann bedingte Folgeformulare ueber follow_up_forms definieren.
+ *   + Nach erfolgreicher Uebermittlung werden Folgeauftraege als -i.gdt im
+ *     bestehenden GDT-Ordner angelegt und anschliessend nach Prioritaet verarbeitet.
+ *   + Folgeformulare koennen ihrerseits weitere Folgeformulare ausloesen.
+ *   + Folgeformular-IDs werden validiert; Selbstreferenzen und fehlende YAML-Dateien
+ *     werden als Konfigurationsfehler gemeldet.
  * - v1.6.4:
  *   + Neuer generischer Tablet-Einstiegspunkt neben anamnesebogen.php.
  *   + Neue GDT-Namen anam-i.gdt/anam-o.gdt bzw. mit Tablet-Praefix.
@@ -62,7 +69,7 @@ declare(strict_types=1);
  */
 
 $APP_FOOTER  = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.6.4 (tablet.php)';
+$APP_VERSION = 'v1.7.0 (tablet.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -545,6 +552,131 @@ function form_yaml_for_id(string $formDir, string $formId, int $maxLength): arra
     return $matches[0];
 }
 
+/**
+ * Ermittelt die Folgeformulare, die nach dem aktuellen Formular angefordert
+ * werden sollen. Das YAML-Schema lautet:
+ *
+ * follow_up_forms:
+ *   - form: act
+ *     when:
+ *       id: asthma
+ *       equals: true
+ */
+function follow_up_forms_for_answers(
+    array $yaml,
+    array $answers,
+    string $currentFormId,
+    string $formDir,
+    int $maxFormIdLength
+): array {
+    $rules = $yaml['follow_up_forms'] ?? [];
+    if ($rules === null || $rules === []) {
+        return ['forms' => [], 'errors' => []];
+    }
+    if (!is_array($rules)) {
+        return ['forms' => [], 'errors' => ['follow_up_forms muss eine Liste sein.']];
+    }
+
+    $forms = [];
+    $errors = [];
+    $seen = [];
+
+    foreach ($rules as $index => $rule) {
+        if (!is_array($rule)) {
+            $errors[] = 'follow_up_forms[' . (string)$index . '] ist ungueltig.';
+            continue;
+        }
+
+        $condition = $rule['when'] ?? null;
+        if (!is_array($condition) || !cond_ok($answers, $condition)) continue;
+
+        $formId = trim((string)($rule['form'] ?? ''));
+        if (!preg_match('/^[a-z][a-z0-9_-]{0,3}$/', $formId)) {
+            $errors[] = 'Ungueltige Folgeformular-ID: ' . $formId;
+            continue;
+        }
+        if ($formId === $currentFormId) {
+            $errors[] = 'Folgeformular darf nicht sich selbst ausloesen: ' . $formId;
+            continue;
+        }
+        if (isset($seen[$formId])) continue;
+
+        $yamlInfo = form_yaml_for_id($formDir, $formId, $maxFormIdLength);
+        if (isset($yamlInfo['error'])) {
+            $errors[] = 'Folgeformular ' . $formId . ': ' . (string)$yamlInfo['error'];
+            continue;
+        }
+
+        $seen[$formId] = true;
+        $forms[] = [
+            'form_id' => $formId,
+            'yaml_path' => (string)$yamlInfo['path'],
+            'priority' => (int)$yamlInfo['priority'],
+        ];
+    }
+
+    usort($forms, static function (array $a, array $b): int {
+        return [$a['priority'], $a['form_id']] <=> [$b['priority'], $b['form_id']];
+    });
+
+    return ['forms' => $forms, 'errors' => $errors];
+}
+
+/**
+ * Legt Folgeauftraege als sichere Kopien der aktuellen Eingabe-GDT an.
+ * Der temporaere Dateiname wird erst nach vollstaendigem Kopieren per Hardlink
+ * sichtbar gemacht, damit tablet.php keine halbe GDT-Datei einliest.
+ */
+function create_follow_up_requests(
+    string $dirGdt,
+    string $tabletPrefix,
+    string $sourcePath,
+    string $currentFormId,
+    array $followUpForms
+): array {
+    $created = [];
+    $existing = [];
+    $errors = [];
+
+    foreach ($followUpForms as $followUp) {
+        $formId = (string)($followUp['form_id'] ?? '');
+        if ($formId === '' || $formId === $currentFormId) {
+            $errors[] = 'Ungueltiges Folgeformular: ' . $formId;
+            continue;
+        }
+
+        $name = $tabletPrefix . $formId . '-i.gdt';
+        $path = rtrim($dirGdt, '/') . '/' . $name;
+        if (is_file($path)) {
+            $existing[] = $name;
+            continue;
+        }
+
+        $tmp = @tempnam($dirGdt, '.fragebogenpi-followup-');
+        if ($tmp === false || !@copy($sourcePath, $tmp)) {
+            if ($tmp !== false) @unlink($tmp);
+            $errors[] = 'Folgeauftrag konnte nicht vorbereitet werden: ' . $name;
+            continue;
+        }
+
+        if (@link($tmp, $path)) {
+            @unlink($tmp);
+            @chmod($path, 0664);
+            $created[] = $name;
+            continue;
+        }
+
+        @unlink($tmp);
+        if (is_file($path)) {
+            $existing[] = $name;
+        } else {
+            $errors[] = 'Folgeauftrag konnte nicht angelegt werden: ' . $name;
+        }
+    }
+
+    return ['created' => $created, 'existing' => $existing, 'errors' => $errors];
+}
+
 function tablet_input_pattern(string $tabletId): string {
     $prefix = ($tabletId === '') ? '' : preg_quote($tabletId . '-', '/');
     return '/^' . $prefix . '([a-z][a-z0-9_-]{0,3})-i\\.gdt$/';
@@ -847,6 +979,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $answers['_packyears_text'] = '';
     }
 
+    $followUpPlan = follow_up_forms_for_answers(
+        $yaml,
+        $answers,
+        (string)$selectedRequest['form_id'],
+        $FORM_DIR,
+        $FORM_ID_MAX_LENGTH
+    );
+    if (count($followUpPlan['errors']) > 0) {
+        json_out(500, [
+            'status' => 'error',
+            'message' => 'Folgeformular-Konfiguration ungueltig.',
+            'details' => $followUpPlan['errors'],
+        ]);
+    }
+
     // Build 6228 lines
     $lines6228 = [];
 
@@ -913,6 +1060,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $outGdtPath = rtrim($dirGdt, '/') . '/' . $OUT_GDT_NAME;
     write_gdt_file($outGdtPath, $lines);
 
+    $followUpResult = create_follow_up_requests(
+        $dirGdt,
+        $tabletPrefix,
+        $requestPath,
+        (string)$selectedRequest['form_id'],
+        $followUpPlan['forms']
+    );
+    if (count($followUpResult['errors']) > 0) {
+        json_out(500, [
+            'status' => 'error',
+            'message' => 'Folgeformular konnte nicht angelegt werden. Der aktuelle Auftrag bleibt bestehen.',
+            'details' => $followUpResult['errors'],
+        ]);
+    }
+
     $deleted = @unlink($requestPath);
 
     json_out(200, [
@@ -926,6 +1088,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'id_3000_used'    => $ans3000,
         'packyears'       => (string)($answers['_packyears_text'] ?? ''),
         'xconcept_workaround' => ($ENABLE_XCONCEPT_3000_END_WORKAROUND && $ans3000 !== ''),
+        'follow_up_created' => $followUpResult['created'],
+        'follow_up_existing' => $followUpResult['existing'],
     ]);
 }
 

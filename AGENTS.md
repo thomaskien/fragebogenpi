@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigten Basisversionen sind:
 
 ```text
-fragebogenpi.sh v1.6.4
+fragebogenpi.sh v1.7.0
 wartezimmer.sh v1.5.6
 ```
 
@@ -114,6 +114,24 @@ Diese Punkte sind in `fragebogenpi.sh` seit v1.5.9 umgesetzt:
   - GDT-Eingaben verwenden `anam-i.gdt` beziehungsweise `1-anam-i.gdt`
 
 ## Aktueller Funktionsumfang
+
+### Folgeformulare im Tablet-Betrieb
+
+`tablet.php` unterstuetzt in den YAML-Dateien optional:
+
+```yaml
+follow_up_forms:
+  - form: act
+    when:
+      id: asthma
+      equals: true
+```
+
+Nach dem Absenden wird die Ziel-GDT als `act-i.gdt` beziehungsweise mit
+Tablet-Praefix angelegt. Das Ziel-YAML muss im Formular-Share vorhanden sein;
+seine optionale Prioritaet wird weiterhin ueber den YAML-Dateinamen bestimmt,
+zum Beispiel `5-act.yaml`. Folgeformulare duerfen ihrerseits weitere
+Folgeformulare ausloesen.
 
 ### Netzwerk und WLAN
 
