@@ -27,7 +27,7 @@ Die derzeit bestaetigten Basisversionen sind:
 
 ```text
 fragebogenpi.sh v1.6.3
-wartezimmer.sh v1.5.4
+wartezimmer.sh v1.5.5
 ```
 
 Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nicht auf aeltere Varianten zurueckfallen.

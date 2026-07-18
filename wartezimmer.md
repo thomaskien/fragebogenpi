@@ -1,4 +1,4 @@
-# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.4
+# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.5
 
 Stand: 2026-07-18
 
@@ -34,7 +34,7 @@ niemals an den Wartezimmer-Pi übertragen.
   /etc/fragebogenpi/wartezimmer-config.php
   ```
 
-### Wartezimmer-Pi 1.5.4
+### Wartezimmer-Pi 1.5.5
 
 - Apache/PHP liefert die lokale Kiosk-Web-App `wartezimmer.php` aus.
 - Ein lokales Python-Backend fragt ausschließlich folgenden Endpunkt ab:
@@ -130,12 +130,16 @@ Dateiname werden nicht übertragen.
   ausgegeben.
 - Es gibt kein Bestätigungs- oder Ack-Verfahren.
 - Es gibt kein Zugriffstoken.
+- Das Backend fragt den fragebogenpi-Server nur ab, während der lokale
+  Kiosk-Bildschirm über SSE verbunden ist.
+- Der ausschließlich an `127.0.0.1` gebundene SSE-Endpunkt erlaubt dem
+  Kiosk-Ursprung `http://127.0.0.1` den Browserzugriff.
 - Nach einer Aufrufanzeige fragt das Backend erst wieder ab, wenn mindestens die
   Anzeigezeit beziehungsweise das konfigurierte Query-Intervall abgelaufen ist.
 
 ## Installer-Abfragen des Wartezimmer-Pi
 
-Version 1.5.4 fragt interaktiv:
+Version 1.5.5 fragt interaktiv:
 
 ```text
 Installation wirklich starten? [y/N]

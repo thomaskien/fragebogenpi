@@ -3,11 +3,15 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.4
+# Version: 1.5.5
 # Stand:   2026-07-18
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
+# - 1.5.5:
+#   - Lokaler SSE-Endpunkt erlaubt Zugriffe ausschließlich vom Kiosk-Ursprung http://127.0.0.1.
+#   - Der fragebogenpi-Server wird nur bei verbundenem Wartezimmer-Bildschirm abgefragt.
+#   - Getrennte SSE-Verbindungen werden über den Heartbeat erkannt und aus dem EventHub entfernt.
 # - 1.5.4:
 #   - Installer fragt vor der ersten Systemänderung, ob die Installation wirklich gestartet werden soll.
 #   - NetworkManager verwendet das tatsächlich erkannte WLAN-Interface statt festem wlan0.
@@ -68,7 +72,7 @@ set -euo pipefail
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.4"
+VERSION="1.5.5"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -1014,7 +1018,7 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.4",
+  "version": "1.5.5",
 
   "_comment0": "Server-IP und Query-Intervall liegen außerhalb des Webroots in /etc/fragebogenpi-wartezimmer/server.json",
   "_comment1": "Die Namenskürzung erfolgt datensparsam auf dem fragebogenpi-Server.",
@@ -1171,6 +1175,9 @@ class EventHub:
         except ValueError:
             pass
 
+    def has_clients(self) -> bool:
+        return bool(self._clients)
+
     async def publish(self, payload: Dict[str, Any]) -> None:
         for queue in list(self._clients):
             try:
@@ -1181,7 +1188,6 @@ class EventHub:
 
 async def sse_events(request: web.Request) -> web.StreamResponse:
     hub: EventHub = request.app["hub"]
-    queue = hub.subscribe()
 
     response = web.StreamResponse(
         status=200,
@@ -1189,28 +1195,23 @@ async def sse_events(request: web.Request) -> web.StreamResponse:
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "http://127.0.0.1",
         },
     )
     await response.prepare(request)
-
-    async def heartbeat() -> None:
-        while True:
-            try:
-                await response.write(b": ping\n\n")
-            except Exception:
-                return
-            await asyncio.sleep(10)
-
-    heartbeat_task = asyncio.create_task(heartbeat())
+    queue = hub.subscribe()
     try:
         while True:
-            payload = await queue.get()
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=10)
+            except asyncio.TimeoutError:
+                await response.write(b": ping\n\n")
+                continue
             data = json.dumps(payload, ensure_ascii=False)
             await response.write(f"data: {data}\n\n".encode("utf-8"))
     except Exception:
         pass
     finally:
-        heartbeat_task.cancel()
         hub.unsubscribe(queue)
 
     return response
@@ -1238,6 +1239,10 @@ async def poll_loop(app: web.Application) -> None:
             )
 
             if not server_url:
+                await asyncio.sleep(interval)
+                continue
+
+            if not hub.has_clients():
                 await asyncio.sleep(interval)
                 continue
 
