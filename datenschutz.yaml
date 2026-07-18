@@ -1,0 +1,48 @@
+# datenschutz.yaml
+# fragebogenpi.de - Datenschutz/DSGVO-Unterschrift
+# Version 1.0
+# Autor: Dr. Thomas Kienzle
+#
+# Changelog (vollstaendig):
+# - v1.0:
+#   + Erstversion fuer datenschutz.php v1.0.
+#   + Platzhaltertext fuer die Datenschutzerklaerung.
+#   + Struktur bewusst einfach gehalten: meta, document, consent.
+#   + Endgueltiger Datenschutztext wird spaeter nachgereicht.
+
+meta:
+  title: "Datenschutzerklärung"
+  pdf_title: "Datenschutzerklärung"
+  version: "1.0"
+  language: "de"
+  submit_label: "✅ Datenschutzerklärung unterschreiben und absenden"
+
+document:
+  heading: "Datenschutzerklärung"
+  intro: |
+    Dies ist ein vorläufiger Fülltext für die Datenschutzerklärung.
+    Der endgültige Text der Datenschutzerklärung wird später an dieser Stelle eingefügt.
+
+  sections:
+    - title: "Verarbeitung personenbezogener Daten"
+      text: |
+        Ich wurde darüber informiert, dass in der Praxis personenbezogene Daten und Gesundheitsdaten verarbeitet werden, soweit dies für die Behandlung, Dokumentation, Abrechnung und gesetzlich vorgeschriebene Nachweise erforderlich ist.
+
+    - title: "Zweck der Datenverarbeitung"
+      text: |
+        Die Verarbeitung erfolgt insbesondere zur medizinischen Behandlung, zur Führung der Patientenakte, zur Kommunikation mit mitbehandelnden Stellen sowie zur Abrechnung ärztlicher Leistungen.
+
+    - title: "Weitergabe von Daten"
+      text: |
+        Eine Weitergabe von Daten erfolgt nur, soweit sie für die Behandlung oder Abrechnung erforderlich ist, eine gesetzliche Grundlage besteht oder eine Einwilligung vorliegt.
+
+    - title: "Rechte der Patientin / des Patienten"
+      text: |
+        Mir ist bekannt, dass Betroffene Auskunft über die verarbeiteten personenbezogenen Daten verlangen können. Weitere Rechte können insbesondere Berichtigung, Löschung, Einschränkung der Verarbeitung und Beschwerde bei einer zuständigen Aufsichtsbehörde umfassen.
+
+    - title: "Platzhalterhinweis"
+      text: |
+        Dieser Text ist nur ein Platzhalter für die technische Erstversion. Er ersetzt keine endgültig geprüfte Datenschutzerklärung.
+
+consent:
+  checkbox_label: "Ich habe die Datenschutzerklärung gelesen und bestätige die Kenntnisnahme durch meine Unterschrift."

@@ -1,0 +1,139 @@
+# datenschutz.yaml
+# fragebogenpi.de - Datenschutz/DSGVO-Unterschrift
+# Version 1.3
+# Autor: Dr. Thomas Kienzle
+#
+# Changelog (vollstaendig):
+# - v1.0:
+#   + Erstversion fuer datenschutz.php v1.0.
+#   + Platzhaltertext fuer die Datenschutzerklaerung.
+#   + Struktur bewusst einfach gehalten: meta, document, consent.
+#   + Endgueltiger Datenschutztext wird spaeter nachgereicht.
+# - v1.1:
+#   + Optionale Einwilligung zur unverschluesselten E-Mail-Kommunikation ergaenzt.
+#   + Allgemeine Datenschutzerklaerung und optionale E-Mail-Einwilligung inhaltlich getrennt.
+# - v1.2:
+#   + Platzhaltertext vollstaendig durch die besprochenen Inhalte ersetzt.
+#   + Keine Checkbox fuer die allgemeine Datenschutzerklaerung; die Kenntnisnahme wird durch die Unterschrift dokumentiert.
+#   + Nur die optionale Einwilligung zur unverschluesselten E-Mail-Kommunikation bleibt als Checkbox erhalten.
+#   + Praxisinformationen als Platzhalter aufgenommen.
+#   + Datenschutzbeauftragten-Hinweis exakt ergaenzt.
+#   + Empfaengergruppen einschliesslich beauftragter Labore, HZV-/DMP-Stellen und privatärztlicher Abrechnungsstellen soweit beauftragt ergaenzt.
+#   + Kommunikationswege auf KIM, Post, Fax und ausdruecklich gewuenschte unverschluesselte E-Mail angepasst.
+#   + Klarstellung: kein Roentgen, keine Drittlanduebermittlung, keine automatisierte Entscheidungsfindung / kein Profiling.
+# - v1.3:
+#   + Abschnitt "Keine automatisierte Entscheidungsfindung" praezisiert zu "Keine ausschliesslich automatisierte Entscheidungsfindung".
+#   + Aerztliche Letztentscheidung ausdruecklich ergaenzt.
+#   + Abschnitt "Einsatz digitaler Assistenzsysteme" ergaenzt.
+#   + Erlaeuterung zum moeglichen Einsatz digitaler Assistenzsysteme einschliesslich KI-gestuetzter Verfahren aufgenommen.
+#   + Klarstellung ergaenzt, dass digitale Assistenzsysteme keine aerztliche Entscheidung ersetzen.
+#   + Datenschutz- und berufsrechtliche Voraussetzungen fuer externe Dienstleister ergaenzt.
+
+meta:
+  title: "Datenschutzerklärung"
+  pdf_title: "Datenschutzerklärung"
+  version: "1.3"
+  language: "de"
+  submit_label: "✅ Datenschutzerklärung unterschreiben und absenden"
+
+document:
+  heading: "Datenschutzerklärung / Patienteninformation zum Datenschutz"
+  intro: |
+    Nachfolgend informieren wir Sie über die Verarbeitung Ihrer personenbezogenen Daten und Gesundheitsdaten in unserer Praxis.
+    Diese Information betrifft die gesetzlich und vertraglich erforderliche Datenverarbeitung im Rahmen Ihrer Behandlung.
+    Die Kenntnisnahme dieser Datenschutzerklärung wird durch Ihre Unterschrift dokumentiert.
+
+  sections:
+    - title: "Verantwortlicher"
+      text: |
+        Verantwortlich für die Datenverarbeitung ist:
+
+        [Praxisname]
+        [Praxisinhaber/in]
+        [Straße Hausnummer]
+        [PLZ Ort]
+        Telefon: [Telefon]
+        Fax: [Fax]
+        E-Mail: [E-Mail]
+        Website: [Website]
+
+    - title: "Datenschutzbeauftragter"
+      text: |
+        Ein Datenschutzbeauftragter ist nicht erforderlich und daher nicht benannt.
+
+    - title: "Zwecke der Datenverarbeitung"
+      text: |
+        Wir verarbeiten Ihre personenbezogenen Daten, insbesondere Gesundheitsdaten, zum Zweck der medizinischen Behandlung, der Führung und Dokumentation der Patientenakte, der Befundung, der Verordnung und Veranlassung medizinischer Leistungen, der Kommunikation im Rahmen der Behandlung, der Abrechnung ärztlicher Leistungen sowie zur Erfüllung gesetzlicher Pflichten.
+
+        Hierzu gehören insbesondere Angaben zu Ihrer Person, Kontaktdaten, Versicherungsdaten, Anamnesen, Diagnosen, Befunde, Therapien, Medikationsdaten, Arztbriefe, Laborwerte und weitere medizinisch erforderliche Informationen.
+
+    - title: "Rechtsgrundlagen der Verarbeitung"
+      text: |
+        Die Verarbeitung Ihrer Daten erfolgt insbesondere auf Grundlage des Behandlungsvertrages, der ärztlichen Dokumentationspflichten und der gesetzlichen Vorgaben zur vertragsärztlichen Versorgung und Abrechnung.
+
+        Rechtsgrundlagen sind insbesondere Art. 6 Abs. 1 lit. b DSGVO, Art. 6 Abs. 1 lit. c DSGVO, Art. 9 Abs. 2 lit. h DSGVO in Verbindung mit § 22 Abs. 1 Nr. 1 lit. b BDSG sowie die berufsrechtlichen und sozialrechtlichen Vorschriften, soweit diese für die Behandlung, Dokumentation und Abrechnung erforderlich sind.
+
+        Soweit eine Verarbeitung nicht bereits durch gesetzliche oder vertragliche Grundlagen gedeckt ist, erfolgt sie nur auf Grundlage Ihrer gesonderten Einwilligung.
+
+    - title: "Empfänger Ihrer Daten"
+      text: |
+        Empfänger Ihrer Daten können insbesondere sein: Kassenärztliche Vereinigung, Krankenkassen, Medizinischer Dienst, Ärztekammer, mit- und weiterbehandelnde Ärztinnen und Ärzte, Krankenhäuser, beauftragte Labore und sonstige medizinische Dienstleister, DMP-Datenstellen, HZV-Abrechnungsstellen, privatärztliche Abrechnungsstellen soweit beauftragt, sowie IT- und Praxissoftware-Dienstleister im Rahmen gesetzlicher Vorgaben und vertraglicher Verpflichtungen.
+
+        Eine Weitergabe erfolgt nur, soweit sie für Behandlung, Diagnostik, Dokumentation oder Abrechnung erforderlich ist, eine gesetzliche Verpflichtung besteht oder Sie ausdrücklich eingewilligt haben.
+
+    - title: "Kommunikation"
+      text: |
+        Wir übermitteln medizinische Informationen grundsätzlich über geeignete sichere Kommunikationswege, insbesondere verschlüsselt über KIM, per Post oder - soweit im Einzelfall geeignet - per Fax.
+
+        Eine unverschlüsselte Übermittlung per E-Mail erfolgt nur, wenn Sie dies ausdrücklich wünschen und uns die entsprechende E-Mail-Adresse hierfür mitteilen. Wir weisen darauf hin, dass unverschlüsselte E-Mails auf dem Übertragungsweg von Dritten eingesehen oder verändert werden können.
+
+    - title: "Speicherdauer"
+      text: |
+        Wir bewahren Ihre Behandlungsunterlagen grundsätzlich für mindestens 10 Jahre nach Abschluss der Behandlung auf, soweit keine längeren gesetzlichen Aufbewahrungsfristen bestehen oder eine längere Aufbewahrung zur Wahrung, Ausübung oder Verteidigung von Rechtsansprüchen erforderlich ist.
+
+        In unserer Praxis findet kein Röntgen statt; besondere Aufbewahrungsfristen für Röntgenunterlagen werden daher in dieser Datenschutzerklärung nicht aufgeführt.
+
+    - title: "Keine Drittlandübermittlung"
+      text: |
+        Eine Übermittlung Ihrer personenbezogenen Daten in ein Drittland oder an eine internationale Organisation findet nicht statt.
+
+    - title: "Keine ausschließlich automatisierte Entscheidungsfindung"
+      text: |
+        Eine ausschließlich auf automatisierter Verarbeitung beruhende Entscheidung, die Ihnen gegenüber rechtliche Wirkung entfaltet oder Sie in ähnlicher Weise erheblich beeinträchtigt, findet nicht statt.
+
+        Medizinische Entscheidungen werden durch die behandelnde Ärztin bzw. den behandelnden Arzt getroffen.
+
+    - title: "Einsatz digitaler Assistenzsysteme"
+      text: |
+        Soweit medizinisch sinnvoll, können digitale Assistenzsysteme einschließlich KI-gestützter Verfahren zur Unterstützung der ärztlichen Tätigkeit eingesetzt werden, zum Beispiel zur Strukturierung von Informationen, zur Plausibilitätsprüfung, zur Befundunterstützung oder zur Verbesserung der medizinischen Entscheidungsgrundlage.
+
+        Diese Systeme ersetzen keine ärztliche Entscheidung. Die Bewertung und Entscheidung über Diagnostik und Behandlung erfolgt durch die behandelnde Ärztin bzw. den behandelnden Arzt.
+
+        Eine Übermittlung personenbezogener Daten an externe Dienstleister erfolgt nur, soweit dies erforderlich ist und die datenschutzrechtlichen sowie berufsrechtlichen Voraussetzungen, insbesondere Vertraulichkeit, Auftragsverarbeitung und technische Schutzmaßnahmen, eingehalten werden.
+
+    - title: "Ihre Rechte"
+      text: |
+        Sie haben nach Maßgabe der gesetzlichen Voraussetzungen das Recht auf Auskunft über die zu Ihrer Person gespeicherten Daten, auf Berichtigung unrichtiger Daten, auf Löschung, auf Einschränkung der Verarbeitung, auf Datenübertragbarkeit sowie auf Widerspruch gegen bestimmte Verarbeitungen.
+
+        Soweit eine Verarbeitung auf einer Einwilligung beruht, können Sie diese Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen. Die Rechtmäßigkeit der bis zum Widerruf erfolgten Verarbeitung bleibt hiervon unberührt.
+
+    - title: "Beschwerderecht"
+      text: |
+        Sie haben das Recht, sich bei einer Datenschutzaufsichtsbehörde zu beschweren, wenn Sie der Ansicht sind, dass die Verarbeitung Ihrer personenbezogenen Daten gegen Datenschutzrecht verstößt.
+
+        Zuständige Aufsichtsbehörde in Nordrhein-Westfalen ist die Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Kavalleriestraße 2-4, 40213 Düsseldorf.
+
+    - title: "Optionale Einwilligung: unverschlüsselte E-Mail-Kommunikation"
+      text: |
+        Die nachfolgende Einwilligung ist freiwillig und betrifft ausschließlich die Kommunikation per unverschlüsselter E-Mail. Die übrige Datenverarbeitung im Rahmen Ihrer Behandlung ist hiervon unabhängig.
+
+        Wenn Sie die untenstehende Checkbox aktivieren, willigen Sie ausdrücklich ein, dass wir Ihnen an die von Ihnen angegebene E-Mail-Adresse ohne weitere Sicherungsmaßnahmen, insbesondere ohne Verschlüsselung, E-Mails über anstehende Termine und Folgetermine sowie Erinnerungen über fällige Gesundheitsuntersuchungen oder Vorsorgeuntersuchungen übermitteln dürfen.
+
+        Diese Einwilligung umfasst auch die unverschlüsselte Übermittlung besonderer personenbezogener Daten, insbesondere Gesundheitsdaten, soweit dies für die oben genannten Zwecke erforderlich ist.
+
+        Die Kommunikation per unverschlüsselter E-Mail kann mit einem Verlust an Vertraulichkeit und Sicherheit verbunden sein. Unverschlüsselte E-Mails können auf dem Übertragungsweg von Dritten eingesehen oder verändert werden. Bitte halten Sie die Zugangsdaten zu Ihrem E-Mail-Postfach vertraulich, um unbefugten Dritten keinen Zugriff auf eingehende E-Mails der Praxis zu ermöglichen.
+
+        Diese Einwilligung gilt, bis Sie der weiteren Nutzung widersprechen oder Ihre Einwilligung widerrufen. Ein Widerruf ist jederzeit mit Wirkung für die Zukunft möglich. Nach einem Widerruf erhalten Sie keine unverschlüsselten elektronischen Nachrichten im vorbeschriebenen Umfang mehr.
+
+consent:
+  checkbox_label: "Kontakt per unverschlüsselter Email erlauben (Optional)"

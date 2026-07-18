@@ -3,8 +3,8 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.2
-# Stand:   2026-02-22
+# Version: 1.5.3
+# Stand:   2026-07-18
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
@@ -53,13 +53,26 @@ set -euo pipefail
 #     - dann firefox -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php
 #     - Umsetzung sauber als Script ohne sudo/EOF/echo.
 #   - Installer: am Ende Abfrage „Reboot jetzt?“ und bei Bestätigung reboot.
+# - 1.5.3:
+#   - Wartezimmer-Aufrufe werden nur noch über eine einzelne fragebogenpi-Server-URL abgefragt.
+#   - Der Wartezimmer-Pi erhält keine rohe GDT-Datei mehr, sondern nur Anzeigetext und Ziel.
+#   - Installer fragt SSID, WLAN-Passwort, fragebogenpi-IP und Query-Intervall interaktiv ab.
+#   - NetworkManager wird bevorzugt verwendet; wpa_supplicant bleibt als Fallback erhalten.
+#   - Alte direkte GDT- und Lösch-URLs sowie die zugehörigen Hilfsdateien wurden entfernt.
+#   - Wartezimmerbezogenes Logging wurde vollständig entfernt/deaktiviert.
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.2"
+VERSION="1.5.3"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
+SERVER_CONFIG_DIR="/etc/fragebogenpi-wartezimmer"
+SERVER_CONFIG_JSON="${SERVER_CONFIG_DIR}/server.json"
+
+WLAN_SSID="fragebogenpi"
+FRAGEBOGENPI_SERVER_IP="10.23.0.1"
+QUERY_INTERVAL_SECONDS="3"
 
 INFODISPLAY_USER="infodisplay"
 INFODISPLAY_GROUP="infodisplay"
@@ -216,23 +229,48 @@ ask_wlan_enable_and_configure() {
     return 1
   fi
 
-  local ssid pass
-  read -r -p "WLAN SSID [default: fragebogenpi]: " ssid
-  ssid="${ssid:-fragebogenpi}"
+  local ssid pass1 pass2
+  read -r -p "WLAN SSID [${WLAN_SSID}]: " ssid
+  WLAN_SSID="${ssid:-$WLAN_SSID}"
 
-  echo -n "WLAN Passwort (WPA2/PSK): " >&2
-  IFS= read -r -s pass
-  echo >&2
+  while true; do
+    read -r -s -p "WLAN Passwort (WPA2/PSK): " pass1 >&2
+    printf '\n' >&2
+    read -r -s -p "WLAN Passwort (Wiederholung): " pass2 >&2
+    printf '\n' >&2
+    [[ -n "$pass1" ]] || { echo "Passwort darf nicht leer sein." >&2; continue; }
+    [[ "$pass1" == "$pass2" ]] || { echo "Passwörter stimmen nicht überein." >&2; continue; }
+    break
+  done
 
-  [[ -n "$ssid" ]] || die "SSID leer."
-  [[ -n "$pass" ]] || die "Passwort leer."
+  [[ -n "$WLAN_SSID" ]] || die "SSID leer."
+  (( ${#WLAN_SSID} <= 32 )) || die "SSID ist länger als 32 Zeichen."
 
-  say "Schreibe /etc/wpa_supplicant/wpa_supplicant.conf (country=DE)"
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
+    say "Konfiguriere WLAN über NetworkManager"
+    local connection_name="wartezimmer-wlan"
+    if nmcli -t -f NAME connection show | grep -Fxq "$connection_name"; then
+      nmcli connection modify "$connection_name" 802-11-wireless.ssid "$WLAN_SSID"
+    else
+      nmcli connection add type wifi ifname wlan0 con-name "$connection_name" ssid "$WLAN_SSID"
+    fi
+    nmcli connection modify "$connection_name" \
+      connection.autoconnect yes \
+      802-11-wireless.mode infrastructure \
+      802-11-wireless-security.key-mgmt wpa-psk \
+      802-11-wireless-security.psk "$pass1" \
+      ipv4.method auto \
+      ipv6.method auto
+    nmcli connection up "$connection_name" >/dev/null || die "WLAN-Verbindung über NetworkManager fehlgeschlagen."
+    return 0
+  fi
+
+  say "NetworkManager nicht aktiv – verwende wpa_supplicant (country=DE)"
   backup_file /etc/wpa_supplicant/wpa_supplicant.conf
 
   local tmp
   tmp="$(mktemp)"
-  wpa_passphrase "$ssid" "$pass" >"$tmp"
+  wpa_passphrase "$WLAN_SSID" "$pass1" | sed '/^[[:space:]]*#psk=/d' >"$tmp"
 
   cat >/etc/wpa_supplicant/wpa_supplicant.conf <<EOF
 country=DE
@@ -253,6 +291,71 @@ EOF
   fi
 
   return 0
+}
+
+is_valid_ipv4() {
+  python3 - "$1" <<'PY'
+import ipaddress
+import sys
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if value.version == 4 else 1)
+PY
+}
+
+ask_server_query_config() {
+  say "fragebogenpi-Server und Query-Intervall konfigurieren"
+
+  local value=""
+  while true; do
+    read -r -p "IP-Adresse des fragebogenpi-Servers [${FRAGEBOGENPI_SERVER_IP}]: " value
+    value="${value:-$FRAGEBOGENPI_SERVER_IP}"
+    if is_valid_ipv4 "$value"; then
+      FRAGEBOGENPI_SERVER_IP="$value"
+      break
+    fi
+    echo "Bitte eine gültige IPv4-Adresse eingeben." >&2
+  done
+
+  while true; do
+    read -r -p "Abfrageintervall in Sekunden [${QUERY_INTERVAL_SECONDS}]: " value
+    value="${value:-$QUERY_INTERVAL_SECONDS}"
+    if [[ "$value" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] && awk -v n="$value" 'BEGIN { exit !(n > 0) }'; then
+      QUERY_INTERVAL_SECONDS="$value"
+      break
+    fi
+    echo "Bitte eine positive Zahl eingeben." >&2
+  done
+}
+
+write_server_query_config() {
+  say "Schreibe Server-Konfiguration außerhalb des Webroots"
+  mkdir -p "$SERVER_CONFIG_DIR"
+  cat >"$SERVER_CONFIG_JSON" <<EOF
+{
+  "server_url": "http://${FRAGEBOGENPI_SERVER_IP}/wartezimmer-server.php",
+  "query_interval_seconds": ${QUERY_INTERVAL_SECONDS}
+}
+EOF
+  chown root:"$INFODISPLAY_GROUP" "$SERVER_CONFIG_DIR" "$SERVER_CONFIG_JSON"
+  chmod 0750 "$SERVER_CONFIG_DIR"
+  chmod 0640 "$SERVER_CONFIG_JSON"
+}
+
+check_waiting_room_server_reachable() {
+  say "Prüfe Wartezimmer-Server ohne GDT-Abruf"
+  local url="http://${FRAGEBOGENPI_SERVER_IP}/wartezimmer-server.php"
+  local attempt
+  for attempt in $(seq 1 15); do
+    if curl -fsSI --max-time 3 "$url" >/dev/null 2>&1; then
+      say "Wartezimmer-Server erreichbar: ${url}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "WARNUNG: ${url} ist derzeit nicht erreichbar. Die Installation wird trotzdem fortgesetzt." >&2
 }
 
 configure_firewall_wlan_only() {
@@ -304,8 +407,7 @@ EOF
 }
 
 configure_apache_open_lan() {
-  say "Apache: im LAN erreichbar (0.0.0.0:80)"
-  mkdir -p "${WEBROOT_DIR}/logs"
+  say "Apache: im LAN erreichbar (0.0.0.0:80), ohne Zugriffs-/Fehlerlog"
 
   backup_file /etc/apache2/ports.conf
   cat >/etc/apache2/ports.conf <<'EOF'
@@ -328,8 +430,8 @@ EOF
   ServerAdmin webmaster@localhost
   DocumentRoot /var/www/html
 
-  ErrorLog /var/www/html/logs/apache_error.log
-  CustomLog /var/www/html/logs/apache_access.log combined
+  ErrorLog /dev/null
+  CustomLog /dev/null combined
 
   <Directory /var/www/html>
     Options Indexes FollowSymLinks
@@ -394,8 +496,7 @@ install_webroot_files() {
     "${WEBROOT_DIR}/images" \
     "${WEBROOT_DIR}/sounds" \
     "${WEBROOT_DIR}/assets" \
-    "${WEBROOT_DIR}/helper" \
-    "${WEBROOT_DIR}/logs"
+    "${WEBROOT_DIR}/helper"
 
   say "Bootstrap: jsbach.m4a + Beispielvideo (falls fehlend)"
   download_asset_if_missing "$JSBACH_URL" "$JSBACH_DEST"
@@ -834,16 +935,13 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.2",
+  "version": "1.5.3",
 
-  "_comment0": "am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt",
-  "_comment1": "alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden",
-  "_comment2": "am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php",
-  "_comment3": "loesche-Skript muss angepasst werden je nach Dateiname",
+  "_comment0": "Server-IP und Query-Intervall liegen außerhalb des Webroots in /etc/fragebogenpi-wartezimmer/server.json",
+  "_comment1": "Die Namenskürzung erfolgt datensparsam auf dem fragebogenpi-Server.",
 
   "mode": "video",
   "display_seconds": 10,
-  "call_gap_seconds": 15,
   "video_dir": "videos",
   "image_dir": "images",
   "sound_dir": "sounds",
@@ -855,96 +953,14 @@ EOF
     "video_sound_enabled": false,
     "video_volume": 0.15,
     "chime_volume": 1.0
-  },
-
-  "name_format": {
-    "enabled": false,
-    "first_name": { "enabled": true, "letters": 1, "dot": true },
-    "last_name":  { "enabled": true, "letters": 3, "dot": true }
-  },
-
-  "fetch": {
-    "enabled": true,
-    "poll_interval_ms": 3000,
-    "max_jobs_per_room_per_cycle": 10,
-    "rooms": [
-      {
-        "id": "sprechzimmer1",
-        "target": "Bitte ins Sprechzimmer 1",
-        "fetch_url": "http://127.0.0.1/sprechzimmer1.gdt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer1.php",
-        "enabled": true
-      },
-      {
-        "id": "sprechzimmer2",
-        "target": "Bitte ins Sprechzimmer 2",
-        "fetch_url": "http://127.0.0.1/sprechzimmer2.gdt",
-        "delete_url": "http://127.0.0.1/loesche-sprechzimmer2.php",
-        "enabled": true
-      }
-    ]
-  },
-
-  "logging": {
-    "enabled": false,
-    "sink": "file",
-    "level": "debug",
-    "log_file": "/var/www/html/logs/backend.log"
   }
 }
 EOF
 
-  say "Schreibe loesche-sprechzimmer1.php"
-  cat >"${WEBROOT_DIR}/loesche-sprechzimmer1.php" <<'EOF'
-<?php
-header("Content-Type: text/plain; charset=utf-8");
-header("Cache-Control: no-store");
-
-$path = "/var/www/html/sprechzimmer1.gdt";
-if (substr($path, -4) !== ".gdt") {
-  http_response_code(500);
-  echo "bad extension\n";
-  exit;
-}
-if (!file_exists($path)) {
-  http_response_code(204);
-  echo "no file\n";
-  exit;
-}
-if (@unlink($path)) {
-  http_response_code(200);
-  echo "deleted\n";
-  exit;
-}
-http_response_code(500);
-echo "delete failed\n";
-EOF
-
-  say "Schreibe loesche-sprechzimmer2.php"
-  cat >"${WEBROOT_DIR}/loesche-sprechzimmer2.php" <<'EOF'
-<?php
-header("Content-Type: text/plain; charset=utf-8");
-header("Cache-Control: no-store");
-
-$path = "/var/www/html/sprechzimmer2.gdt";
-if (substr($path, -4) !== ".gdt") {
-  http_response_code(500);
-  echo "bad extension\n";
-  exit;
-}
-if (!file_exists($path)) {
-  http_response_code(204);
-  echo "no file\n";
-  exit;
-}
-if (@unlink($path)) {
-  http_response_code(200);
-  echo "deleted\n";
-  exit;
-}
-http_response_code(500);
-echo "delete failed\n";
-EOF
+  say "Entferne veraltete lokale GDT-Löschskripte"
+  backup_file "${WEBROOT_DIR}/loesche-sprechzimmer1.php"
+  backup_file "${WEBROOT_DIR}/loesche-sprechzimmer2.php"
+  rm -f "${WEBROOT_DIR}/loesche-sprechzimmer1.php" "${WEBROOT_DIR}/loesche-sprechzimmer2.php"
 
   cat >"${WEBROOT_DIR}/README_WARTEZIMMER.txt" <<EOF
 ${APP_NAME} v${VERSION}
@@ -955,22 +971,13 @@ Startseite:
 
 Konfiguration:
 - ${CONFIG_JSON}
+- ${SERVER_CONFIG_JSON}
 
-Hinweise (Empfehlung):
-- am besten die dateien auf http://fragebogenpi.local/sprechzimmer1.gdt
-- alternativ kann die gdt ueber smb://wartezimmer/webroot geschrieben werden
-- am besten die dateien auf http://fragebogenpi.local/loesche-sprechzimmer1.php
-- loesche-Skript muss angepasst werden je nach Dateiname
-- Das ist die sauberste und sicherste Variante, da der Wartezimmerbildschirm ueber fragebogenpi vollstaendig vom Praxisnetz abgeschirmt ist.
-
-Test-GDT:
-- Per SMB im Webroot eine Datei 'sprechzimmer1.gdt' oder 'sprechzimmer2.gdt' anlegen.
-- Backend fetcht:
-  - http://127.0.0.1/sprechzimmer1.gdt
-  - http://127.0.0.1/sprechzimmer2.gdt
-- Danach ruft es:
-  - http://127.0.0.1/loesche-sprechzimmer1.php
-  - http://127.0.0.1/loesche-sprechzimmer2.php
+Aufrufweg:
+- Die Praxissoftware schreibt je Wartezimmer eine GDT-Datei in \\\\fragebogenpi\\wartezimmer-GDT.
+- Der Dateiname bestimmt das Ziel, z.B. Wartezimmer_1.gdt -> Wartezimmer 1.
+- Der Wartezimmer-Pi fragt ausschließlich wartezimmer-server.php ab.
+- Er erhält nur den auf fragebogenpi formatierten Namen und das Ziel, niemals die rohe GDT-Datei.
 
 Audio:
 - wartezimmer.json -> audio.video_sound_enabled (default false)
@@ -1001,9 +1008,6 @@ configure_permissions_and_samba_ready() {
   find "${WEBROOT_DIR}" -type d -exec chmod 2775 {} \;
   find "${WEBROOT_DIR}" -type f -exec chmod 0664 {} \;
 
-  mkdir -p "${WEBROOT_DIR}/logs"
-  chown "${INFODISPLAY_USER}:${INFODISPLAY_GROUP}" "${WEBROOT_DIR}/logs"
-  chmod 2775 "${WEBROOT_DIR}/logs"
 }
 
 configure_samba() {
@@ -1020,8 +1024,10 @@ configure_samba() {
    map to guest = Bad User
    guest account = ${INFODISPLAY_USER}
 
-   logging = syslog
+   logging = file
+   log file = /dev/null
    log level = 0
+   max log size = 0
 
    server min protocol = SMB2
    client min protocol = SMB2
@@ -1046,186 +1052,29 @@ EOF
 }
 
 install_backend() {
-  say "Backend: /usr/local/bin/infodisplay-backend.py + systemd (logging default AUS)"
+  say "Backend: einzelner Query auf wartezimmer-server.php, ohne Logging"
 
-  cat >/usr/local/bin/infodisplay-backend.py <<'EOF'
+  cat >/usr/local/bin/infodisplay-backend.py <<'PYEOF'
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# infodisplay-backend.py — fragebogenpi wartezimmerbildschirm backend (SSE + GDT fetch/delete)
-#
-# Änderung (neu): optionaler Mindestabstand zwischen Aufrufen:
-#   wartezimmer.json: "call_gap_seconds": 5
-#   -> nach jedem veröffentlichten Call-Event wird mindestens call_gap_seconds gewartet.
 
 import asyncio
 import json
-import os
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from aiohttp import web, ClientSession, ClientTimeout
+from aiohttp import ClientSession, ClientTimeout, web
 
-WEBROOT = "/var/www/html"
-CONFIG_PATH = os.path.join(WEBROOT, "wartezimmer.json")
-DEFAULT_LOG_FILE = os.path.join(WEBROOT, "logs", "backend.log")
+SERVER_CONFIG_PATH = "/etc/fragebogenpi-wartezimmer/server.json"
+DISPLAY_CONFIG_PATH = "/var/www/html/wartezimmer.json"
 
 
-def ts() -> str:
-    return time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-class Logger:
-    def __init__(self) -> None:
-        self.enabled = False
-        self.level = "error"
-        self.sink = "file"
-        self.log_file = DEFAULT_LOG_FILE
-        self._fp = None
-
-    def apply_config(self, cfg: Dict[str, Any]) -> None:
-        lc = cfg.get("logging", {})
-        if isinstance(lc, dict):
-            self.enabled = bool(lc.get("enabled", False))
-            self.level = str(lc.get("level", "error")).lower()
-            self.sink = str(lc.get("sink", "file")).lower()
-            self.log_file = str(lc.get("log_file", DEFAULT_LOG_FILE))
-
-        if self._fp:
-            try:
-                self._fp.close()
-            except Exception:
-                pass
-            self._fp = None
-
-        if not self.enabled:
-            return
-
-        if self.sink == "file":
-            try:
-                os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-                self._fp = open(self.log_file, "a", encoding="utf-8")
-            except Exception:
-                self.sink = "stdout"
-                self._fp = None
-
-    def _want(self, lvl: str) -> bool:
-        order = {"error": 0, "warn": 1, "info": 2, "debug": 3}
-        return order.get(lvl, 3) <= order.get(self.level, 0)
-
-    def log(self, lvl: str, msg: str) -> None:
-        if not self.enabled or not self._want(lvl):
-            return
-        line = f"{ts()} [{lvl.upper()}] {msg}\n"
-        if self.sink == "stdout":
-            try:
-                print(line, end="", flush=True)
-            except Exception:
-                pass
-        else:
-            if self._fp:
-                try:
-                    self._fp.write(line)
-                    self._fp.flush()
-                except Exception:
-                    pass
-
-
-def parse_first_last_from_gdt(gdt_text: str) -> Tuple[str, str]:
-    """
-    Use ONLY:
-      3102 = Vorname
-      3101 = Nachname
-    Typical line: LLLFFFF<value> (LLL length ignored).
-    """
-    firstname = ""
-    lastname = ""
-
-    for raw in gdt_text.splitlines():
-        line = raw.strip()
-        if not line or len(line) < 7:
-            continue
-        if not (line[:3].isdigit() and line[3:7].isdigit()):
-            continue
-        field = line[3:7]
-        value = line[7:].strip()
-
-        if field == "3102" and value:
-            firstname = value
-        elif field == "3101" and value:
-            lastname = value
-
-        if firstname and lastname:
-            break
-
-    return firstname, lastname
-
-
-def _abbr_component(text: str, letters: int, dot: bool, enabled: bool) -> str:
-    if not enabled:
-        return text.strip()
-
+def load_json(path: str) -> Optional[Dict[str, Any]]:
     try:
-        n = int(letters)
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
     except Exception:
-        n = 1
-    if n < 1:
-        n = 1
-
-    # counting ignores: space, tab, "-", "–", "—"
-    ignore = {" ", "\t", "-", "–", "—"}
-    out_chars: List[str] = []
-    count = 0
-    for ch in text.strip():
-        if ch in ignore:
-            continue
-        out_chars.append(ch)
-        count += 1
-        if count >= n:
-            break
-
-    out = "".join(out_chars).strip()
-    if not out:
-        return ""
-
-    if dot:
-        out += "."
-    return out
-
-
-def format_name(cfg: Dict[str, Any], firstname: str, lastname: str) -> str:
-    nf = cfg.get("name_format", {})
-    if not isinstance(nf, dict):
-        nf = {}
-
-    enabled = bool(nf.get("enabled", False))
-
-    full = (firstname + " " + lastname).strip()
-    if not enabled:
-        return full if full else "Aufruf"
-
-    fn_cfg = nf.get("first_name", {})
-    ln_cfg = nf.get("last_name", {})
-    if not isinstance(fn_cfg, dict):
-        fn_cfg = {}
-    if not isinstance(ln_cfg, dict):
-        ln_cfg = {}
-
-    fn = _abbr_component(
-        firstname,
-        letters=fn_cfg.get("letters", 1),
-        dot=bool(fn_cfg.get("dot", True)),
-        enabled=bool(fn_cfg.get("enabled", True)),
-    )
-    ln = _abbr_component(
-        lastname,
-        letters=ln_cfg.get("letters", 3),
-        dot=bool(ln_cfg.get("dot", True)),
-        enabled=bool(ln_cfg.get("enabled", True)),
-    )
-
-    out = (fn + " " + ln).strip()
-    return out if out else "Aufruf"
+        return None
 
 
 class EventHub:
@@ -1233,188 +1082,127 @@ class EventHub:
         self._clients: List[asyncio.Queue] = []
 
     def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=200)
-        self._clients.append(q)
-        return q
+        queue: asyncio.Queue = asyncio.Queue(maxsize=20)
+        self._clients.append(queue)
+        return queue
 
-    def unsubscribe(self, q: asyncio.Queue) -> None:
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
         try:
-            self._clients.remove(q)
+            self._clients.remove(queue)
         except ValueError:
             pass
 
     async def publish(self, payload: Dict[str, Any]) -> None:
-        dead: List[asyncio.Queue] = []
-        for q in self._clients:
+        for queue in list(self._clients):
             try:
-                q.put_nowait(payload)
+                queue.put_nowait(payload)
             except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self.unsubscribe(q)
-
-
-async def load_config(log: Logger) -> Optional[Dict[str, Any]]:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if not isinstance(cfg, dict):
-            log.log("error", "Config is not a JSON object")
-            return None
-        return cfg
-    except Exception as e:
-        log.log("error", f"Config load failed: {e}")
-        return None
+                self.unsubscribe(queue)
 
 
 async def sse_events(request: web.Request) -> web.StreamResponse:
     hub: EventHub = request.app["hub"]
-    log: Logger = request.app["log"]
-    q = hub.subscribe()
+    queue = hub.subscribe()
 
-    resp = web.StreamResponse(
+    response = web.StreamResponse(
         status=200,
         headers={
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
         },
     )
-    await resp.prepare(request)
+    await response.prepare(request)
 
     async def heartbeat() -> None:
         while True:
             try:
-                await resp.write(b": ping\n\n")
+                await response.write(b": ping\n\n")
             except Exception:
-                break
+                return
             await asyncio.sleep(10)
 
-    hb_task = asyncio.create_task(heartbeat())
-
+    heartbeat_task = asyncio.create_task(heartbeat())
     try:
         while True:
-            payload = await q.get()
+            payload = await queue.get()
             data = json.dumps(payload, ensure_ascii=False)
-            await resp.write(f"data: {data}\n\n".encode("utf-8"))
-    except Exception as e:
-        log.log("warn", f"SSE client disconnected: {e}")
+            await response.write(f"data: {data}\n\n".encode("utf-8"))
+    except Exception:
+        pass
     finally:
-        hb_task.cancel()
-        hub.unsubscribe(q)
+        heartbeat_task.cancel()
+        hub.unsubscribe(queue)
 
-    return resp
+    return response
 
 
-async def fetch_gdt(session: ClientSession, url: str, log: Logger) -> Optional[str]:
+def positive_number(value: Any, fallback: float) -> float:
     try:
-        async with session.get(url) as r:
-            log.log("debug", f"fetch {url} -> {r.status}")
-            if r.status == 204:
-                return None
-            if r.status != 200:
-                return None
-            txt = await r.text()
-            return txt if txt.strip() else None
-    except Exception as e:
-        log.log("warn", f"fetch error {url}: {e}")
-        return None
-
-
-async def call_delete(session: ClientSession, url: str, log: Logger) -> bool:
-    try:
-        async with session.get(url) as r:
-            log.log("debug", f"delete {url} -> {r.status}")
-            return r.status in (200, 204)
-    except Exception as e:
-        log.log("warn", f"delete error {url}: {e}")
-        return False
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if number > 0 else fallback
 
 
 async def poll_loop(app: web.Application) -> None:
     hub: EventHub = app["hub"]
-    log: Logger = app["log"]
-    timeout = ClientTimeout(total=3.0)
+    timeout = ClientTimeout(total=5.0)
 
-    while True:
-        cfg = await load_config(log)
-        if cfg is None:
-            await asyncio.sleep(2.0)
-            continue
+    async with ClientSession(timeout=timeout) as session:
+        while True:
+            server_config = load_json(SERVER_CONFIG_PATH) or {}
+            server_url = str(server_config.get("server_url", "")).strip()
+            interval = positive_number(
+                server_config.get("query_interval_seconds", 3),
+                3.0,
+            )
 
-        log.apply_config(cfg)
+            if not server_url:
+                await asyncio.sleep(interval)
+                continue
 
-        fetch_cfg = cfg.get("fetch", {}) if isinstance(cfg.get("fetch", {}), dict) else {}
-        enabled = bool(fetch_cfg.get("enabled", False))
-        poll_ms = int(fetch_cfg.get("poll_interval_ms", 500))
-        max_jobs = int(fetch_cfg.get("max_jobs_per_room_per_cycle", 10))
-        rooms = fetch_cfg.get("rooms", []) if isinstance(fetch_cfg.get("rooms", []), list) else []
+            try:
+                async with session.get(server_url) as response:
+                    if response.status != 200:
+                        await asyncio.sleep(interval)
+                        continue
+                    call = await response.json(content_type=None)
+            except Exception:
+                await asyncio.sleep(interval)
+                continue
 
-        sound_dir = str(cfg.get("sound_dir", "sounds")).strip() or "sounds"
-        default_sound = str(cfg.get("default_sound", "jsbach.m4a")).strip() or "jsbach.m4a"
-        display_seconds = int(cfg.get("display_seconds", 10))
+            if not isinstance(call, dict):
+                await asyncio.sleep(interval)
+                continue
 
-        call_gap_seconds = int(cfg.get("call_gap_seconds", 0))
-        if call_gap_seconds < 0:
-            call_gap_seconds = 0
+            display_text = str(call.get("display_text", "")).strip()
+            target = str(call.get("target", "")).strip()
+            if not display_text and not target:
+                await asyncio.sleep(interval)
+                continue
 
-        if not enabled or not rooms:
-            await asyncio.sleep(1.0)
-            continue
+            display_config = load_json(DISPLAY_CONFIG_PATH) or {}
+            sound_dir = str(display_config.get("sound_dir", "sounds")).strip() or "sounds"
+            default_sound = str(display_config.get("default_sound", "jsbach.m4a")).strip() or "jsbach.m4a"
+            display_seconds = positive_number(
+                display_config.get("display_seconds", 10),
+                10.0,
+            )
 
-        async with ClientSession(timeout=timeout) as session:
-            for room in rooms:
-                if not isinstance(room, dict):
-                    continue
-                if not bool(room.get("enabled", True)):
-                    continue
+            await hub.publish(
+                {
+                    "type": "call",
+                    "display_text": display_text or "Aufruf",
+                    "target": target,
+                    "source_id": "",
+                    "sound": f"{sound_dir}/{default_sound}",
+                    "display_seconds": display_seconds,
+                }
+            )
 
-                rid = str(room.get("id", "room")).strip() or "room"
-                target = str(room.get("target", "")).strip()
-                fetch_url = str(room.get("fetch_url", "")).strip()
-                delete_url = str(room.get("delete_url", "")).strip()
-                if not fetch_url or not delete_url:
-                    continue
-
-                sound = f"{sound_dir}/{default_sound}"
-                so = room.get("sound_override")
-                if isinstance(so, str) and so.strip():
-                    sound = so.strip() if "/" in so.strip() else f"{sound_dir}/{so.strip()}"
-
-                jobs_done = 0
-                while jobs_done < max_jobs:
-                    gdt_text = await fetch_gdt(session, fetch_url, log)
-                    if gdt_text is None:
-                        break
-
-                    firstname, lastname = parse_first_last_from_gdt(gdt_text)
-                    name = format_name(cfg, firstname, lastname)
-
-                    payload = {
-                        "type": "call",
-                        "source_id": rid,
-                        "target": target,
-                        "display_text": name,
-                        "sound": sound,
-                        "display_seconds": display_seconds,
-                    }
-                    await hub.publish(payload)
-
-                    ok = await call_delete(session, delete_url, log)
-                    if not ok:
-                        await asyncio.sleep(2.0)
-                        break
-
-                    jobs_done += 1
-
-                    # Mindestabstand zwischen Aufrufen
-                    if call_gap_seconds > 0:
-                        await asyncio.sleep(call_gap_seconds)
-
-                await asyncio.sleep(0.05)
-
-        await asyncio.sleep(max(0.1, poll_ms / 1000.0))
+            # Erst nach Ende der Anzeige wird die nächste Datei abgefragt.
+            await asyncio.sleep(max(display_seconds, interval))
 
 
 async def on_startup(app: web.Application) -> None:
@@ -1422,47 +1210,39 @@ async def on_startup(app: web.Application) -> None:
 
 
 async def on_cleanup(app: web.Application) -> None:
-    t = app.get("poll_task")
-    if t:
-        t.cancel()
+    task = app.get("poll_task")
+    if task:
+        task.cancel()
         try:
-            await t
-        except Exception:
+            await task
+        except asyncio.CancelledError:
             pass
 
 
 def main() -> None:
-    log = Logger()
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            if isinstance(cfg, dict):
-                log.apply_config(cfg)
-    except Exception:
-        pass
-
     app = web.Application()
     app["hub"] = EventHub()
-    app["log"] = log
-
     app.router.add_get("/events", sse_events)
-
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
-
-    web.run_app(app, host="127.0.0.1", port=8765, access_log=None)
+    web.run_app(
+        app,
+        host="127.0.0.1",
+        port=8765,
+        access_log=None,
+        print=None,
+    )
 
 
 if __name__ == "__main__":
     main()
-EOF
+PYEOF
 
-  chmod +x /usr/local/bin/infodisplay-backend.py
+  chmod 0755 /usr/local/bin/infodisplay-backend.py
 
   cat >/etc/systemd/system/infodisplay-backend.service <<'EOF'
 [Unit]
-Description=fragebogenpi wartezimmerbildschirm backend (SSE + GDT fetch/delete)
+Description=fragebogenpi wartezimmerbildschirm backend (einzelner Server-Query)
 After=network-online.target apache2.service
 Wants=network-online.target
 
@@ -1635,22 +1415,28 @@ main() {
 
   ask_hostname_and_set_robust
   ask_wlan_enable_and_configure || true
+  ask_server_query_config
 
   configure_firewall_wlan_only
 
   install_webroot_files
   configure_permissions_and_samba_ready
+  write_server_query_config
   configure_apache_open_lan
   configure_samba
 
   install_backend
   configure_kiosk
+  check_waiting_room_server_reachable
 
   say "Fertig."
   echo
   echo "Wichtige URLs:"
   echo "  - Web:   http://<pi-ip>/wartezimmer.php"
   echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
+  echo "  - Server: http://${FRAGEBOGENPI_SERVER_IP}/wartezimmer-server.php"
+  echo "  - WLAN-SSID: ${WLAN_SSID}"
+  echo "  - Query-Intervall: ${QUERY_INTERVAL_SECONDS} Sekunden"
   echo
   echo "Firefox Kiosk Start (manuell, falls nötig):"
   echo "  - sudo -u ${KIOSK_USER} firefox-esr -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php"

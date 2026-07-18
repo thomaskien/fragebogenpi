@@ -4,11 +4,46 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.5.7
+# Version: 1.6
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.6 (2026-07-18)
+#   * Optionale Wartezimmer-Schnittstelle ergänzt:
+#       - separater, nur über LAN erreichbarer Samba-Share "wartezimmer-GDT"
+#       - eine feste GDT-Datei pro Wartezimmer; der Dateiname bestimmt das angezeigte Ziel
+#       - wartezimmer-server.php liefert pro Query die älteste Datei datensparsam aus und löscht sie sofort
+#       - über WLAN werden nur die konfigurierte Namensdarstellung und das Wartezimmer übertragen
+#   * Datenschutzkonfiguration wird interaktiv abgefragt:
+#       - Vor- und Nachname können unabhängig vollständig oder gekürzt angezeigt werden
+#       - bei Kürzung werden Buchstabenanzahl und Punkt unabhängig abgefragt
+#       - Konfiguration liegt außerhalb von Webroot und Samba-Share
+#   * Bestehende Installation: neuer Modus "4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren"
+#   * Für wartezimmer-server.php werden keine Anwendungs- oder Apache-Zugriffslogs geschrieben
+#
+# - 1.5.9 (2026-06-26)
+#   * Webroot-Isolation für WLAN/LAN:
+#       - Fragebogen-Webroot liegt jetzt getrennt unter /srv/fragebogenpi/webroot-wlan
+#       - bestehender LAN-Webroot /var/www/html bleibt als separater Share webroot-lan erhalten
+#       - Samba-Shares heißen jetzt webroot-wlan und webroot-lan statt gemeinsamem WEBROOT
+#   * Apache wird in zwei Instanzen getrennt:
+#       - Standard-apache2 wird auf die aktuelle LAN-IP gebunden
+#       - fragebogenpi-apache-wlan.service bedient nur 10.23.0.1 mit dem WLAN-Webroot
+#       - WLAN-Clients können dadurch keine anderen Apache-Anwendungen wie kienzlefax/telepraxis erreichen
+#
+# - 1.5.8 (2026-06-26)
+#   * Installer fragt jetzt, ob der Hostname neu gesetzt werden soll
+#       - bei "ja" ist "fragebogenpi" der Vorschlag
+#       - bei "nein" bleibt der bestehende Hostname unverändert
+#   * Installer fragt jetzt, ob der WLAN-Name/SSID gesetzt werden soll
+#       - bei "ja" ist "fragebogenpi" der Vorschlag
+#       - bei "nein" wird eine vorhandene hostapd-SSID übernommen, soweit vorhanden
+#       - das WLAN-Passwort wird weiterhin ohne zusätzliche Ja/Nein-Abfrage generiert
+#   * Samba-Konfiguration wird nicht mehr vollständig überschrieben
+#       - bestehende fremde Shares/Konfigurationen (z.B. kienzlefax) bleiben erhalten
+#       - fragebogenpi verwaltet nur eigene globale Einstellungen und Shares über markierte Blöcke
 #
 # - 1.0 (2026-01-31)
 #   * Initiale Version
@@ -188,7 +223,6 @@
 #         und gibt NUR das Passwort auf stdout aus (verhindert eingefangene Newlines in $(...))
 #       - Nach jedem smbpasswd wird ein Login-Test via smbclient gegen localhost durchgeführt
 #         (früher konnten falsche Passwörter unbemerkt gesetzt werden)
-#
 # =========================
 #
 set -euo pipefail
@@ -198,6 +232,7 @@ set -euo pipefail
 # -------------------------
 AP_SSID="fragebogenpi"
 HOSTNAME_FQDN="fragebogenpi"
+SET_HOSTNAME="yes"
 
 AP_INTERFACE="wlan0"
 LAN_INTERFACE="eth0"
@@ -208,17 +243,32 @@ AP_DHCP_START="10.23.0.50"
 AP_DHCP_END="10.23.0.150"
 AP_NETMASK="255.255.255.0"
 
-WEBROOT="/var/www/html"
-
 # Variante A: Shares außerhalb des Webroots
 SHARE_BASE="/srv/fragebogenpi"
+WEBROOT_LAN="/var/www/html"
+WEBROOT_WLAN="${SHARE_BASE}/webroot-wlan"
+WEBROOT="${WEBROOT_WLAN}"  # fragebogenpi-App: nur für die isolierte WLAN-Apache-Instanz
 SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
+SHARE_WAITING_ROOM="${SHARE_BASE}/wartezimmer-GDT"
 CRED_FILE="${SHARE_PDF}/zugangsdaten_fragebogenpi_bitte_loeschen.txt"
+
+# Wartezimmer-Schnittstelle
+WAITING_ROOM_CONFIG="/etc/fragebogenpi/wartezimmer-config.php"
+WAITING_ROOM_LOCK="${SHARE_BASE}/.wartezimmer-server.lock"
+WAITING_ROOM_SERVER="${WEBROOT_WLAN}/wartezimmer-server.php"
+WAITING_ROOM_SERVER_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/wartezimmer-server.php"
+WAITING_ROOM_ENABLED="no"
+WAITING_SHORTEN_FIRST="yes"
+WAITING_FIRST_LETTERS="1"
+WAITING_FIRST_DOT="yes"
+WAITING_SHORTEN_LAST="yes"
+WAITING_LAST_LETTERS="2"
+WAITING_LAST_DOT="yes"
 
 # Samba-User
 SAMBA_USER="fragebogenpi"   # optional (für GDT/PDF, wenn Passwortschutz gewählt)
-ADMIN_USER="admin"          # immer vorhanden für WEBROOT Share
+ADMIN_USER="admin"          # immer vorhanden für webroot-wlan/webroot-lan Shares
 
 # HTTPS (optional)
 SSL_DIR="/etc/ssl/fragebogenpi"
@@ -228,6 +278,17 @@ SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
 # AP IP helper/service
 AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
 AP_IP_HELPER="/usr/local/sbin/fragebogenpi-ap-ip.sh"
+
+# Apache-Isolation: LAN-Instanz + separate WLAN-Instanz
+APACHE_WLAN_DIR="/etc/fragebogenpi/apache-wlan"
+APACHE_WLAN_CONF="${APACHE_WLAN_DIR}/apache2.conf"
+APACHE_WLAN_SERVICE="/etc/systemd/system/fragebogenpi-apache-wlan.service"
+APACHE_WLAN_RUN_DIR="/run/fragebogenpi-apache-wlan"
+APACHE_WLAN_LOG_DIR="/var/log/apache2"
+APACHE_LAN_BIND_HELPER="/usr/local/sbin/fragebogenpi-apache-lan-bind.sh"
+APACHE_LAN_BIND_SERVICE="/etc/systemd/system/fragebogenpi-apache-lan-bind.service"
+APACHE_LAN_DROPIN_DIR="/etc/systemd/system/apache2.service.d"
+APACHE_LAN_DROPIN="${APACHE_LAN_DROPIN_DIR}/10-fragebogenpi-lan-bind.conf"
 
 # Bootstrap-Dateiliste (relative Dateinamen)
 BOOTSTRAP_URL="https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/bootstrap"
@@ -250,7 +311,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.5.7"
+VERSION="1.6"
 STEP_NO=0
 
 banner() {
@@ -321,6 +382,143 @@ ask_yes_no() {
   done
 }
 
+trim_value() {
+  local value="$1"
+  value="${value%$'\r'}"
+  value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+  printf '%s' "$value"
+}
+
+current_system_hostname() {
+  local current=""
+  current="$(hostname 2>/dev/null || true)"
+  current="$(trim_value "$current")"
+  if [[ -z "$current" ]] && [[ -f /etc/hostname ]]; then
+    current="$(head -n 1 /etc/hostname 2>/dev/null || true)"
+    current="$(trim_value "$current")"
+  fi
+  printf '%s' "$current"
+}
+
+current_hostapd_ssid() {
+  local hostapd_conf="/etc/hostapd/hostapd.conf"
+  if [[ -f "$hostapd_conf" ]]; then
+    awk -F= '/^ssid=/ {sub(/^ssid=/, ""); print; exit}' "$hostapd_conf" 2>/dev/null || true
+  fi
+}
+
+is_valid_hostname() {
+  local h="$1"
+  [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
+}
+
+is_valid_ssid() {
+  local ssid="$1"
+  [[ -n "$ssid" ]] && (( ${#ssid} <= 32 ))
+}
+
+ask_hostname_setup() {
+  local current desired
+  current="$(current_system_hostname)"
+  [[ -n "$current" ]] || current="${HOSTNAME_FQDN}"
+
+  if ask_yes_no "Hostname setzen/ändern? (aktuell: ${current})" "y"; then
+    while true; do
+      read -r -p "Hostname [${HOSTNAME_FQDN}]: " desired
+      desired="$(trim_value "$desired")"
+      desired="${desired:-$HOSTNAME_FQDN}"
+      if is_valid_hostname "$desired"; then
+        HOSTNAME_FQDN="$desired"
+        SET_HOSTNAME="yes"
+        return 0
+      fi
+      echo "Bitte einen gültigen Hostname eingeben (Buchstaben, Zahlen, Bindestrich; 1-63 Zeichen)."
+    done
+  else
+    HOSTNAME_FQDN="$current"
+    SET_HOSTNAME="no"
+    log "Hostname bleibt unverändert: ${HOSTNAME_FQDN}"
+  fi
+}
+
+ask_ap_ssid_setup() {
+  local current desired
+  current="$(current_hostapd_ssid)"
+
+  if [[ -n "$current" ]]; then
+    if ! ask_yes_no "WLAN-Name/SSID setzen/ändern? (aktuell: ${current})" "y"; then
+      AP_SSID="$current"
+      log "WLAN-SSID bleibt unverändert: ${AP_SSID}"
+      return 0
+    fi
+  else
+    if ! ask_yes_no "WLAN-Name/SSID setzen/ändern?" "y"; then
+      warn "Keine bestehende hostapd-SSID gefunden – verwende Standard '${AP_SSID}'."
+      return 0
+    fi
+  fi
+
+  while true; do
+    read -r -p "WLAN-Name/SSID [${AP_SSID}]: " desired
+    desired="$(trim_value "$desired")"
+    desired="${desired:-$AP_SSID}"
+    if is_valid_ssid "$desired"; then
+      AP_SSID="$desired"
+      return 0
+    fi
+    echo "Bitte eine nicht-leere SSID mit maximal 32 Zeichen eingeben."
+  done
+}
+
+ask_positive_integer_without_maximum() {
+  local prompt="$1"
+  local default="$2"
+  local value=""
+
+  while true; do
+    read -r -p "${prompt} [${default}]: " value
+    value="$(trim_value "$value")"
+    value="${value:-$default}"
+    if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    echo "Bitte eine positive ganze Zahl eingeben." >&2
+  done
+}
+
+ask_waiting_room_privacy_config() {
+  step "Datenschutzkonfiguration für Wartezimmer-Aufrufe"
+
+  if ask_yes_no "Vorname kürzen?" "y"; then
+    WAITING_SHORTEN_FIRST="yes"
+    WAITING_FIRST_LETTERS="$(ask_positive_integer_without_maximum "Anzahl der angezeigten Buchstaben des Vornamens" "1")"
+    if ask_yes_no "Punkt nach dem gekürzten Vornamen anzeigen?" "y"; then
+      WAITING_FIRST_DOT="yes"
+    else
+      WAITING_FIRST_DOT="no"
+    fi
+  else
+    WAITING_SHORTEN_FIRST="no"
+    WAITING_FIRST_DOT="no"
+  fi
+
+  if ask_yes_no "Nachname kürzen?" "y"; then
+    WAITING_SHORTEN_LAST="yes"
+    WAITING_LAST_LETTERS="$(ask_positive_integer_without_maximum "Anzahl der angezeigten Buchstaben des Nachnamens" "2")"
+    if ask_yes_no "Punkt nach dem gekürzten Nachnamen anzeigen?" "y"; then
+      WAITING_LAST_DOT="yes"
+    else
+      WAITING_LAST_DOT="no"
+    fi
+  else
+    WAITING_SHORTEN_LAST="no"
+    WAITING_LAST_DOT="no"
+  fi
+
+  ok "Datenschutzkonfiguration übernommen"
+}
+
 ask_choice_http_https() {
   local answer=""
   while true; do
@@ -337,18 +535,20 @@ ask_choice_existing_install() {
   local answer=""
   echo >&2
   echo "[fragebogenpi] Es wurde eine bestehende Installation gefunden: ${SHARE_BASE}" >&2
-  echo "Hinweis: Auswahl 2 überschreibt Dateien im Webroot (Programme/Bootstrap), sonst nichts." >&2
+  echo "Hinweis: Auswahl 2 überschreibt Dateien im isolierten WLAN-Webroot (Programme/Bootstrap), sonst nichts." >&2
   echo "Was soll ich tun?" >&2
   echo "  1) Vollständige Neu-Konfiguration (setzt Passwörter neu, richtet Dienste/Firewall/Samba/AP/PHP neu ein)" >&2
-  echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im Webroot; bestehende Dateien werden überschrieben)" >&2
+  echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im WLAN-Webroot; bestehende Dateien werden überschrieben)" >&2
   echo "  3) Nur User hinzufügen (legt/aktualisiert zusätzliche Windows-/Samba-User; sonst keine Änderungen)" >&2
+  echo "  4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren" >&2
   while true; do
-    read -r -p "Auswahl [1/2/3]: " answer
+    read -r -p "Auswahl [1/2/3/4]: " answer
     case "$answer" in
       1) echo "full"; return 0 ;;
       2) echo "webroot"; return 0 ;;
       3) echo "users"; return 0 ;;
-      *) echo "Bitte 1, 2 oder 3 eingeben." >&2 ;;
+      4) echo "waiting"; return 0 ;;
+      *) echo "Bitte 1, 2, 3 oder 4 eingeben." >&2 ;;
     esac
   done
 }
@@ -649,18 +849,35 @@ install_packages_users_only() {
   ok "samba + samba-common-bin + smbclient ist verfügbar (smbpasswd/pdbedit/smbclient)"
 }
 
+install_packages_waiting_room_only() {
+  step "Minimal: Pakete für die Wartezimmer-Schnittstelle sicherstellen"
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y curl samba samba-common-bin php acl
+  ok "curl, Samba, PHP und ACL-Werkzeuge sind verfügbar"
+}
+
 set_hostname() {
   step "Hostname setzen und mDNS aktivieren"
-  log "Setze Hostname auf '${HOSTNAME_FQDN}'..."
-  if command -v hostnamectl >/dev/null 2>&1; then
-    hostnamectl set-hostname "${HOSTNAME_FQDN}"
-  else
-    echo "${HOSTNAME_FQDN}" > /etc/hostname
-    hostname "${HOSTNAME_FQDN}" || true
-  fi
 
-  if ! grep -qE "127\.0\.1\.1\s+${HOSTNAME_FQDN}\b" /etc/hosts; then
-    echo "127.0.1.1 ${HOSTNAME_FQDN}" >> /etc/hosts
+  if [[ "$SET_HOSTNAME" == "yes" ]]; then
+    log "Setze Hostname auf '${HOSTNAME_FQDN}'..."
+    backup_file /etc/hostname
+    backup_file /etc/hosts
+
+    if command -v hostnamectl >/dev/null 2>&1; then
+      hostnamectl set-hostname "${HOSTNAME_FQDN}"
+    else
+      echo "${HOSTNAME_FQDN}" > /etc/hostname
+      hostname "${HOSTNAME_FQDN}" || true
+    fi
+
+    if grep -qE '^127\.0\.1\.1[[:space:]]+' /etc/hosts 2>/dev/null; then
+      sed -i -E "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 ${HOSTNAME_FQDN}/" /etc/hosts
+    else
+      echo "127.0.1.1 ${HOSTNAME_FQDN}" >> /etc/hosts
+    fi
+  else
+    log "Hostname bleibt unverändert (${HOSTNAME_FQDN})."
   fi
 
   systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
@@ -670,78 +887,163 @@ set_hostname() {
 }
 
 setup_share_dirs() {
+  local waiting_room_enabled="${1:-no}"
   step "Share-Verzeichnisse (Variante A) erstellen und Rechte setzen"
   log "Erstelle Share-Verzeichnisse außerhalb des Webroots: ${SHARE_BASE}"
   mkdir -p "$SHARE_GDT" "$SHARE_PDF"
+  if [[ "$waiting_room_enabled" == "yes" ]]; then
+    mkdir -p "$SHARE_WAITING_ROOM"
+  fi
 
   chown -R www-data:www-data "$SHARE_BASE"
   chmod -R 2775 "$SHARE_BASE"
 
   setfacl -R -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
   setfacl -R -d -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
+  if [[ "$waiting_room_enabled" == "yes" ]]; then
+    setfacl -R -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
+    setfacl -R -d -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
+  fi
 
   ok "Shares liegen außerhalb des Webroots (nicht direkt per Web erreichbar)"
 }
 
 setup_webroot_perms() {
-  step "Webroot Rechte für PHP und Samba-Admin vorbereiten"
-  mkdir -p "$WEBROOT"
-  chown -R www-data:www-data "$WEBROOT"
-  chmod -R 2775 "$WEBROOT"
+  step "Webroots vorbereiten (WLAN isoliert, LAN bestehend)"
 
-  setfacl -R -m u:www-data:rwx "$WEBROOT" || true
-  setfacl -R -d -m u:www-data:rwx "$WEBROOT" || true
+  mkdir -p "$WEBROOT_WLAN" "$WEBROOT_LAN"
 
-  ok "Webroot ist für www-data schreibbar"
+  chown -R www-data:www-data "$WEBROOT_WLAN"
+  chmod -R 2775 "$WEBROOT_WLAN"
+  setfacl -R -m u:www-data:rwx "$WEBROOT_WLAN" || true
+  setfacl -R -d -m u:www-data:rwx "$WEBROOT_WLAN" || true
+
+  # Den bestehenden LAN-Webroot nicht rekursiv verändern: dort können andere Anwendungen liegen.
+  chmod 2775 "$WEBROOT_LAN" || true
+  setfacl -m u:www-data:rwx "$WEBROOT_LAN" || true
+  setfacl -d -m u:www-data:rwx "$WEBROOT_LAN" || true
+
+  ok "WLAN-Webroot ist isoliert vorbereitet; LAN-Webroot bleibt erhalten"
 }
 
-setup_samba() {
-  step "Samba konfigurieren (LAN: GDT/PDF optional, WEBROOT nur admin)"
-  local use_auth="$1"          # "yes"|"no"
-  local samba_pw="$2"          # wenn use_auth=yes
-  local admin_pw="$3"          # immer
-  local extra_users_space="$4" # space-separated usernames (optional)
-
-  log "Konfiguriere Samba..."
-
-  local smbconf="/etc/samba/smb.conf"
-  backup_file "$smbconf"
-
-  cat > "$smbconf" <<EOF
-[global]
-   workgroup = WORKGROUP
-   server string = fragebogenpi samba server
+write_samba_global_block() {
+  cat <<EOF
+# --- fragebogenpi GLOBAL BEGIN ---
    security = user
    map to guest = Bad User
-   guest account = nobody
 
-   # SMB nur im LAN anbieten (eth0)
+   # SMB nur im LAN anbieten (${LAN_INTERFACE})
    interfaces = lo ${LAN_INTERFACE}
    bind interfaces only = yes
 
    server min protocol = SMB2
    server max protocol = SMB3
 
-   log file = /var/log/samba/log.%m
-   max log size = 1000
-
    create mask = 0664
    directory mask = 2775
    force create mode = 0664
    force directory mode = 2775
+# --- fragebogenpi GLOBAL END ---
 EOF
+}
 
-  local valid_users_gdtpdf=""
-  if [[ "$use_auth" == "yes" ]]; then
-    valid_users_gdtpdf="${SAMBA_USER}"
-    if [[ -n "${extra_users_space// }" ]]; then
-      valid_users_gdtpdf="${valid_users_gdtpdf} ${extra_users_space}"
-    fi
+strip_samba_managed_blocks() {
+  local src="$1"
+  local dst="$2"
+
+  awk '
+    /^# --- fragebogenpi GLOBAL BEGIN ---$/ { skip=1; next }
+    /^# --- fragebogenpi GLOBAL END ---$/ { skip=0; next }
+    /^# --- fragebogenpi SHARES BEGIN ---$/ { skip=1; next }
+    /^# --- fragebogenpi SHARES END ---$/ { skip=0; next }
+    /^# --- fragebogenpi WARTEZIMMER SHARE BEGIN ---$/ { skip=1; next }
+    /^# --- fragebogenpi WARTEZIMMER SHARE END ---$/ { skip=0; next }
+    skip != 1 { print }
+  ' "$src" > "$dst"
+}
+
+strip_samba_share_sections() {
+  local src="$1"
+  local dst="$2"
+
+  awk '
+    BEGIN {
+      drop["gdt"]=1
+      drop["pdf"]=1
+      drop["webroot"]=1
+      drop["webroot-wlan"]=1
+      drop["webroot-lan"]=1
+      drop["wartezimmer-gdt"]=1
+      skip=0
+    }
+    /^\[[^]]+\][[:space:]]*$/ {
+      section=$0
+      gsub(/^\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      lower=tolower(section)
+      skip=(lower in drop) ? 1 : 0
+    }
+    skip != 1 { print }
+  ' "$src" > "$dst"
+}
+
+insert_samba_global_block() {
+  local src="$1"
+  local block_file="$2"
+  local dst="$3"
+
+  if ! grep -qiE '^\[global\][[:space:]]*$' "$src"; then
+    {
+      echo "[global]"
+      cat "$block_file"
+      echo
+      cat "$src"
+    } > "$dst"
+    return 0
   fi
 
-  if [[ "$use_auth" == "no" ]]; then
-    cat >> "$smbconf" <<EOF
+  awk -v block_file="$block_file" '
+    function print_block(   line) {
+      while ((getline line < block_file) > 0) {
+        print line
+      }
+      close(block_file)
+    }
+    BEGIN {
+      in_global=0
+      inserted=0
+    }
+    /^\[[^]]+\][[:space:]]*$/ {
+      if (in_global == 1 && inserted == 0) {
+        print_block()
+        inserted=1
+      }
+      if (tolower($0) ~ /^\[global\][[:space:]]*$/) {
+        in_global=1
+      } else {
+        in_global=0
+      }
+      print
+      next
+    }
+    { print }
+    END {
+      if (in_global == 1 && inserted == 0) {
+        print_block()
+      }
+    }
+  ' "$src" > "$dst"
+}
 
+write_samba_shares_block() {
+  local use_auth="$1"
+  local valid_users_gdtpdf="$2"
+
+  echo
+  echo "# --- fragebogenpi SHARES BEGIN ---"
+
+  if [[ "$use_auth" == "no" ]]; then
+    cat <<EOF
 [GDT]
    path = ${SHARE_GDT}
    browseable = yes
@@ -759,8 +1061,7 @@ EOF
    force group = www-data
 EOF
   else
-    cat >> "$smbconf" <<EOF
-
+    cat <<EOF
 [GDT]
    path = ${SHARE_GDT}
    browseable = yes
@@ -779,23 +1080,114 @@ EOF
    force user = www-data
    force group = www-data
 EOF
-
-    log "Lege Benutzer '${SAMBA_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
-    ensure_linux_user "${SAMBA_USER}" "/usr/sbin/nologin"
-    set_samba_password_add_or_update "${SAMBA_USER}" "${samba_pw}"
   fi
 
-  cat >> "$smbconf" <<EOF
+  cat <<EOF
 
-[WEBROOT]
-   path = ${WEBROOT}
+[webroot-wlan]
+   path = ${WEBROOT_WLAN}
    browseable = yes
    read only = no
    guest ok = no
    valid users = ${ADMIN_USER}
    force user = www-data
    force group = www-data
+
+[webroot-lan]
+   path = ${WEBROOT_LAN}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${ADMIN_USER}
+   force user = www-data
+   force group = www-data
+# --- fragebogenpi SHARES END ---
 EOF
+}
+
+write_samba_waiting_room_block() {
+  local use_auth="$1"
+  local valid_users="$2"
+
+  echo
+  echo "# --- fragebogenpi WARTEZIMMER SHARE BEGIN ---"
+  if [[ "$use_auth" == "yes" ]]; then
+    cat <<EOF
+[wartezimmer-GDT]
+   path = ${SHARE_WAITING_ROOM}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${valid_users}
+   force user = www-data
+   force group = www-data
+# --- fragebogenpi WARTEZIMMER SHARE END ---
+EOF
+  else
+    cat <<EOF
+[wartezimmer-GDT]
+   path = ${SHARE_WAITING_ROOM}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   force user = www-data
+   force group = www-data
+# --- fragebogenpi WARTEZIMMER SHARE END ---
+EOF
+  fi
+}
+
+setup_samba() {
+  step "Samba konfigurieren (nur LAN; optionale Wartezimmer-Schnittstelle)"
+  local use_auth="$1"          # "yes"|"no"
+  local samba_pw="$2"          # wenn use_auth=yes
+  local admin_pw="$3"          # immer
+  local extra_users_space="$4" # space-separated usernames (optional)
+  local waiting_room_enabled="${5:-no}"
+
+  log "Konfiguriere Samba..."
+
+  local smbconf="/etc/samba/smb.conf"
+  mkdir -p "$(dirname "$smbconf")"
+  if [[ ! -f "$smbconf" ]]; then
+    printf '[global]\n' > "$smbconf"
+  fi
+  backup_file "$smbconf"
+
+  local valid_users_gdtpdf=""
+  if [[ "$use_auth" == "yes" ]]; then
+    valid_users_gdtpdf="${SAMBA_USER}"
+    if [[ -n "${extra_users_space// }" ]]; then
+      valid_users_gdtpdf="${valid_users_gdtpdf} ${extra_users_space}"
+    fi
+  fi
+
+  local tmp_strip tmp_shares tmp_global tmp_final global_block
+  tmp_strip="$(mktemp)"
+  tmp_shares="$(mktemp)"
+  tmp_global="$(mktemp)"
+  tmp_final="$(mktemp)"
+  global_block="$(mktemp)"
+  trap 'rm -f "$tmp_strip" "$tmp_shares" "$tmp_global" "$tmp_final" "$global_block"' RETURN
+
+  write_samba_global_block > "$global_block"
+  strip_samba_managed_blocks "$smbconf" "$tmp_strip"
+  strip_samba_share_sections "$tmp_strip" "$tmp_shares"
+  insert_samba_global_block "$tmp_shares" "$global_block" "$tmp_global"
+  {
+    cat "$tmp_global"
+    write_samba_shares_block "$use_auth" "$valid_users_gdtpdf"
+    if [[ "$waiting_room_enabled" == "yes" ]]; then
+      write_samba_waiting_room_block "$use_auth" "$valid_users_gdtpdf"
+    fi
+  } > "$tmp_final"
+  cat "$tmp_final" > "$smbconf"
+
+  if [[ "$use_auth" == "yes" ]]; then
+    log "Lege Benutzer '${SAMBA_USER}' an (falls nicht vorhanden) und setze Samba-Passwort..."
+    ensure_linux_user "${SAMBA_USER}" "/usr/sbin/nologin"
+    set_samba_password_add_or_update "${SAMBA_USER}" "${samba_pw}"
+  fi
 
   log "Lege Admin-Benutzer '${ADMIN_USER}' an (falls nicht vorhanden), setze Linux+Samba-Passwort und gebe sudo..."
   ensure_linux_user "${ADMIN_USER}" "/bin/bash"
@@ -811,6 +1203,86 @@ EOF
   systemctl restart smbd nmbd || true
 
   ok "Samba läuft (nur LAN/eth0). Admin hat SSH+sudo."
+}
+
+strip_samba_waiting_room_share() {
+  local src="$1"
+  local dst="$2"
+
+  awk '
+    /^# --- fragebogenpi WARTEZIMMER SHARE BEGIN ---$/ { skip_block=1; next }
+    /^# --- fragebogenpi WARTEZIMMER SHARE END ---$/ { skip_block=0; next }
+    skip_block == 1 { next }
+    /^\[[^]]+\][[:space:]]*$/ {
+      section=$0
+      gsub(/^\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      skip_section=(tolower(section) == "wartezimmer-gdt") ? 1 : 0
+      if (skip_section == 1) next
+    }
+    skip_section != 1 { print }
+  ' "$src" > "$dst"
+}
+
+read_samba_gdt_setting() {
+  local smbconf="$1"
+  local setting="$2"
+
+  awk -v wanted="$setting" '
+    /^\[[^]]+\][[:space:]]*$/ {
+      section=$0
+      gsub(/^\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      in_gdt=(tolower(section) == "gdt") ? 1 : 0
+      next
+    }
+    in_gdt == 1 && index($0, "=") > 0 {
+      key=$0
+      sub(/=.*/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      if (tolower(key) == tolower(wanted)) {
+        value=$0
+        sub(/^[^=]*=/, "", value)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        print value
+        exit
+      }
+    }
+  ' "$smbconf"
+}
+
+setup_samba_waiting_room_only() {
+  step "Samba-Share wartezimmer-GDT ergänzen / aktualisieren"
+
+  local smbconf="/etc/samba/smb.conf"
+  [[ -f "$smbconf" ]] || die "Samba-Konfiguration fehlt: ${smbconf}. Bitte Vollinstallation verwenden."
+
+  local guest_setting valid_users use_auth
+  guest_setting="$(read_samba_gdt_setting "$smbconf" "guest ok")"
+  valid_users="$(read_samba_gdt_setting "$smbconf" "valid users")"
+  use_auth="yes"
+  case "${guest_setting,,}" in
+    yes|true|1) use_auth="no" ;;
+  esac
+
+  if [[ "$use_auth" == "yes" ]] && [[ -z "$valid_users" ]]; then
+    die "Zugriffsregel des bestehenden GDT-Shares konnte nicht übernommen werden. Bitte Vollinstallation verwenden."
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  strip_samba_waiting_room_share "$smbconf" "$tmp"
+  write_samba_waiting_room_block "$use_auth" "$valid_users" >> "$tmp"
+
+  testparm -s "$tmp" >/dev/null || die "Erzeugte Samba-Konfiguration ist ungültig."
+  backup_file "$smbconf"
+  cat "$tmp" > "$smbconf"
+
+  systemctl enable --now smbd nmbd >/dev/null 2>&1 || true
+  systemctl restart smbd nmbd || die "Samba konnte nach Einrichtung von wartezimmer-GDT nicht neu gestartet werden."
+  ok "Share wartezimmer-GDT nutzt dieselbe Zugriffsregel wie der bestehende GDT-Share"
 }
 
 configure_nm_unmanage_wlan0() {
@@ -1006,17 +1478,14 @@ EOF
   ok "AP/DHCP aktiv"
 }
 
-setup_https_if_requested() {
-  step "Webserver konfigurieren (HTTP/HTTPS)"
+ensure_ssl_cert_if_requested() {
   local mode="$1"
 
   if [[ "$mode" == "http" ]]; then
-    log "HTTP-only gewählt. HTTPS wird nicht aktiviert."
-    ok "Apache HTTP aktiv"
     return 0
   fi
 
-  log "HTTPS gewählt. Erzeuge self-signed Zertifikat (gültig bis 2050) und aktiviere Apache SSL..."
+  log "HTTPS gewählt. Erzeuge self-signed Zertifikat für WLAN-Apache (gültig bis 2050)..."
 
   mkdir -p "$SSL_DIR"
   chmod 700 "$SSL_DIR"
@@ -1034,26 +1503,338 @@ setup_https_if_requested() {
 
   chmod 600 "$SSL_KEY"
   chmod 644 "$SSL_CRT"
+}
 
-  a2enmod ssl >/dev/null
-  a2enmod rewrite >/dev/null
+install_apache_lan_bind_helper() {
+  mkdir -p "$(dirname "$APACHE_LAN_BIND_HELPER")"
+  backup_file "$APACHE_LAN_BIND_HELPER"
 
-  local ssl_site="/etc/apache2/sites-available/default-ssl.conf"
-  backup_file "$ssl_site"
-  sed -i "s|^\s*SSLCertificateFile\s\+.*|SSLCertificateFile ${SSL_CRT}|g" "$ssl_site"
-  sed -i "s|^\s*SSLCertificateKeyFile\s\+.*|SSLCertificateKeyFile ${SSL_KEY}|g" "$ssl_site"
+  cat > "$APACHE_LAN_BIND_HELPER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
 
-  a2ensite default-ssl >/dev/null
-  systemctl reload apache2
+LAN_INTERFACE="${LAN_INTERFACE}"
+AP_IP="${AP_IP}"
+PORTS_CONF="/etc/apache2/ports.conf"
 
-  ok "Apache HTTPS aktiv (self-signed)"
+find_lan_ip() {
+  /usr/sbin/ip -4 -o addr show dev "\${LAN_INTERFACE}" scope global 2>/dev/null \\
+    | awk '{print \$4}' \\
+    | cut -d/ -f1 \\
+    | head -n1
+}
+
+lan_ip=""
+for _ in {1..30}; do
+  lan_ip="\$(find_lan_ip || true)"
+  [[ -n "\${lan_ip}" ]] && break
+  sleep 1
+done
+
+if [[ -z "\${lan_ip}" ]]; then
+  echo "[fragebogenpi-apache-lan-bind][WARN] Keine LAN-IP auf \${LAN_INTERFACE}; apache2 wird nur lokal gebunden." >&2
+  lan_ip="127.0.0.1"
+fi
+
+mkdir -p "\$(dirname "\${PORTS_CONF}")"
+touch "\${PORTS_CONF}"
+
+tmp="\$(mktemp)"
+awk -v ap_ip="\${AP_IP}" '
+  /^# --- fragebogenpi LAN APACHE LISTEN BEGIN ---$/ { skip=1; next }
+  /^# --- fragebogenpi LAN APACHE LISTEN END ---$/ { skip=0; next }
+  skip == 1 { next }
+  /^[[:space:]]*Listen[[:space:]]+/ {
+    target=\$2
+    if (target == "80" || target == "443" ||
+        target == "*:80" || target == "*:443" ||
+        target == "0.0.0.0:80" || target == "0.0.0.0:443" ||
+        target == "[::]:80" || target == "[::]:443" ||
+        target == ap_ip ":80" || target == ap_ip ":443") {
+      print "# fragebogenpi disabled generic/AP Listen: " \$0
+      next
+    }
+  }
+  { print }
+' "\${PORTS_CONF}" > "\${tmp}"
+
+cat >> "\${tmp}" <<BLOCK
+
+# --- fragebogenpi LAN APACHE LISTEN BEGIN ---
+Listen \${lan_ip}:80
+<IfModule ssl_module>
+Listen \${lan_ip}:443
+</IfModule>
+<IfModule mod_gnutls.c>
+Listen \${lan_ip}:443
+</IfModule>
+# --- fragebogenpi LAN APACHE LISTEN END ---
+BLOCK
+
+cat "\${tmp}" > "\${PORTS_CONF}"
+rm -f "\${tmp}"
+EOF
+
+  chmod 0755 "$APACHE_LAN_BIND_HELPER"
+}
+
+configure_apache_lan_instance() {
+  local mode="$1"
+
+  install_apache_lan_bind_helper
+
+  backup_file "$APACHE_LAN_BIND_SERVICE"
+  cat > "$APACHE_LAN_BIND_SERVICE" <<EOF
+[Unit]
+Description=fragebogenpi: bind default Apache to LAN only
+After=network-online.target
+Wants=network-online.target
+Before=apache2.service fragebogenpi-apache-wlan.service
+
+[Service]
+Type=oneshot
+ExecStart=${APACHE_LAN_BIND_HELPER}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  mkdir -p "$APACHE_LAN_DROPIN_DIR"
+  backup_file "$APACHE_LAN_DROPIN"
+  cat > "$APACHE_LAN_DROPIN" <<EOF
+[Unit]
+Requires=fragebogenpi-apache-lan-bind.service
+After=fragebogenpi-apache-lan-bind.service
+EOF
+
+  a2enmod rewrite setenvif >/dev/null || true
+  if [[ "$mode" == "https" ]]; then
+    a2enmod ssl >/dev/null || true
+  fi
+
+  systemctl daemon-reload
+  systemctl enable --now fragebogenpi-apache-lan-bind.service >/dev/null 2>&1 || true
+  systemctl restart fragebogenpi-apache-lan-bind.service || print_service_debug_and_die "fragebogenpi-apache-lan-bind.service"
+  systemctl restart apache2 || print_service_debug_and_die "apache2.service"
+}
+
+write_apache_wlan_config() {
+  local mode="$1"
+
+  mkdir -p "$APACHE_WLAN_DIR" "$APACHE_WLAN_LOG_DIR"
+  backup_file "$APACHE_WLAN_CONF"
+
+  cat > "$APACHE_WLAN_CONF" <<EOF
+ServerRoot "${APACHE_WLAN_DIR}"
+PidFile ${APACHE_WLAN_RUN_DIR}/apache2.pid
+DefaultRuntimeDir ${APACHE_WLAN_RUN_DIR}
+Mutex file:${APACHE_WLAN_RUN_DIR} default
+
+User www-data
+Group www-data
+ServerName ${HOSTNAME_FQDN}.local
+
+Listen ${AP_IP}:80
+EOF
+
+  if [[ "$mode" == "https" ]]; then
+    cat >> "$APACHE_WLAN_CONF" <<EOF
+Listen ${AP_IP}:443
+EOF
+  fi
+
+  cat >> "$APACHE_WLAN_CONF" <<EOF
+
+TypesConfig /etc/mime.types
+DirectoryIndex index.php index.html
+
+ErrorLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-error.log
+LogLevel warn
+
+IncludeOptional /etc/apache2/mods-enabled/*.load
+IncludeOptional /etc/apache2/mods-enabled/*.conf
+
+# wartezimmer-server.php nicht im Apache-Zugriffslog protokollieren
+SetEnvIf Request_URI "^/wartezimmer-server\.php$" wartezimmer_no_log
+
+<Directory />
+    AllowOverride None
+    Require all denied
+</Directory>
+
+<Directory "${WEBROOT_WLAN}">
+    Options FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+
+<VirtualHost ${AP_IP}:80>
+    ServerName ${HOSTNAME_FQDN}.local
+    DocumentRoot "${WEBROOT_WLAN}"
+    ErrorLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-http-error.log
+    CustomLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-http-access.log combined env=!wartezimmer_no_log
+</VirtualHost>
+EOF
+
+  if [[ "$mode" == "https" ]]; then
+    cat >> "$APACHE_WLAN_CONF" <<EOF
+
+<VirtualHost ${AP_IP}:443>
+    ServerName ${HOSTNAME_FQDN}.local
+    DocumentRoot "${WEBROOT_WLAN}"
+    SSLEngine on
+    SSLCertificateFile ${SSL_CRT}
+    SSLCertificateKeyFile ${SSL_KEY}
+    ErrorLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-https-error.log
+    CustomLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-https-access.log combined env=!wartezimmer_no_log
+</VirtualHost>
+EOF
+  fi
+}
+
+install_apache_wlan_service() {
+  backup_file "$APACHE_WLAN_SERVICE"
+  cat > "$APACHE_WLAN_SERVICE" <<EOF
+[Unit]
+Description=fragebogenpi: isolated Apache instance for WLAN
+After=network-online.target fragebogenpi-ap-ip.service fragebogenpi-apache-lan-bind.service
+Wants=network-online.target
+Requires=fragebogenpi-apache-lan-bind.service
+
+[Service]
+Type=simple
+RuntimeDirectory=fragebogenpi-apache-wlan
+Environment=APACHE_RUN_DIR=${APACHE_WLAN_RUN_DIR}
+Environment=APACHE_PID_FILE=${APACHE_WLAN_RUN_DIR}/apache2.pid
+Environment=APACHE_LOCK_DIR=${APACHE_WLAN_RUN_DIR}
+Environment=APACHE_LOG_DIR=${APACHE_WLAN_LOG_DIR}
+ExecStartPre=/bin/sh -c 'for _ in \$(seq 1 30); do /usr/sbin/ip -4 addr show dev ${AP_INTERFACE} | /bin/grep -q "${AP_IP}/" && exit 0; sleep 1; done; exit 1'
+ExecStart=/usr/sbin/apache2 -f ${APACHE_WLAN_CONF} -DFOREGROUND
+ExecReload=/usr/sbin/apache2 -f ${APACHE_WLAN_CONF} -k graceful
+KillSignal=SIGWINCH
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+setup_apache_instances() {
+  step "Apache trennen: LAN-Instanz und isolierte WLAN-Instanz"
+  local mode="$1"
+
+  ensure_ssl_cert_if_requested "$mode"
+  configure_apache_lan_instance "$mode"
+  write_apache_wlan_config "$mode"
+  install_apache_wlan_service
+
+  systemctl daemon-reload
+  systemctl enable --now fragebogenpi-apache-wlan.service >/dev/null 2>&1 || true
+  systemctl restart fragebogenpi-apache-wlan.service || print_service_debug_and_die "fragebogenpi-apache-wlan.service"
+
+  if [[ "$mode" == "https" ]]; then
+    ok "Apache getrennt: LAN nur auf ${LAN_INTERFACE}, WLAN HTTP/HTTPS nur auf ${AP_IP} mit ${WEBROOT_WLAN}"
+  else
+    ok "Apache getrennt: LAN nur auf ${LAN_INTERFACE}, WLAN HTTP nur auf ${AP_IP} mit ${WEBROOT_WLAN}"
+  fi
+}
+
+configure_waiting_room_no_access_log() {
+  [[ -f "$APACHE_WLAN_CONF" ]] || die "WLAN-Apache-Konfiguration fehlt: ${APACHE_WLAN_CONF}"
+
+  a2enmod setenvif >/dev/null 2>&1 || true
+
+  if ! grep -q '^# wartezimmer-server.php nicht im Apache-Zugriffslog protokollieren$' "$APACHE_WLAN_CONF"; then
+    sed -i '/^IncludeOptional \/etc\/apache2\/mods-enabled\/\*\.conf$/a\
+\
+# wartezimmer-server.php nicht im Apache-Zugriffslog protokollieren\
+SetEnvIf Request_URI "^/wartezimmer-server\\.php$" wartezimmer_no_log' "$APACHE_WLAN_CONF"
+  fi
+
+  sed -i -E '/CustomLog .*fragebogenpi-wlan-(http|https)-access\.log combined$/s/$/ env=!wartezimmer_no_log/' "$APACHE_WLAN_CONF"
+
+  /usr/sbin/apache2 -t -f "$APACHE_WLAN_CONF" >/dev/null || die "WLAN-Apache-Konfiguration ist nach der Wartezimmer-Ergänzung ungültig."
+}
+
+write_waiting_room_server_config() {
+  local first_shorten_php="false"
+  local first_dot_php="false"
+  local last_shorten_php="false"
+  local last_dot_php="false"
+
+  [[ "$WAITING_SHORTEN_FIRST" == "yes" ]] && first_shorten_php="true"
+  [[ "$WAITING_FIRST_DOT" == "yes" ]] && first_dot_php="true"
+  [[ "$WAITING_SHORTEN_LAST" == "yes" ]] && last_shorten_php="true"
+  [[ "$WAITING_LAST_DOT" == "yes" ]] && last_dot_php="true"
+
+  mkdir -p "$(dirname "$WAITING_ROOM_CONFIG")"
+  cat > "$WAITING_ROOM_CONFIG" <<EOF
+<?php
+return [
+    'share_dir' => '${SHARE_WAITING_ROOM}',
+    'lock_file' => '${WAITING_ROOM_LOCK}',
+    'shorten_first_name' => ${first_shorten_php},
+    'first_name_letters' => ${WAITING_FIRST_LETTERS},
+    'first_name_dot' => ${first_dot_php},
+    'shorten_last_name' => ${last_shorten_php},
+    'last_name_letters' => ${WAITING_LAST_LETTERS},
+    'last_name_dot' => ${last_dot_php},
+];
+EOF
+
+  chown root:www-data "$WAITING_ROOM_CONFIG"
+  chmod 0640 "$WAITING_ROOM_CONFIG"
+}
+
+install_waiting_room_server_file() {
+  ensure_command curl curl
+
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  curl -fsSL "$WAITING_ROOM_SERVER_URL" -o "$tmp" || die "Download fehlgeschlagen: ${WAITING_ROOM_SERVER_URL}"
+  php -l "$tmp" >/dev/null || die "Heruntergeladene wartezimmer-server.php enthält einen PHP-Syntaxfehler."
+
+  mkdir -p "$(dirname "$WAITING_ROOM_SERVER")"
+  cp "$tmp" "$WAITING_ROOM_SERVER"
+  chown www-data:www-data "$WAITING_ROOM_SERVER"
+  chmod 0644 "$WAITING_ROOM_SERVER"
+}
+
+setup_waiting_room_interface() {
+  step "Wartezimmer-Schnittstelle einrichten"
+
+  mkdir -p "$SHARE_WAITING_ROOM"
+  chown www-data:www-data "$SHARE_WAITING_ROOM"
+  chmod 2775 "$SHARE_WAITING_ROOM"
+  setfacl -R -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
+  setfacl -R -d -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
+
+  touch "$WAITING_ROOM_LOCK"
+  chown www-data:www-data "$WAITING_ROOM_LOCK"
+  chmod 0660 "$WAITING_ROOM_LOCK"
+
+  write_waiting_room_server_config
+  install_waiting_room_server_file
+  configure_waiting_room_no_access_log
+
+  systemctl restart fragebogenpi-apache-wlan.service || print_service_debug_and_die "fragebogenpi-apache-wlan.service"
+  ok "Wartezimmer-Schnittstelle aktiv: http://${AP_IP}/wartezimmer-server.php"
 }
 
 setup_firewall_nftables_wlan_only() {
   step "Firewall: nur WLAN beschränken, LAN unberührt lassen (kein Routing)"
+  local web_mode="$1"
 
   local nftconf="/etc/nftables.conf"
   backup_file "$nftconf"
+
+  local web_allow_rule='    iif "'${AP_INTERFACE}'" ip daddr '${AP_IP}' tcp dport 80 accept'
+  if [[ "$web_mode" == "https" ]]; then
+    web_allow_rule='    iif "'${AP_INTERFACE}'" ip daddr '${AP_IP}' tcp dport { 80, 443 } accept'
+  fi
 
   cat > "$nftconf" <<EOF
 #!/usr/sbin/nft -f
@@ -1067,7 +1848,7 @@ table inet fragebogenpi {
     iif "${AP_INTERFACE}" tcp dport 22 drop
     iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
     iif "${AP_INTERFACE}" udp dport 53 accept
-    iif "${AP_INTERFACE}" tcp dport { 80, 443 } accept
+${web_allow_rule}
     iif "${AP_INTERFACE}" drop
   }
 
@@ -1138,8 +1919,10 @@ EOF
 
   cp -a "${apache_conf_dir}/${ini_name}" "${cli_conf_dir}/${ini_name}"
   systemctl reload apache2
+  systemctl reload fragebogenpi-apache-wlan.service >/dev/null 2>&1 || \
+    systemctl restart fragebogenpi-apache-wlan.service >/dev/null 2>&1 || true
 
-  ok "PHP Optionen gesetzt (Apache + CLI) für PHP ${php_ver}"
+  ok "PHP Optionen gesetzt (Apache LAN + Apache WLAN + CLI) für PHP ${php_ver}"
 }
 
 enable_auto_updates() {
@@ -1163,7 +1946,7 @@ EOF
 }
 
 download_bootstrap_files_to_webroot() {
-  step "Webroot Bootstrap: Dateiliste laden und Dateien herunterladen"
+  step "WLAN-Webroot Bootstrap: Dateiliste laden und Dateien herunterladen"
 
   ensure_command curl curl
 
@@ -1251,8 +2034,8 @@ write_credentials_file_if_requested() {
     echo "WLAN MAC (wlan0): ${ap_mac:-<unbekannt>}"
     echo
     echo "HTTP/HTTPS:"
-    echo "  - http(s)://fragebogenpi/        (nur wenn Router/DNS Name auflöst)"
-    echo "  - http(s)://fragebogenpi.local/  (mDNS/Bonjour)"
+    echo "  - http(s)://${HOSTNAME_FQDN}/        (nur wenn Router/DNS Name auflöst)"
+    echo "  - http(s)://${HOSTNAME_FQDN}.local/  (mDNS/Bonjour)"
     echo "  - http(s)://<IP-Adresse>/"
     echo
     echo "== WLAN (isoliert) =="
@@ -1263,20 +2046,36 @@ write_credentials_file_if_requested() {
     if [[ "$web_mode" == "https" ]]; then
       echo "Webserver (WLAN): https://${AP_IP}/ (self-signed)"
     fi
+    echo "WLAN-Webroot: ${WEBROOT_WLAN}"
+    echo "LAN-Webroot:  ${WEBROOT_LAN}"
+    echo "Apache: WLAN läuft isoliert über fragebogenpi-apache-wlan.service; apache2 bleibt LAN-gebunden."
     echo
     echo "== Samba (nur LAN) =="
     echo "\\\\<LAN-IP>\\GDT      -> ${SHARE_GDT}"
     echo "\\\\<LAN-IP>\\PDF      -> ${SHARE_PDF}"
-    echo "\\\\<LAN-IP>\\WEBROOT  -> ${WEBROOT}"
-    echo
-    if [[ "$protect_shares" == "yes" ]]; then
-      echo "User (GDT/PDF): ${SAMBA_USER}"
-      echo "Passwort:       ${samba_pw}"
-    else
-      echo "GDT/PDF Zugriff: anonym (guest), schreibbar"
+    echo "\\\\<LAN-IP>\\webroot-wlan  -> ${WEBROOT_WLAN}"
+    echo "\\\\<LAN-IP>\\webroot-lan   -> ${WEBROOT_LAN}"
+    if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+      echo "\\\\<LAN-IP>\\wartezimmer-GDT -> ${SHARE_WAITING_ROOM}"
+      echo "Wartezimmer-Query: http://${AP_IP}/wartezimmer-server.php"
     fi
     echo
-    echo "Admin (WEBROOT/SSH/sudo): ${ADMIN_USER}"
+    if [[ "$protect_shares" == "yes" ]]; then
+      if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+        echo "User (GDT/PDF/wartezimmer-GDT): ${SAMBA_USER}"
+      else
+        echo "User (GDT/PDF): ${SAMBA_USER}"
+      fi
+      echo "Passwort:       ${samba_pw}"
+    else
+      if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+        echo "GDT/PDF/wartezimmer-GDT Zugriff: anonym (guest), schreibbar"
+      else
+        echo "GDT/PDF Zugriff: anonym (guest), schreibbar"
+      fi
+    fi
+    echo
+    echo "Admin (webroot-wlan/webroot-lan/SSH/sudo): ${ADMIN_USER}"
     echo "Admin Passwort (generiert):  ${admin_pw}"
     echo
     if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
@@ -1294,7 +2093,7 @@ write_credentials_file_if_requested() {
     fi
     echo "== Bootstrap =="
     echo "Quelle: ${BOOTSTRAP_URL}"
-    echo "Hinweis: Dateien wurden ins Webroot geladen (ggf. Unterverzeichnisse)."
+    echo "Hinweis: Dateien wurden in den isolierten WLAN-Webroot geladen (ggf. Unterverzeichnisse)."
     echo
     echo "== PHP Optionen =="
     echo "upload_max_filesize=${PHP_UPLOAD_MAX}"
@@ -1341,6 +2140,28 @@ main() {
   fi
 
   # ------------------------------------------------------
+  # Modus 4: Nur Wartezimmer-Schnittstelle
+  # ------------------------------------------------------
+  if [[ "$mode" == "waiting" ]]; then
+    step "Modus: Nur Wartezimmer-Schnittstelle einrichten / aktualisieren"
+    log "Andere Shares, Passwörter, WLAN, Firewall und Bootstrap-Dateien bleiben unverändert."
+
+    install_packages_waiting_room_only
+    ask_waiting_room_privacy_config
+    setup_waiting_room_interface
+    setup_samba_waiting_room_only
+
+    step "Abschluss (Wartezimmer-Schnittstelle)"
+    echo
+    echo "Samba-Share (nur LAN):"
+    echo "  \\\\<LAN-IP-des-Pi>\\wartezimmer-GDT -> ${SHARE_WAITING_ROOM}"
+    echo "WLAN-Server:"
+    echo "  http://${AP_IP}/wartezimmer-server.php"
+    echo
+    exit 0
+  fi
+
+  # ------------------------------------------------------
   # Modus 3: Nur User hinzufügen / reparieren
   # ------------------------------------------------------
   if [[ "$mode" == "users" ]]; then
@@ -1375,7 +2196,7 @@ main() {
   # ------------------------------------------------------
   if [[ "$mode" == "webroot" ]]; then
     step "Modus: Nur Webroot-Update"
-    log "Es werden NUR die Bootstrap-Dateien ins Webroot geladen."
+    log "Es werden NUR die Bootstrap-Dateien in den isolierten WLAN-Webroot geladen."
     log "Netzwerk/Samba/Firewall/Passwörter bleiben unverändert."
 
     install_packages_webroot_only
@@ -1386,7 +2207,7 @@ main() {
     echo
     echo "Webroot-Update abgeschlossen."
     echo "Quelle (Bootstrap): ${BOOTSTRAP_URL}"
-    echo "Ziel (Webroot):     ${WEBROOT}"
+    echo "Ziel (WLAN-Webroot): ${WEBROOT_WLAN}"
     echo "Hinweis: Bestehende Dateien wurden überschrieben."
     echo
     exit 0
@@ -1397,12 +2218,24 @@ main() {
   # ------------------------------------------------------
   step "Konfiguration abfragen"
   local wifi_pw web_mode protect_shares samba_pw admin_pw save_creds
+  ask_hostname_setup
+  ask_ap_ssid_setup
   wifi_pw="$(rand_pw)"
   web_mode="$(ask_choice_http_https)"
 
+  WAITING_ROOM_ENABLED="no"
+  if ask_yes_no "Separaten Samba-Share 'wartezimmer-GDT' einrichten?" "n"; then
+    WAITING_ROOM_ENABLED="yes"
+    ask_waiting_room_privacy_config
+  fi
+
   protect_shares="no"
   samba_pw=""
-  if ask_yes_no "Samba-Shares GDT/PDF mit Passwort schützen (User '${SAMBA_USER}')?" "y"; then
+  local protected_share_names="GDT/PDF"
+  if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+    protected_share_names="GDT/PDF/wartezimmer-GDT"
+  fi
+  if ask_yes_no "Samba-Shares ${protected_share_names} mit Passwort schützen (User '${SAMBA_USER}')?" "y"; then
     protect_shares="yes"
     samba_pw="$(rand_pw)"
   fi
@@ -1426,17 +2259,20 @@ main() {
   fi
 
   set_hostname
-  setup_share_dirs
+  setup_share_dirs "$WAITING_ROOM_ENABLED"
   setup_webroot_perms
 
-  setup_samba "$protect_shares" "$samba_pw" "$admin_pw" "$extra_users_space"
+  setup_samba "$protect_shares" "$samba_pw" "$admin_pw" "$extra_users_space" "$WAITING_ROOM_ENABLED"
 
   configure_nm_unmanage_wlan0
   configure_ap_ip
   setup_ap_hostapd_dnsmasq "$wifi_pw"
-  setup_https_if_requested "$web_mode"
+  setup_apache_instances "$web_mode"
+  if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+    setup_waiting_room_interface
+  fi
 
-  setup_firewall_nftables_wlan_only
+  setup_firewall_nftables_wlan_only "$web_mode"
   ensure_sshd_normal_listen
 
   configure_php_settings
@@ -1460,8 +2296,8 @@ main() {
   echo "Hostname (System):      ${HOSTNAME_FQDN}"
   echo
   echo "Namensauflösung / Erreichbarkeit:"
-  echo "  - http(s)://fragebogenpi/        -> nur wenn Router/DNS Hostnamen auflöst"
-  echo "  - http(s)://fragebogenpi.local/  -> mDNS/Bonjour (empfohlen)"
+  echo "  - http(s)://${HOSTNAME_FQDN}/        -> nur wenn Router/DNS Hostnamen auflöst"
+  echo "  - http(s)://${HOSTNAME_FQDN}.local/  -> mDNS/Bonjour (empfohlen)"
   echo "  - http(s)://<IP-Adresse>/        -> funktioniert immer"
   echo
   echo "WLAN SSID:        ${AP_SSID}"
@@ -1471,6 +2307,9 @@ main() {
   if [[ "$web_mode" == "https" ]]; then
     echo "Webserver (WLAN): https://${AP_IP}/  (self-signed Warnung ist normal)"
   fi
+  echo "WLAN-Webroot:     ${WEBROOT_WLAN}"
+  echo "LAN-Webroot:      ${WEBROOT_LAN}"
+  echo "Apache Isolation: WLAN nutzt fragebogenpi-apache-wlan.service; Standard-apache2 ist LAN-gebunden."
   echo
   echo "LAN IP (aktuell): ${lan_ip:-<unbekannt>}"
   echo "LAN MAC (eth0):   ${lan_mac:-<unbekannt>}"
@@ -1479,19 +2318,32 @@ main() {
   echo "Samba Shares (nur LAN/eth0, nicht WLAN):"
   echo "  \\\\<LAN-IP-des-Pi>\\GDT      -> ${SHARE_GDT}"
   echo "  \\\\<LAN-IP-des-Pi>\\PDF      -> ${SHARE_PDF}"
-  echo "  \\\\<LAN-IP-des-Pi>\\WEBROOT  -> ${WEBROOT}"
+  echo "  \\\\<LAN-IP-des-Pi>\\webroot-wlan  -> ${WEBROOT_WLAN}"
+  echo "  \\\\<LAN-IP-des-Pi>\\webroot-lan   -> ${WEBROOT_LAN}"
+  if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+    echo "  \\\\<LAN-IP-des-Pi>\\wartezimmer-GDT -> ${SHARE_WAITING_ROOM}"
+    echo "  Wartezimmer-Query: http://${AP_IP}/wartezimmer-server.php"
+  fi
   echo
   if [[ "$protect_shares" == "yes" ]]; then
-    echo "Samba User (GDT/PDF):   ${SAMBA_USER}"
+    if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+      echo "Samba User (GDT/PDF/wartezimmer-GDT): ${SAMBA_USER}"
+    else
+      echo "Samba User (GDT/PDF):   ${SAMBA_USER}"
+    fi
     echo "Samba Passwort:         ${samba_pw}"
     if [[ -n "${extra_users_space// }" ]]; then
       echo "Weitere gültige User (GDT/PDF): ${extra_users_space}"
     fi
   else
-    echo "Samba Zugriff GDT/PDF:  anonym (guest), schreibbar"
+    if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
+      echo "Samba Zugriff GDT/PDF/wartezimmer-GDT: anonym (guest), schreibbar"
+    else
+      echo "Samba Zugriff GDT/PDF:  anonym (guest), schreibbar"
+    fi
   fi
   echo
-  echo "Samba Admin (WEBROOT/SSH/sudo):  ${ADMIN_USER}"
+  echo "Samba Admin (webroot-wlan/webroot-lan/SSH/sudo):  ${ADMIN_USER}"
   echo "Admin Passwort (generiert):       ${admin_pw}"
   echo
   if (( ${#EXTRA_USERS_LIST[@]} > 0 )); then
