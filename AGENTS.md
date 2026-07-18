@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigte Basisversion ist:
 
 ```text
-fragebogenpi.sh v1.6.1
+fragebogenpi.sh v1.6.2
 ```
 
 Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nicht auf aeltere Varianten zurueckfallen.

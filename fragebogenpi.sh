@@ -4,11 +4,16 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.6.1
+# Version: 1.6.2
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.6.2 (2026-07-18)
+#   * Bugfix beim Download von wartezimmer-server.php:
+#       - temporärer RETURN-Trap wird nach der Bereinigung entfernt
+#       - verhindert "tmp: unbound variable" beim Abschluss der Wartezimmer-Einrichtung
 #
 # - 1.6.1 (2026-07-18)
 #   * Bugfix der Apache-Dienststeuerung bei der Wartezimmer-Einrichtung:
@@ -318,7 +323,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.6.1"
+VERSION="1.6.2"
 STEP_NO=0
 
 banner() {
@@ -1820,7 +1825,7 @@ install_waiting_room_server_file() {
 
   local tmp
   tmp="$(mktemp)"
-  trap 'rm -f "$tmp"' RETURN
+  trap 'rm -f "$tmp"; trap - RETURN' RETURN
 
   curl -fsSL "$WAITING_ROOM_SERVER_URL" -o "$tmp" || die "Download fehlgeschlagen: ${WAITING_ROOM_SERVER_URL}"
   php -l "$tmp" >/dev/null || die "Heruntergeladene wartezimmer-server.php enthält einen PHP-Syntaxfehler."
