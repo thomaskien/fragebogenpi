@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigten Basisversionen sind:
 
 ```text
-fragebogenpi.sh v1.6.3
+fragebogenpi.sh v1.6.4
 wartezimmer.sh v1.5.5
 ```
 
@@ -101,6 +101,17 @@ Diese Punkte sind in `fragebogenpi.sh` seit v1.5.9 umgesetzt:
 - Firewall:
   - aus dem WLAN werden nur HTTP und bei aktivem HTTPS zusaetzlich HTTPS zur AP-IP erlaubt
   - im HTTP-only-Modus darf TCP/443 aus dem WLAN nicht pauschal offen sein
+
+## Installer-Aenderungen seit v1.6.3
+
+- Neuer additiver Tablet-/Formularmodus:
+  - bei bestehender Installation als eigener Modus auswaehlbar
+  - bestehende WLAN-, LAN-, Hostname-, Firewall- und Samba-Konfiguration bleibt unangetastet
+  - neuer Share `formulare` -> `/srv/fragebogenpi/formulare`
+  - `anamnesebogen.yaml` wird als `anam.yaml` in den neuen Formular-Share kopiert
+  - bei einem Tablet wird `tablet.php` bereitgestellt
+  - bei mehreren Tablets werden `tablet1.php` bis `tabletN.php` bereitgestellt
+  - GDT-Eingaben verwenden `anam-i.gdt` beziehungsweise `1-anam-i.gdt`
 
 ## Aktueller Funktionsumfang
 

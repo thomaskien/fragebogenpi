@@ -4,11 +4,20 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.6.3
+# Version: 1.6.4
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.6.4 (2026-07-18)
+#   * Neuer Tablet-/Formularbetrieb ergänzt:
+#       - Installer fragt nach einem oder mehreren Tablets
+#       - tablet.php beziehungsweise tablet1.php bis tablet9.php werden bereitgestellt
+#       - Formular-Share /srv/fragebogenpi/formulare wird ergänzt
+#       - anamnesebogen.yaml wird als anam.yaml in den Formular-Share kopiert
+#   * Bei bestehender Installation steht dafür ein additiver Einrichtungsmodus zur Verfügung.
+#       - bestehende WLAN-, LAN-, Hostname-, Firewall- und Samba-Konfiguration bleibt unangetastet
 #
 # - 1.6.3 (2026-07-18)
 #   * Bugfix der temporären Dateibereinigung:
@@ -267,6 +276,7 @@ WEBROOT_WLAN="${SHARE_BASE}/webroot-wlan"
 WEBROOT="${WEBROOT_WLAN}"  # fragebogenpi-App: nur für die isolierte WLAN-Apache-Instanz
 SHARE_GDT="${SHARE_BASE}/GDT"
 SHARE_PDF="${SHARE_BASE}/PDF"
+SHARE_FORMULARE="${SHARE_BASE}/formulare"
 SHARE_WAITING_ROOM="${SHARE_BASE}/wartezimmer-GDT"
 CRED_FILE="${SHARE_PDF}/zugangsdaten_fragebogenpi_bitte_loeschen.txt"
 
@@ -282,6 +292,10 @@ WAITING_FIRST_DOT="yes"
 WAITING_SHORTEN_LAST="yes"
 WAITING_LAST_LETTERS="2"
 WAITING_LAST_DOT="yes"
+
+# Tablet-/Formularbetrieb
+TABLET_COUNT_FILE="/etc/fragebogenpi/tablet-count"
+TABLET_COUNT="1"
 
 # Samba-User
 SAMBA_USER="fragebogenpi"   # optional (für GDT/PDF, wenn Passwortschutz gewählt)
@@ -328,7 +342,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.6.3"
+VERSION="1.6.4"
 STEP_NO=0
 
 banner() {
@@ -504,6 +518,38 @@ ask_positive_integer_without_maximum() {
   done
 }
 
+load_tablet_count() {
+  local value=""
+  if [[ -f "$TABLET_COUNT_FILE" ]]; then
+    value="$(tr -d '\r\n' < "$TABLET_COUNT_FILE" 2>/dev/null || true)"
+  fi
+  if [[ "$value" =~ ^[1-9]$ ]]; then
+    TABLET_COUNT="$value"
+  fi
+}
+
+ask_tablet_count() {
+  load_tablet_count
+
+  local answer=""
+  while true; do
+    read -r -p "Wie viele Tablets sollen verwendet werden? [${TABLET_COUNT}]: " answer
+    answer="$(trim_value "$answer")"
+    answer="${answer:-$TABLET_COUNT}"
+    if [[ "$answer" =~ ^[1-9]$ ]]; then
+      TABLET_COUNT="$answer"
+      return 0
+    fi
+    echo "Bitte eine Zahl von 1 bis 9 eingeben (GDT-Dateinamen maximal 12 Zeichen)." >&2
+  done
+}
+
+save_tablet_count() {
+  mkdir -p "$(dirname "$TABLET_COUNT_FILE")"
+  printf '%s\n' "$TABLET_COUNT" > "$TABLET_COUNT_FILE"
+  chmod 0644 "$TABLET_COUNT_FILE"
+}
+
 ask_waiting_room_privacy_config() {
   step "Datenschutzkonfiguration für Wartezimmer-Aufrufe"
 
@@ -558,14 +604,16 @@ ask_choice_existing_install() {
   echo "  2) Nur Webroot-Update (lädt/aktualisiert nur die Programme im WLAN-Webroot; bestehende Dateien werden überschrieben)" >&2
   echo "  3) Nur User hinzufügen (legt/aktualisiert zusätzliche Windows-/Samba-User; sonst keine Änderungen)" >&2
   echo "  4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren" >&2
+  echo "  5) Nur Tablet-/Formularbetrieb einrichten / aktualisieren" >&2
   while true; do
-    read -r -p "Auswahl [1/2/3/4]: " answer
+    read -r -p "Auswahl [1/2/3/4/5]: " answer
     case "$answer" in
       1) echo "full"; return 0 ;;
       2) echo "webroot"; return 0 ;;
       3) echo "users"; return 0 ;;
       4) echo "waiting"; return 0 ;;
-      *) echo "Bitte 1, 2, 3 oder 4 eingeben." >&2 ;;
+      5) echo "tablets"; return 0 ;;
+      *) echo "Bitte 1, 2, 3, 4 oder 5 eingeben." >&2 ;;
     esac
   done
 }
@@ -907,7 +955,7 @@ setup_share_dirs() {
   local waiting_room_enabled="${1:-no}"
   step "Share-Verzeichnisse (Variante A) erstellen und Rechte setzen"
   log "Erstelle Share-Verzeichnisse außerhalb des Webroots: ${SHARE_BASE}"
-  mkdir -p "$SHARE_GDT" "$SHARE_PDF"
+  mkdir -p "$SHARE_GDT" "$SHARE_PDF" "$SHARE_FORMULARE"
   if [[ "$waiting_room_enabled" == "yes" ]]; then
     mkdir -p "$SHARE_WAITING_ROOM"
   fi
@@ -915,14 +963,24 @@ setup_share_dirs() {
   chown -R www-data:www-data "$SHARE_BASE"
   chmod -R 2775 "$SHARE_BASE"
 
-  setfacl -R -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
-  setfacl -R -d -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" || true
+  setfacl -R -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" "$SHARE_FORMULARE" || true
+  setfacl -R -d -m u:www-data:rwx "$SHARE_GDT" "$SHARE_PDF" "$SHARE_FORMULARE" || true
   if [[ "$waiting_room_enabled" == "yes" ]]; then
     setfacl -R -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
     setfacl -R -d -m u:www-data:rwx "$SHARE_WAITING_ROOM" || true
   fi
 
   ok "Shares liegen außerhalb des Webroots (nicht direkt per Web erreichbar)"
+}
+
+setup_formulare_dir_only() {
+  step "Formularverzeichnis vorbereiten"
+  mkdir -p "$SHARE_FORMULARE"
+  chown www-data:www-data "$SHARE_FORMULARE" || true
+  chmod 2775 "$SHARE_FORMULARE"
+  setfacl -m u:www-data:rwx "$SHARE_FORMULARE" || true
+  setfacl -d -m u:www-data:rwx "$SHARE_FORMULARE" || true
+  ok "Formularverzeichnis vorbereitet: ${SHARE_FORMULARE}"
 }
 
 setup_webroot_perms() {
@@ -975,6 +1033,8 @@ strip_samba_managed_blocks() {
     /^# --- fragebogenpi SHARES END ---$/ { skip=0; next }
     /^# --- fragebogenpi WARTEZIMMER SHARE BEGIN ---$/ { skip=1; next }
     /^# --- fragebogenpi WARTEZIMMER SHARE END ---$/ { skip=0; next }
+    /^# --- fragebogenpi FORMULARE SHARE BEGIN ---$/ { skip=1; next }
+    /^# --- fragebogenpi FORMULARE SHARE END ---$/ { skip=0; next }
     skip != 1 { print }
   ' "$src" > "$dst"
 }
@@ -990,6 +1050,7 @@ strip_samba_share_sections() {
       drop["webroot"]=1
       drop["webroot-wlan"]=1
       drop["webroot-lan"]=1
+      drop["formulare"]=1
       drop["wartezimmer-gdt"]=1
       skip=0
     }
@@ -1100,6 +1161,15 @@ EOF
   fi
 
   cat <<EOF
+
+[formulare]
+   path = ${SHARE_FORMULARE}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${ADMIN_USER}
+   force user = www-data
+   force group = www-data
 
 [webroot-wlan]
    path = ${WEBROOT_WLAN}
@@ -1300,6 +1370,63 @@ setup_samba_waiting_room_only() {
   systemctl enable --now smbd nmbd >/dev/null 2>&1 || true
   systemctl restart smbd nmbd || die "Samba konnte nach Einrichtung von wartezimmer-GDT nicht neu gestartet werden."
   ok "Share wartezimmer-GDT nutzt dieselbe Zugriffsregel wie der bestehende GDT-Share"
+}
+
+strip_samba_formulare_share() {
+  local src="$1"
+  local dst="$2"
+
+  awk '
+    /^# --- fragebogenpi FORMULARE SHARE BEGIN ---$/ { skip_block=1; next }
+    /^# --- fragebogenpi FORMULARE SHARE END ---$/ { skip_block=0; next }
+    skip_block == 1 { next }
+    /^\[[^]]+\][[:space:]]*$/ {
+      section=$0
+      gsub(/^\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      skip_section=(tolower(section) == "formulare") ? 1 : 0
+      if (skip_section == 1) next
+    }
+    skip_section != 1 { print }
+  ' "$src" > "$dst"
+}
+
+write_samba_formulare_block() {
+  cat <<EOF
+
+# --- fragebogenpi FORMULARE SHARE BEGIN ---
+[formulare]
+   path = ${SHARE_FORMULARE}
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = ${ADMIN_USER}
+   force user = www-data
+   force group = www-data
+# --- fragebogenpi FORMULARE SHARE END ---
+EOF
+}
+
+setup_samba_tablet_only() {
+  step "Samba-Share formulare ergänzen / aktualisieren"
+
+  local smbconf="/etc/samba/smb.conf"
+  [[ -f "$smbconf" ]] || die "Samba-Konfiguration fehlt: ${smbconf}. Bitte zuerst eine bestehende Installation vollständig einrichten."
+
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"; trap - RETURN' RETURN
+
+  strip_samba_formulare_share "$smbconf" "$tmp"
+  write_samba_formulare_block >> "$tmp"
+
+  testparm -s "$tmp" >/dev/null || die "Erzeugte Samba-Konfiguration ist ungültig."
+  backup_file "$smbconf"
+  cat "$tmp" > "$smbconf"
+
+  systemctl enable --now smbd nmbd >/dev/null 2>&1 || true
+  systemctl restart smbd nmbd || die "Samba konnte nach Einrichtung des Formular-Shares nicht neu gestartet werden."
+  ok "Share formulare ergänzt; bestehende Shares und globale Einstellungen bleiben erhalten"
 }
 
 configure_nm_unmanage_wlan0() {
@@ -1991,6 +2118,70 @@ EOF
   ok "Auto-Updates aktiviert (APT periodic + unattended-upgrades)"
 }
 
+download_tablet_php_only() {
+  step "Tablet-Programm aktualisieren"
+
+  ensure_command curl curl
+  local base_url tmp dst
+  base_url="$(echo "$BOOTSTRAP_URL" | sed 's#^\(.*\)/[^/]*$#\1#')"
+  dst="${WEBROOT}/tablet.php"
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"; trap - RETURN' RETURN
+
+  curl -fsSL "${base_url}/tablet.php" -o "$tmp" || die "Download fehlgeschlagen: tablet.php"
+  mkdir -p "$WEBROOT"
+  backup_file "$dst"
+  mv "$tmp" "$dst"
+  chown www-data:www-data "$dst" || true
+  chmod 0644 "$dst"
+  ok "tablet.php aktualisiert"
+}
+
+install_tablet_endpoints() {
+  step "Tablet-Endpunkte und Formularvorlage bereitstellen"
+
+  [[ -f "${WEBROOT}/tablet.php" ]] || die "tablet.php fehlt im WLAN-Webroot."
+  [[ -f "${WEBROOT}/anamnesebogen.yaml" ]] || die "anamnesebogen.yaml fehlt im WLAN-Webroot."
+  mkdir -p "$SHARE_FORMULARE"
+
+  if [[ ! -f "${SHARE_FORMULARE}/anam.yaml" ]]; then
+    cp -a "${WEBROOT}/anamnesebogen.yaml" "${SHARE_FORMULARE}/anam.yaml"
+  else
+    log "Bestehende Formularvorlage anam.yaml bleibt erhalten."
+  fi
+  chown www-data:www-data "${SHARE_FORMULARE}/anam.yaml" || true
+  chmod 0664 "${SHARE_FORMULARE}/anam.yaml"
+
+  chown www-data:www-data "${WEBROOT}/tablet.php" || true
+  chmod 0644 "${WEBROOT}/tablet.php"
+
+  local tablet_id endpoint
+  for ((tablet_id=1; tablet_id<=TABLET_COUNT; tablet_id++)); do
+    if (( TABLET_COUNT == 1 )); then
+      continue
+    fi
+    endpoint="${WEBROOT}/tablet${tablet_id}.php"
+    backup_file "$endpoint"
+    cp -a "${WEBROOT}/tablet.php" "$endpoint"
+    chown www-data:www-data "$endpoint" || true
+    chmod 0644 "$endpoint"
+  done
+
+  for ((tablet_id=1; tablet_id<=9; tablet_id++)); do
+    if (( tablet_id <= TABLET_COUNT )); then
+      continue
+    fi
+    endpoint="${WEBROOT}/tablet${tablet_id}.php"
+    if [[ -f "$endpoint" ]] && cmp -s "$endpoint" "${WEBROOT}/tablet.php"; then
+      backup_file "$endpoint"
+      rm -f "$endpoint"
+    fi
+  done
+
+  save_tablet_count
+  ok "Tablet-Betrieb eingerichtet (${TABLET_COUNT} Tablet(s)); anamnesebogen.yaml wurde als anam.yaml bereitgestellt"
+}
+
 download_bootstrap_files_to_webroot() {
   step "WLAN-Webroot Bootstrap: Dateiliste laden und Dateien herunterladen"
 
@@ -2099,6 +2290,7 @@ write_credentials_file_if_requested() {
     echo "== Samba (nur LAN) =="
     echo "\\\\<LAN-IP>\\GDT      -> ${SHARE_GDT}"
     echo "\\\\<LAN-IP>\\PDF      -> ${SHARE_PDF}"
+    echo "\\\\<LAN-IP>\\formulare -> ${SHARE_FORMULARE}"
     echo "\\\\<LAN-IP>\\webroot-wlan  -> ${WEBROOT_WLAN}"
     echo "\\\\<LAN-IP>\\webroot-lan   -> ${WEBROOT_LAN}"
     if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
@@ -2140,6 +2332,11 @@ write_credentials_file_if_requested() {
     echo "== Bootstrap =="
     echo "Quelle: ${BOOTSTRAP_URL}"
     echo "Hinweis: Dateien wurden in den isolierten WLAN-Webroot geladen (ggf. Unterverzeichnisse)."
+    echo
+    echo "== Tablet-/Formularbetrieb =="
+    echo "Tablets: ${TABLET_COUNT}"
+    echo "Einzelgerät: anam-i.gdt / anam-o.gdt"
+    echo "Mehrgerätebetrieb: <tablet-id>-anam-i.gdt / <tablet-id>-anam-o.gdt"
     echo
     echo "== PHP Optionen =="
     echo "upload_max_filesize=${PHP_UPLOAD_MAX}"
@@ -2208,6 +2405,38 @@ main() {
   fi
 
   # ------------------------------------------------------
+  # Modus 5: Nur Tablet-/Formularbetrieb
+  # ------------------------------------------------------
+  if [[ "$mode" == "tablets" ]]; then
+    step "Modus: Nur Tablet-/Formularbetrieb einrichten / aktualisieren"
+    log "WLAN, LAN, Hostname, Firewall, Apache-Grundkonfiguration und bestehende Shares bleiben unverändert."
+
+    install_packages_webroot_only
+    ask_tablet_count
+    setup_formulare_dir_only
+    setup_samba_tablet_only
+    download_tablet_php_only
+    install_tablet_endpoints
+
+    step "Abschluss (Tablet-/Formularbetrieb)"
+    echo
+    echo "Tablets: ${TABLET_COUNT}"
+    if (( TABLET_COUNT == 1 )); then
+      echo "Web-App: http(s)://<Pi>/tablet.php"
+    else
+      local tablet_id
+      for ((tablet_id=1; tablet_id<=TABLET_COUNT; tablet_id++)); do
+        echo "Web-App Tablet ${tablet_id}: http(s)://<Pi>/tablet${tablet_id}.php"
+      done
+    fi
+    echo "Formular-Share: \\\\<LAN-IP-des-Pi>\\formulare -> ${SHARE_FORMULARE}"
+    echo "Eingangs-GDT: anam-i.gdt beziehungsweise 1-anam-i.gdt"
+    echo "Bestehende WLAN-/Netzwerk-Konfiguration wurde nicht verändert."
+    echo
+    exit 0
+  fi
+
+  # ------------------------------------------------------
   # Modus 3: Nur User hinzufügen / reparieren
   # ------------------------------------------------------
   if [[ "$mode" == "users" ]]; then
@@ -2268,6 +2497,7 @@ main() {
   ask_ap_ssid_setup
   wifi_pw="$(rand_pw)"
   web_mode="$(ask_choice_http_https)"
+  ask_tablet_count
 
   WAITING_ROOM_ENABLED="no"
   if ask_yes_no "Separaten Samba-Share 'wartezimmer-GDT' einrichten?" "n"; then
@@ -2323,6 +2553,7 @@ main() {
 
   configure_php_settings
   download_bootstrap_files_to_webroot
+  install_tablet_endpoints
   enable_auto_updates
 
   local lan_ip lan_mac ap_mac
@@ -2364,6 +2595,7 @@ main() {
   echo "Samba Shares (nur LAN/eth0, nicht WLAN):"
   echo "  \\\\<LAN-IP-des-Pi>\\GDT      -> ${SHARE_GDT}"
   echo "  \\\\<LAN-IP-des-Pi>\\PDF      -> ${SHARE_PDF}"
+  echo "  \\\\<LAN-IP-des-Pi>\\formulare -> ${SHARE_FORMULARE}"
   echo "  \\\\<LAN-IP-des-Pi>\\webroot-wlan  -> ${WEBROOT_WLAN}"
   echo "  \\\\<LAN-IP-des-Pi>\\webroot-lan   -> ${WEBROOT_LAN}"
   if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
