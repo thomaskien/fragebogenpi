@@ -22,6 +22,9 @@
 #       - Konfiguration liegt außerhalb von Webroot und Samba-Share
 #   * Bestehende Installation: neuer Modus "4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren"
 #   * Für wartezimmer-server.php werden keine Anwendungs- oder Apache-Zugriffslogs geschrieben
+#   * Apache-Dienststeuerung für die Wartezimmer-Einrichtung korrigiert:
+#       - LAN-Bind-Hilfsdienst bleibt nach erfolgreicher Ausführung aktiv
+#       - WLAN-Apache wird nach der Ergänzung nur neu geladen statt neu gestartet
 #
 # - 1.5.9 (2026-06-26)
 #   * Webroot-Isolation für WLAN/LAN:
@@ -1594,6 +1597,7 @@ Before=apache2.service fragebogenpi-apache-wlan.service
 [Service]
 Type=oneshot
 ExecStart=${APACHE_LAN_BIND_HELPER}
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -1754,7 +1758,27 @@ SetEnvIf Request_URI "^/wartezimmer-server\\.php$" wartezimmer_no_log' "$APACHE_
 
   sed -i -E '/CustomLog .*fragebogenpi-wlan-(http|https)-access\.log combined$/s/$/ env=!wartezimmer_no_log/' "$APACHE_WLAN_CONF"
 
-  /usr/sbin/apache2 -t -f "$APACHE_WLAN_CONF" >/dev/null || die "WLAN-Apache-Konfiguration ist nach der Wartezimmer-Ergänzung ungültig."
+  APACHE_RUN_DIR="$APACHE_WLAN_RUN_DIR" \
+  APACHE_PID_FILE="${APACHE_WLAN_RUN_DIR}/apache2.pid" \
+  APACHE_LOCK_DIR="$APACHE_WLAN_RUN_DIR" \
+  APACHE_LOG_DIR="$APACHE_WLAN_LOG_DIR" \
+    /usr/sbin/apache2 -t -f "$APACHE_WLAN_CONF" >/dev/null || \
+    die "WLAN-Apache-Konfiguration ist nach der Wartezimmer-Ergänzung ungültig."
+}
+
+ensure_apache_lan_bind_service_active() {
+  [[ -f "$APACHE_LAN_BIND_SERVICE" ]] || \
+    die "Apache-LAN-Bind-Dienst fehlt: ${APACHE_LAN_BIND_SERVICE}"
+
+  if ! grep -q '^RemainAfterExit=yes$' "$APACHE_LAN_BIND_SERVICE"; then
+    backup_file "$APACHE_LAN_BIND_SERVICE"
+    sed -i '/^Type=oneshot$/aRemainAfterExit=yes' "$APACHE_LAN_BIND_SERVICE"
+  fi
+
+  systemctl daemon-reload
+  systemctl reset-failed fragebogenpi-apache-lan-bind.service >/dev/null 2>&1 || true
+  systemctl start fragebogenpi-apache-lan-bind.service || \
+    print_service_debug_and_die "fragebogenpi-apache-lan-bind.service"
 }
 
 write_waiting_room_server_config() {
@@ -1819,8 +1843,16 @@ setup_waiting_room_interface() {
   write_waiting_room_server_config
   install_waiting_room_server_file
   configure_waiting_room_no_access_log
+  ensure_apache_lan_bind_service_active
 
-  systemctl restart fragebogenpi-apache-wlan.service || print_service_debug_and_die "fragebogenpi-apache-wlan.service"
+  systemctl reset-failed fragebogenpi-apache-wlan.service >/dev/null 2>&1 || true
+  if systemctl is-active --quiet fragebogenpi-apache-wlan.service; then
+    systemctl reload fragebogenpi-apache-wlan.service || \
+      print_service_debug_and_die "fragebogenpi-apache-wlan.service"
+  else
+    systemctl start fragebogenpi-apache-wlan.service || \
+      print_service_debug_and_die "fragebogenpi-apache-wlan.service"
+  fi
   ok "Wartezimmer-Schnittstelle aktiv: http://${AP_IP}/wartezimmer-server.php"
 }
 
