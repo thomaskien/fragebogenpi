@@ -1,4 +1,4 @@
-# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.5
+# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.6
 
 Stand: 2026-07-18
 
@@ -34,7 +34,7 @@ niemals an den Wartezimmer-Pi übertragen.
   /etc/fragebogenpi/wartezimmer-config.php
   ```
 
-### Wartezimmer-Pi 1.5.5
+### Wartezimmer-Pi 1.5.6
 
 - Apache/PHP liefert die lokale Kiosk-Web-App `wartezimmer.php` aus.
 - Ein lokales Python-Backend fragt ausschließlich folgenden Endpunkt ab:
@@ -134,12 +134,12 @@ Dateiname werden nicht übertragen.
   Kiosk-Bildschirm über SSE verbunden ist.
 - Der ausschließlich an `127.0.0.1` gebundene SSE-Endpunkt erlaubt dem
   Kiosk-Ursprung `http://127.0.0.1` den Browserzugriff.
-- Nach einer Aufrufanzeige fragt das Backend erst wieder ab, wenn mindestens die
-  Anzeigezeit beziehungsweise das konfigurierte Query-Intervall abgelaufen ist.
+- Nach einer Aufrufanzeige wartet das Backend zunächst die vollständige
+  Anzeigezeit und anschließend zusätzlich das konfigurierte Query-Intervall ab.
 
 ## Installer-Abfragen des Wartezimmer-Pi
 
-Version 1.5.5 fragt interaktiv:
+Version 1.5.6 fragt interaktiv:
 
 ```text
 Installation wirklich starten? [y/N]
@@ -181,6 +181,8 @@ Anzeige- und Medienkonfiguration:
 - `slideshow_interval_seconds`
 - `playlist_restart_on_call_end`
 - Audioeinstellungen für Video- und Aufrufton
+
+Für die Audioausgabe von Firefox installiert der Installer `pipewire-audio`.
 
 Videos und Bilder werden alphabetisch abgespielt. Dotfiles, AppleDouble-Dateien,
 `.DS_Store`, `Thumbs.db` und `desktop.ini` werden ignoriert. Fehlerhafte

@@ -3,11 +3,14 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.5
+# Version: 1.5.6
 # Stand:   2026-07-18
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
+# - 1.5.6:
+#   - pipewire-audio ergänzt, damit Firefox auf Minimalinstallationen einen Audio-Server verwenden kann.
+#   - Die nächste Query startet erst nach Anzeigezeit plus konfiguriertem Query-Intervall.
 # - 1.5.5:
 #   - Lokaler SSE-Endpunkt erlaubt Zugriffe ausschließlich vom Kiosk-Ursprung http://127.0.0.1.
 #   - Der fragebogenpi-Server wird nur bei verbundenem Wartezimmer-Bildschirm abgefragt.
@@ -72,7 +75,7 @@ set -euo pipefail
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.5"
+VERSION="1.5.6"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -161,6 +164,7 @@ apt_install() {
     apache2 libapache2-mod-php php php-cli \
     samba \
     nftables \
+    pipewire-audio \
     wpasupplicant wireless-tools \
     xserver-xorg xinit x11-xserver-utils \
     lightdm openbox \
@@ -1018,7 +1022,7 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.5",
+  "version": "1.5.6",
 
   "_comment0": "Server-IP und Query-Intervall liegen außerhalb des Webroots in /etc/fragebogenpi-wartezimmer/server.json",
   "_comment1": "Die Namenskürzung erfolgt datensparsam auf dem fragebogenpi-Server.",
@@ -1285,8 +1289,8 @@ async def poll_loop(app: web.Application) -> None:
                 }
             )
 
-            # Erst nach Ende der Anzeige wird die nächste Datei abgefragt.
-            await asyncio.sleep(max(display_seconds, interval))
+            # Erst nach Anzeigeende und anschließendem Query-Intervall erneut abfragen.
+            await asyncio.sleep(display_seconds + interval)
 
 
 async def on_startup(app: web.Application) -> None:
