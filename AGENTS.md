@@ -40,10 +40,8 @@ Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nic
    - keine unaufgeforderten Refactorings
    - keine Umbenennungen oder Strukturaenderungen ohne klaren Grund
 3. Versionierung:
-   - groessere Erweiterungen normalerweise in Schritten von `0.1`
-   - kleine Bugfixes in Schritten von `0.0.1`
-   - Einstufung und vorgeschlagene Zielversion immer vor der Umsetzung mit dem Nutzer abstimmen
-   - keine eigenmaechtige Versionsentscheidung
+   - notwendige Aenderungen standardmaessig in Schritten von `0.0.1`
+   - eine andere Versionsstufe nur verwenden, wenn der Nutzer sie ausdruecklich vorgibt
 4. Changelog:
    - immer vollstaendig fortfuehren
    - nie alte Changelog-Eintraege entfernen

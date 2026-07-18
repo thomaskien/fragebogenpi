@@ -2,10 +2,64 @@
 declare(strict_types=1);
 
 /*
- * tablet.php v1.7.0
+ * tablet.php v1.8.2
  * fragebogenpi.de von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
+ * - v1.8.2:
+ *   + YAML kann ueber meta.handler einen spezialisierten PHP-Formularhandler
+ *     deklarieren; die Tablet-Warteschlange uebergibt Auftrag und Ruecksprungziel.
+ * - v1.8.1:
+ *   + Formulare koennen ueber ui.heading eine sichtbare Ueberschrift oberhalb
+ *     ihrer YAML-Sektionen anzeigen.
+ * - v1.8.0:
+ *   + Score-Ausgaben enthalten automatisch die konfigurierte Maximalpunktzahl,
+ *     zum Beispiel "Punktwert: 22/25 Punkte".
+ * - v1.7.10:
+ *   + Fehlende Pflichtantworten werden nach dem Absendeversuch als kompletter
+ *     Fragenblock deutlich rot hervorgehoben.
+ *   + Die Pflichtfeldpruefung benoetigt kein CSS.escape mehr und funktioniert
+ *     dadurch auch in aelteren Tablet-Browsern zuverlaessig.
+ *   + Formularseiten werden nicht im Browsercache gespeichert, damit neue
+ *     PHP-, JavaScript- und CSS-Staende sofort geladen werden.
+ * - v1.7.9:
+ *   + YAML-Dateien koennen unter meta.form_ids zusaetzliche GDT-Formular-IDs
+ *     deklarieren; exakte Dateinamen bleiben dabei vorrangig.
+ * - v1.7.8:
+ *   + Nach dem ersten Absendeversuch werden unbeantwortete Pflichtfragen rot
+ *     markiert und anschliessend dynamisch aktualisiert.
+ *   + Beim Laden eines Folgeformulars springt der Browser an den Seitenanfang.
+ * - v1.7.7:
+ *   + Sichtbare unbeantwortete Pflichtfragen werden bereits beim Anzeigen
+ *     und fortlaufend nach jeder Eingabe rot markiert.
+ * - v1.7.6:
+ *   + Bedingungen fuer Folgeformulare unterstuetzen den allgemeinen
+ *     numerischen Vergleich greater_than_or_equal.
+ * - v1.7.5:
+ *   + Neuer allgemeiner GDT-Baustein answer_list zur vollstaendigen Ausgabe
+ *     konfigurierter Antworten als "Frage: Antwort".
+ *   + GDT-Sektionen koennen die Anzahl vorangestellter --- Trennzeilen ueber
+ *     separator_lines selbst festlegen.
+ *   + Score-Elemente koennen fuer den Wert 1 eine eigene Einzahl-Endung ueber
+ *     singular_suffix definieren.
+ * - v1.7.4:
+ *   + Direkter Tap auf eine Slider-Position springt sofort auf den naechsten
+ *     Rastwert; die angezeigten Skalenwerte sind ebenfalls direkt antippbar.
+ * - v1.7.3:
+ *   + Neuer allgemeiner YAML-Fragetyp scale fuer diskrete, zunaechst
+ *     unbeantwortete Tablet-Slider mit frei definierbaren Endpunkten.
+ *   + Pflichtfragen werden im Browser und serverseitig geprueft.
+ *   + Die GDT-Ausgabe kann allgemein ueber gdt.sections/elements aus score-,
+ *     interpretation- und problem_list-Bausteinen zusammengesetzt werden.
+ *   + Numerische Skalen liefern ihren Wert direkt als Score; neue Frageboegen
+ *     benoetigen dadurch keine formularspezifische PHP-Logik.
+ * - v1.7.2:
+ *   + GDT-Problemfelder koennen neben einem maximalen nun auch einen minimalen
+ *     auffaelligen Punktwert definieren, etwa fuer den COPD Assessment Test.
+ * - v1.7.1:
+ *   + YAML-gesteuerte Summen, Bereichsbewertungen und kompakte GDT-Zusammenfassungen.
+ *   + Auffaellige Choice-Antworten koennen anhand ihres Punktwerts als
+ *     Problemfelder in der GDT ausgegeben werden.
  * - v1.7.0:
  *   + YAML kann bedingte Folgeformulare ueber follow_up_forms definieren.
  *   + Nach erfolgreicher Uebermittlung werden Folgeauftraege als -i.gdt im
@@ -69,7 +123,7 @@ declare(strict_types=1);
  */
 
 $APP_FOOTER  = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.7.0 (tablet.php)';
+$APP_VERSION = 'v1.8.2 (tablet.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -363,6 +417,12 @@ function cond_ok(array $answers, ?array $cond): bool {
     if (array_key_exists('equals', $cond)) return $val === $eq;
     if (array_key_exists('not_equals', $cond)) return $val !== $neq;
 
+    if (array_key_exists('greater_than_or_equal', $cond)) {
+        $minimum = $cond['greater_than_or_equal'];
+        if (!is_numeric($val) || !is_numeric($minimum)) return false;
+        return (float)$val >= (float)$minimum;
+    }
+
     if (array_key_exists('in', $cond)) {
         $lst = $cond['in'];
         if (!is_array($lst)) $lst = [];
@@ -397,6 +457,414 @@ function build_section_block_lines(string $title, array $bullets, int $maxBytes)
     foreach ($bullets as $b) {
         foreach (to_ascii_wrapped_lines($b, $maxBytes, '- ', '  ') as $l) $out[] = gdt_line('6228', $l);
     }
+    return $out;
+}
+
+function yaml_questions_by_id(array $yaml): array {
+    $out = [];
+    $sections = $yaml['sections'] ?? [];
+    if (!is_array($sections)) return $out;
+
+    foreach ($sections as $section) {
+        if (!is_array($section)) continue;
+        $questions = $section['questions'] ?? [];
+        if (!is_array($questions)) continue;
+        foreach ($questions as $question) {
+            if (!is_array($question)) continue;
+            $id = (string)($question['id'] ?? '');
+            if ($id !== '') $out[$id] = $question;
+        }
+    }
+    return $out;
+}
+
+function numeric_value(string $value): int|float|null {
+    if ($value === '' || !is_numeric($value)) return null;
+    $number = (float)$value;
+    return floor($number) === $number ? (int)$number : $number;
+}
+
+function scale_answer_valid(array $question, mixed $answer): bool {
+    if (!is_string($answer) || $answer === '') return false;
+    $value = numeric_value($answer);
+    if ($value === null) return false;
+
+    $scale = $question['scale'] ?? [];
+    if (!is_array($scale)) return false;
+    $minimum = isset($scale['minimum']) && is_numeric($scale['minimum']) ? (float)$scale['minimum'] : 0.0;
+    $maximum = isset($scale['maximum']) && is_numeric($scale['maximum']) ? (float)$scale['maximum'] : 10.0;
+    $step = isset($scale['step']) && is_numeric($scale['step']) ? (float)$scale['step'] : 1.0;
+    if ($step <= 0 || (float)$value < $minimum || (float)$value > $maximum) return false;
+
+    $steps = ((float)$value - $minimum) / $step;
+    return abs($steps - round($steps)) < 0.000001;
+}
+
+function question_score(array $question, mixed $answer): int|float|null {
+    if (!is_string($answer) || $answer === '') return null;
+    if ((string)($question['type'] ?? '') === 'scale') {
+        return scale_answer_valid($question, $answer) ? numeric_value($answer) : null;
+    }
+
+    $scores = $question['scores'] ?? [];
+    if (!is_array($scores) || !array_key_exists($answer, $scores)) return null;
+    return is_numeric($scores[$answer]) ? numeric_value((string)$scores[$answer]) : null;
+}
+
+function derive_yaml_answers(array $yaml, array &$answers): void {
+    $questionsById = yaml_questions_by_id($yaml);
+
+    foreach ($questionsById as $id => $question) {
+        if ((string)($question['type'] ?? '') !== 'derived') continue;
+        $calculation = $question['calculation'] ?? null;
+        if (!is_array($calculation) || (string)($calculation['operation'] ?? '') !== 'sum_scores') continue;
+
+        $fields = $calculation['fields'] ?? [];
+        if (!is_array($fields) || count($fields) === 0) continue;
+
+        $sum = 0;
+        $complete = true;
+        foreach ($fields as $field) {
+            $field = (string)$field;
+            $score = isset($questionsById[$field])
+                ? question_score($questionsById[$field], $answers[$field] ?? null)
+                : null;
+            if ($score === null) {
+                $complete = false;
+                break;
+            }
+            $sum += $score;
+        }
+        if ($complete) $answers[$id] = $sum;
+    }
+
+    foreach ($questionsById as $id => $question) {
+        if ((string)($question['type'] ?? '') !== 'derived') continue;
+        $source = (string)($question['source'] ?? '');
+        $ranges = $question['ranges'] ?? [];
+        if ($source === '' || !isset($answers[$source]) || !is_array($ranges)) continue;
+
+        $value = (float)$answers[$source];
+        foreach ($ranges as $range) {
+            if (!is_array($range)) continue;
+            $minimum = isset($range['minimum']) && is_numeric($range['minimum']) ? (float)$range['minimum'] : -INF;
+            $maximum = isset($range['maximum']) && is_numeric($range['maximum']) ? (float)$range['maximum'] : INF;
+            if ($value < $minimum || $value > $maximum) continue;
+            $status = ascii_only(clean_utf8_text((string)($range['status'] ?? ''), 300));
+            if ($status !== '') $answers[$id] = $status;
+            break;
+        }
+    }
+}
+
+function validate_yaml_answers(array $yaml, array $answers): array {
+    $errors = [];
+    $sections = $yaml['sections'] ?? [];
+    if (!is_array($sections)) return $errors;
+
+    foreach ($sections as $section) {
+        if (!is_array($section)) continue;
+        if (isset($section['show_if']) && is_array($section['show_if']) && !cond_ok($answers, $section['show_if'])) continue;
+        $sectionType = (string)($section['type'] ?? '');
+        $questions = $section['questions'] ?? [];
+        if (!is_array($questions)) continue;
+
+        foreach ($questions as $question) {
+            if (!is_array($question)) continue;
+            $id = (string)($question['id'] ?? '');
+            $type = (string)($question['type'] ?? '');
+            $label = ascii_only(clean_utf8_text((string)($question['label'] ?? $id), 300));
+            if ($id === '' || $type === 'derived' || $type === 'header') continue;
+            if (isset($question['show_if']) && is_array($question['show_if']) && !cond_ok($answers, $question['show_if'])) continue;
+
+            $value = $answers[$id] ?? null;
+            $empty = $sectionType === 'checklist'
+                ? $value !== true
+                : (is_array($value) ? count($value) === 0 : trim((string)$value) === '');
+
+            if (!empty($question['required']) && $empty) {
+                $errors[] = 'Pflichtfrage unbeantwortet: ' . $label;
+                continue;
+            }
+            if ($empty) continue;
+
+            if ($type === 'scale' && !scale_answer_valid($question, $value)) {
+                $errors[] = 'Ungueltiger Skalenwert: ' . $label;
+                continue;
+            }
+            if ($type === 'choice') {
+                $options = $question['options'] ?? [];
+                if (is_array($options) && !in_array((string)$value, array_map('strval', $options), true)) {
+                    $errors[] = 'Ungueltige Auswahl: ' . $label;
+                }
+                continue;
+            }
+            if ($type === 'yesno' && !in_array((string)$value, ['yes', 'no'], true)) {
+                $errors[] = 'Ungueltige Auswahl: ' . $label;
+            }
+        }
+    }
+
+    return $errors;
+}
+
+function configured_score_maximum(array $element, array $questionsById, string $source): int|float|null {
+    if (isset($element['maximum']) && is_numeric($element['maximum'])) {
+        return numeric_value((string)$element['maximum']);
+    }
+    if ($source === '' || !isset($questionsById[$source]) || !is_array($questionsById[$source])) return null;
+
+    $question = $questionsById[$source];
+    $calculation = $question['calculation'] ?? [];
+    if (is_array($calculation) && isset($calculation['maximum']) && is_numeric($calculation['maximum'])) {
+        return numeric_value((string)$calculation['maximum']);
+    }
+
+    $scale = $question['scale'] ?? [];
+    if (is_array($scale) && isset($scale['maximum']) && is_numeric($scale['maximum'])) {
+        return numeric_value((string)$scale['maximum']);
+    }
+    return null;
+}
+
+function build_gdt_summary_lines(array $yaml, array $answers, int $maxBytes): array {
+    $summary = $yaml['gdt_summary'] ?? null;
+    if (!is_array($summary)) return [];
+
+    $title = ascii_only(clean_utf8_text((string)($summary['title'] ?? ''), 200));
+    if ($title === '') return [];
+
+    $content = [];
+    $questionsById = yaml_questions_by_id($yaml);
+    $score = $summary['score'] ?? null;
+    if (is_array($score)) {
+        $source = (string)($score['source'] ?? '');
+        if ($source !== '' && isset($answers[$source]) && is_numeric($answers[$source])) {
+            $label = ascii_only(clean_utf8_text((string)($score['label'] ?? 'Punktwert'), 100));
+            $suffix = ascii_only(clean_utf8_text((string)($score['suffix'] ?? 'Punkte'), 100));
+            $value = numeric_value((string)$answers[$source]);
+            if ($value !== null) {
+                $scoreText = numeric_text($value);
+                $maximum = configured_score_maximum($score, $questionsById, $source);
+                if ($maximum !== null) $scoreText .= '/' . numeric_text($maximum);
+                $content[] = trim($label . ': ' . $scoreText . ' ' . $suffix);
+            }
+        }
+    }
+
+    $assessment = $summary['assessment'] ?? null;
+    if (is_array($assessment)) {
+        $source = (string)($assessment['source'] ?? '');
+        $value = ascii_only(clean_utf8_text((string)($answers[$source] ?? ''), 300));
+        if ($value !== '') $content[] = $value;
+    }
+
+    $problemLines = [];
+    $problems = $summary['problems'] ?? null;
+    if (is_array($problems)) {
+        $questionsById = yaml_questions_by_id($yaml);
+        $fields = $problems['fields'] ?? [];
+        if (is_array($fields)) {
+            foreach ($fields as $field) {
+                if (!is_array($field)) continue;
+                $id = (string)($field['id'] ?? '');
+                if ($id === '' || !isset($questionsById[$id])) continue;
+                $scoreValue = question_score($questionsById[$id], $answers[$id] ?? null);
+                $maximumScore = isset($field['maximum_score']) && is_numeric($field['maximum_score'])
+                    ? (int)$field['maximum_score']
+                    : PHP_INT_MAX;
+                $minimumScore = isset($field['minimum_score']) && is_numeric($field['minimum_score'])
+                    ? (int)$field['minimum_score']
+                    : PHP_INT_MIN;
+                if ($scoreValue === null || $scoreValue < $minimumScore || $scoreValue > $maximumScore) continue;
+                $text = ascii_only(clean_utf8_text((string)($field['text'] ?? ''), 300));
+                if ($text !== '') $problemLines[] = $text;
+            }
+        }
+    }
+
+    if (count($content) === 0 && count($problemLines) === 0) return [];
+
+    $out = [];
+    foreach (to_ascii_wrapped_lines('---', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+    foreach (to_ascii_wrapped_lines($title, $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+    foreach (to_ascii_wrapped_lines('========', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+    foreach ($content as $item) {
+        foreach (to_ascii_wrapped_lines($item, $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+    }
+    if (count($problemLines) > 0) {
+        $out[] = gdt_line('6228', '');
+        $problemTitle = ascii_only(clean_utf8_text((string)($problems['title'] ?? 'Problemfelder'), 200));
+        foreach (to_ascii_wrapped_lines($problemTitle . ':', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+        foreach ($problemLines as $item) {
+            foreach (to_ascii_wrapped_lines($item, $maxBytes, '- ', '  ') as $line) $out[] = gdt_line('6228', $line);
+        }
+    }
+    return $out;
+}
+
+function numeric_text(int|float $value): string {
+    if (is_int($value) || floor($value) === $value) return (string)(int)$value;
+    return rtrim(rtrim(number_format($value, 6, '.', ''), '0'), '.');
+}
+
+function build_configured_gdt_lines(array $yaml, array $answers, int $maxBytes): array {
+    $gdt = $yaml['gdt'] ?? null;
+    if (!is_array($gdt)) return [];
+    $sections = $gdt['sections'] ?? [];
+    if (!is_array($sections)) return [];
+
+    $questionsById = yaml_questions_by_id($yaml);
+    $out = [];
+
+    foreach ($sections as $section) {
+        if (!is_array($section)) continue;
+        if (isset($section['show_if']) && is_array($section['show_if']) && !cond_ok($answers, $section['show_if'])) continue;
+
+        $title = ascii_only(clean_utf8_text((string)($section['title'] ?? ''), 200));
+        $elements = $section['elements'] ?? [];
+        if ($title === '' || !is_array($elements)) continue;
+
+        $sectionLines = [];
+        foreach ($elements as $element) {
+            if (!is_array($element)) continue;
+            $type = (string)($element['type'] ?? '');
+
+            if ($type === 'score') {
+                $source = (string)($element['source'] ?? '');
+                $value = $answers[$source] ?? null;
+                if (!is_int($value) && !is_float($value)) continue;
+                $label = ascii_only(clean_utf8_text((string)($element['label'] ?? 'Punktwert'), 100));
+                $suffix = ascii_only(clean_utf8_text((string)($element['suffix'] ?? ''), 100));
+                $singularSuffix = ascii_only(clean_utf8_text((string)($element['singular_suffix'] ?? ''), 100));
+                $maximum = configured_score_maximum($element, $questionsById, $source);
+                if ($maximum === null && (float)$value === 1.0 && $singularSuffix !== '') $suffix = $singularSuffix;
+                $scoreText = numeric_text($value);
+                if ($maximum !== null) $scoreText .= '/' . numeric_text($maximum);
+                $line = $label . ': ' . $scoreText;
+                if ($suffix !== '') $line .= ' ' . $suffix;
+                $sectionLines[] = ['kind' => 'line', 'text' => $line];
+                continue;
+            }
+
+            if ($type === 'interpretation' || $type === 'value') {
+                $source = (string)($element['source'] ?? '');
+                $value = ascii_only(clean_utf8_text((string)($answers[$source] ?? ''), 600));
+                if ($value === '') continue;
+                $label = ascii_only(clean_utf8_text((string)($element['label'] ?? ''), 100));
+                $suffix = ascii_only(clean_utf8_text((string)($element['suffix'] ?? ''), 100));
+                if ($label !== '') $value = $label . ': ' . $value;
+                if ($suffix !== '') $value .= ' ' . $suffix;
+                $sectionLines[] = ['kind' => 'line', 'text' => $value];
+                continue;
+            }
+
+            if ($type === 'text') {
+                $value = ascii_only(clean_utf8_text((string)($element['text'] ?? ''), 600));
+                if ($value !== '') $sectionLines[] = ['kind' => 'line', 'text' => $value];
+                continue;
+            }
+
+            if ($type === 'answer_list') {
+                $fields = $element['fields'] ?? [];
+                if (!is_array($fields)) continue;
+                $items = [];
+
+                foreach ($fields as $field) {
+                    $fieldConfig = is_array($field) ? $field : ['id' => $field];
+                    $id = (string)($fieldConfig['id'] ?? '');
+                    if ($id === '' || !isset($questionsById[$id])) continue;
+                    $question = $questionsById[$id];
+                    if (isset($question['show_if']) && is_array($question['show_if']) && !cond_ok($answers, $question['show_if'])) continue;
+                    $rawValue = $answers[$id] ?? null;
+
+                    if (is_array($rawValue)) {
+                        $value = implode(', ', array_map('strval', $rawValue));
+                    } elseif ($rawValue === true) {
+                        $value = 'Ja';
+                    } elseif ($rawValue === false) {
+                        $value = 'Nein';
+                    } else {
+                        $value = (string)$rawValue;
+                    }
+                    $value = ascii_only(clean_utf8_text($value, 1000));
+                    if ($value === '' && empty($fieldConfig['include_empty'])) continue;
+                    if ($value === '') $value = 'Keine Angabe';
+
+                    $label = (string)($fieldConfig['label'] ?? ($question['label'] ?? $id));
+                    $label = ascii_only(clean_utf8_text($label, 500));
+                    if ($label !== '') $items[] = $label . ': ' . $value;
+                }
+
+                if (count($items) > 0) {
+                    $listTitle = ascii_only(clean_utf8_text((string)($element['title'] ?? ''), 200));
+                    $sectionLines[] = ['kind' => 'answer_list', 'title' => $listTitle, 'items' => $items];
+                }
+                continue;
+            }
+
+            if ($type !== 'problem_list') continue;
+            $fields = $element['fields'] ?? [];
+            if (!is_array($fields)) continue;
+            $minimumScore = isset($element['minimum_score']) && is_numeric($element['minimum_score'])
+                ? (float)$element['minimum_score']
+                : -INF;
+            $maximumScore = isset($element['maximum_score']) && is_numeric($element['maximum_score'])
+                ? (float)$element['maximum_score']
+                : INF;
+            $items = [];
+
+            foreach ($fields as $field) {
+                $fieldConfig = is_array($field) ? $field : ['id' => $field];
+                $id = (string)($fieldConfig['id'] ?? '');
+                if ($id === '' || !isset($questionsById[$id])) continue;
+                $question = $questionsById[$id];
+                $score = question_score($question, $answers[$id] ?? null);
+                $fieldMinimum = isset($fieldConfig['minimum_score']) && is_numeric($fieldConfig['minimum_score'])
+                    ? (float)$fieldConfig['minimum_score']
+                    : $minimumScore;
+                $fieldMaximum = isset($fieldConfig['maximum_score']) && is_numeric($fieldConfig['maximum_score'])
+                    ? (float)$fieldConfig['maximum_score']
+                    : $maximumScore;
+                if ($score === null || (float)$score < $fieldMinimum || (float)$score > $fieldMaximum) continue;
+
+                $text = (string)($fieldConfig['text'] ?? ($question['problem_label'] ?? ($question['label'] ?? '')));
+                $text = ascii_only(clean_utf8_text($text, 300));
+                if ($text !== '') $items[] = $text;
+            }
+
+            if (count($items) > 0) {
+                $listTitle = ascii_only(clean_utf8_text((string)($element['title'] ?? 'Problemfelder'), 200));
+                $sectionLines[] = ['kind' => 'problem_list', 'title' => $listTitle, 'items' => $items];
+            }
+        }
+
+        if (count($sectionLines) === 0) continue;
+        $separatorLines = isset($section['separator_lines']) && is_numeric($section['separator_lines'])
+            ? max(1, min(5, (int)$section['separator_lines']))
+            : 1;
+        for ($separator = 0; $separator < $separatorLines; $separator++) {
+            foreach (to_ascii_wrapped_lines('---', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+        }
+        foreach (to_ascii_wrapped_lines($title, $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+        foreach (to_ascii_wrapped_lines('========', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+
+        foreach ($sectionLines as $lineConfig) {
+            if ($lineConfig['kind'] === 'line') {
+                foreach (to_ascii_wrapped_lines((string)$lineConfig['text'], $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+                continue;
+            }
+
+            if ((string)$lineConfig['title'] !== '') {
+                $out[] = gdt_line('6228', '');
+                foreach (to_ascii_wrapped_lines((string)$lineConfig['title'] . ':', $maxBytes) as $line) $out[] = gdt_line('6228', $line);
+            }
+            foreach ($lineConfig['items'] as $item) {
+                foreach (to_ascii_wrapped_lines((string)$item, $maxBytes, '- ', '  ') as $line) $out[] = gdt_line('6228', $line);
+            }
+        }
+    }
+
     return $out;
 }
 
@@ -490,6 +958,7 @@ function build_6228_blocks(array $yaml, array $answers, int $maxBytes): array {
 
     foreach ($sections as $sec) {
         if (!is_array($sec)) continue;
+        if (array_key_exists('gdt_output', $sec) && $sec['gdt_output'] === false) continue;
         $title = ascii_only(clean_utf8_text((string)($sec['title'] ?? ''), 200));
         if ($title === '') continue;
 
@@ -497,6 +966,11 @@ function build_6228_blocks(array $yaml, array $answers, int $maxBytes): array {
         if (count($bullets) === 0) continue;
 
         $out = array_merge($out, build_section_block_lines($title, $bullets, $maxBytes));
+    }
+    if (isset($yaml['gdt']) && is_array($yaml['gdt'])) {
+        $out = array_merge($out, build_configured_gdt_lines($yaml, $answers, $maxBytes));
+    } else {
+        $out = array_merge($out, build_gdt_summary_lines($yaml, $answers, $maxBytes));
     }
     return $out;
 }
@@ -531,16 +1005,34 @@ function form_yaml_for_id(string $formDir, string $formId, int $maxLength): arra
     }
 
     $matches = [];
+    $yamlFiles = [];
     foreach ((array)@scandir($formDir) as $name) {
         if (!is_string($name)) continue;
         if (!preg_match('/^(?:(\\d+)-)?([a-z][a-z0-9_-]*)\\.yaml$/', $name, $m)) continue;
-        if ($m[2] !== $formId) continue;
         $path = rtrim($formDir, '/') . '/' . $name;
         if (!is_file($path)) continue;
-        $matches[] = [
+        $yamlFile = [
             'path' => $path,
             'priority' => ($m[1] === '') ? 1000 : (int)$m[1],
         ];
+        $yamlFiles[] = $yamlFile;
+        if ($m[2] === $formId) $matches[] = $yamlFile;
+    }
+
+    // Wenn kein Dateiname exakt passt, duerfen YAML-Dateien weitere IDs
+    // deklarieren. Dadurch bleiben neue Formulare ohne PHP-Sonderlogik moeglich.
+    if (count($matches) === 0 && function_exists('yaml_parse_file')) {
+        foreach ($yamlFiles as $yamlFile) {
+            $data = @yaml_parse_file((string)$yamlFile['path']);
+            if (!is_array($data)) continue;
+            $formIds = $data['meta']['form_ids'] ?? [];
+            if (!is_array($formIds)) $formIds = [$formIds];
+            foreach ($formIds as $declaredId) {
+                if ((string)$declaredId !== $formId) continue;
+                $matches[] = $yamlFile;
+                break;
+            }
+        }
     }
 
     if (count($matches) === 0) {
@@ -798,6 +1290,22 @@ if ($hasRequest && $YAML_PATH !== '') {
     if (!isset($initialYaml['__error']) && isset($initialYaml['meta']['title'])) {
         $UI_TITLE = ascii_only((string)$initialYaml['meta']['title']) . ' (Tablet)';
     }
+    $specialHandler = (string)($initialYaml['meta']['handler'] ?? '');
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $specialHandler !== '') {
+        if (!preg_match('/^[a-z][a-z0-9_-]*\\.php$/', $specialHandler)) {
+            $dispatchError = 'Ungueltiger Formularhandler: ' . $specialHandler;
+        } else {
+            $returnTo = basename((string)($_SERVER['SCRIPT_NAME'] ?? 'tablet.php'));
+            if (!preg_match('/^tablet(?:[1-9])?\\.php$/', $returnTo)) $returnTo = 'tablet.php';
+            $query = http_build_query([
+                'request_gdt' => $REQUEST_GDT_NAME,
+                'return_to' => $returnTo,
+            ]);
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Location: ' . $specialHandler . '?' . $query, true, 302);
+            exit;
+        }
+    }
 }
 
 $vorname_raw  = $reqFields['3102'] ?? '';
@@ -965,6 +1473,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    $answerErrors = validate_yaml_answers($yaml, $answers);
+    if (count($answerErrors) > 0) {
+        json_out(422, [
+            'status' => 'error',
+            'message' => implode(' ', $answerErrors),
+            'details' => $answerErrors,
+        ]);
+    }
+
     // derive packyears
     $isSmoker = (($answers['raucher'] ?? 'no') === 'yes');
     $cigs = parse_float_de((string)($answers['rauchen_zigaretten_tag'] ?? ''));
@@ -978,6 +1495,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $answers['_packyears_text'] = '';
     }
+
+    derive_yaml_answers($yaml, $answers);
 
     $followUpPlan = follow_up_forms_for_answers(
         $yaml,
@@ -1095,6 +1614,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ----------------- GET -----------------
 $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
 ?>
 <?php if ($assignmentError || (!$hasRequest && $dispatchError !== '')) { ?>
 <!DOCTYPE html>
@@ -1167,6 +1689,9 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
 $yaml = yaml_load_or_die_ascii($YAML_PATH);
 $yamlError = $yaml['__error'] ?? '';
 $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['sections'] : [];
+$uiConfig = (isset($yaml['ui']) && is_array($yaml['ui'])) ? $yaml['ui'] : [];
+$showContactSection = !array_key_exists('show_contact_section', $uiConfig) || $uiConfig['show_contact_section'] !== false;
+$formHeading = ascii_only(clean_utf8_text((string)($uiConfig['heading'] ?? ''), 300));
 ?>
 <!DOCTYPE html>
 <html lang="de">
@@ -1199,6 +1724,7 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 
     .section { margin-top: 16px; padding-top: 8px; border-top: 1px solid #eee; }
     .section h2 { font-size: 1.2rem; margin: 10px 0 6px 0; }
+    .formHeading { font-size:1.45rem; line-height:1.25; margin:18px 0 10px; text-align:center; }
 
     .checkgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }
     .check { display:flex; align-items:center; gap:10px; background:#fafafa; border:1px solid #eee; border-radius:12px; padding:10px 12px; }
@@ -1234,6 +1760,85 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
     .radioPill input{ width:22px; height:22px; flex:0 0 auto; }
     .radioPill span{ white-space:normal; overflow-wrap:anywhere; text-align:center; }
 
+    .scaleQuestion{
+      flex:1 1 100%;
+      background:#fafafa;
+      border:1px solid #e5e5ea;
+      border-radius:14px;
+      padding:14px 16px 12px 16px;
+      box-sizing:border-box;
+      margin:10px 0;
+    }
+    .scaleQuestion.invalid{ border-color:#ff3b30; background:#fff3f2; }
+    .field.invalid{
+      background:#fff3f2;
+      border-radius:12px;
+      box-shadow:0 0 0 2px #ff3b30;
+      padding:10px;
+      box-sizing:border-box;
+    }
+    .field.invalid > label{ color:#d70015; }
+    .field.invalid .radioRow{ outline:2px solid #ff3b30; outline-offset:3px; border-radius:12px; }
+    .field.invalid input:not([type="radio"]):not([type="range"]):not([type="hidden"]),
+    .field.invalid textarea,
+    .field.invalid select{ border-color:#ff3b30; outline:1px solid #ff3b30; }
+    .check.invalid{ border-color:#ff3b30; outline:1px solid #ff3b30; background:#fff3f2; color:#d70015; }
+    .scaleValue{
+      display:table;
+      min-width:42px;
+      margin:4px auto 8px auto;
+      padding:5px 12px;
+      border-radius:999px;
+      background:#e5e5ea;
+      color:#555;
+      text-align:center;
+      font-size:1.05rem;
+      font-weight:900;
+    }
+    .scaleQuestion.answered .scaleValue{ background:#007aff; color:#fff; }
+    .scaleEndpoints{
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      gap:18px;
+      align-items:end;
+      font-size:0.92rem;
+      line-height:1.25;
+      color:#333;
+    }
+    .scaleEndpoints span:last-child{ text-align:right; }
+    .scaleRange{
+      width:100%;
+      margin:14px 0 2px 0;
+      padding:0;
+      border:0;
+      accent-color:#007aff;
+      opacity:0.45;
+    }
+    .scaleQuestion.answered .scaleRange{ opacity:1; }
+    .scaleTicks{
+      display:flex;
+      justify-content:space-between;
+      padding:0;
+      color:#666;
+      font-size:0.82rem;
+      font-variant-numeric:tabular-nums;
+    }
+    button.scaleTick{
+      width:auto;
+      min-width:30px;
+      min-height:30px;
+      margin:0;
+      padding:3px 8px;
+      border-radius:8px;
+      background:transparent;
+      color:#666;
+      font-size:0.82rem;
+      line-height:1;
+    }
+    button.scaleTick.selected{ background:#007aff; color:#fff; }
+    button.scaleTick:focus-visible{ outline:2px solid #007aff; outline-offset:2px; }
+    .requiredHint{ color:#777; font-size:0.8rem; font-weight:600; }
+
     button { font-size: 1.05rem; padding: 14px 18px; border-radius: 12px; border: none; width: 100%; margin: 10px 0; cursor: pointer; }
     #submitBtn { background: #34c759; color:#fff; }
     #abortBtn { background: #ff3b30; color:#fff; }
@@ -1264,6 +1869,7 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
     <form id="anamForm">
       <input type="hidden" name="request_gdt" value="<?php echo h($REQUEST_GDT_NAME); ?>" />
 
+      <?php if ($showContactSection) { ?>
       <div class="section">
         <h2>Koerpermasse & Kontakt</h2>
         <div class="row">
@@ -1292,9 +1898,15 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
           </div>
         </div>
       </div>
+      <?php } ?>
+
+      <?php if ($formHeading !== '') { ?>
+        <h1 class="formHeading"><?php echo h($formHeading); ?></h1>
+      <?php } ?>
 
       <?php foreach ($sections as $secIdx => $sec) {
         if (!is_array($sec)) continue;
+        if (array_key_exists('ui_output', $sec) && $sec['ui_output'] === false) continue;
         $title = (string)($sec['title'] ?? '');
         if ($title === '') continue;
         $type  = (string)($sec['type'] ?? '');
@@ -1335,7 +1947,7 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
                 $id = (string)($q['id'] ?? '');
                 if ($id === '' || $label === '') continue;
               ?>
-                <label class="check" data-qwrap="1" data-qid="<?php echo h($id); ?>">
+                <label class="check" data-qwrap="1" data-qid="<?php echo h($id); ?>" data-qtype="<?php echo h($qType); ?>" data-required="<?php echo !empty($q['required']) ? '1' : '0'; ?>" data-qlabel="<?php echo h(ascii_only($label)); ?>">
                   <input type="checkbox" name="q[<?php echo h($id); ?>]" value="1" />
                   <span><?php echo h(ascii_only($label)); ?></span>
                 </label>
@@ -1348,6 +1960,7 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
               $label = (string)($q['label'] ?? '');
               $qType = (string)($q['type'] ?? '');
               $opts = $q['options'] ?? [];
+              $isRequired = !empty($q['required']);
               if ($id === '' || $label === '') continue;
 
               $show = $q['show_if'] ?? null;
@@ -1370,9 +1983,59 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
                   continue;
               }
             ?>
-              <div class="field" data-qwrap="1" data-qid="<?php echo h($id); ?>"<?php echo $wrapAttr; ?>>
+              <div class="field<?php echo $qType === 'scale' ? ' scaleQuestion' : ''; ?>" data-qwrap="1" data-qid="<?php echo h($id); ?>" data-qtype="<?php echo h($qType); ?>" data-required="<?php echo $isRequired ? '1' : '0'; ?>" data-qlabel="<?php echo h(ascii_only($label)); ?>"<?php echo $wrapAttr; ?>>
 
-              <?php if ($qType === 'yesno') { ?>
+              <?php if ($qType === 'scale') {
+                  $scale = (isset($q['scale']) && is_array($q['scale'])) ? $q['scale'] : [];
+                  $scaleMin = isset($scale['minimum']) && is_numeric($scale['minimum']) ? (float)$scale['minimum'] : 0.0;
+                  $scaleMax = isset($scale['maximum']) && is_numeric($scale['maximum']) ? (float)$scale['maximum'] : 10.0;
+                  $scaleStep = isset($scale['step']) && is_numeric($scale['step']) && (float)$scale['step'] > 0 ? (float)$scale['step'] : 1.0;
+                  $scaleInitial = $scaleMin + round((($scaleMax - $scaleMin) / 2) / $scaleStep) * $scaleStep;
+                  $scaleLeft = (string)($scale['left_label'] ?? numeric_text($scaleMin));
+                  $scaleRight = (string)($scale['right_label'] ?? numeric_text($scaleMax));
+                  $tickCount = (int)floor(($scaleMax - $scaleMin) / $scaleStep) + 1;
+                  if ($tickCount < 2 || $tickCount > 21) $tickCount = 0;
+              ?>
+                  <label for="<?php echo h('scale_'.$id); ?>">
+                    <?php echo h(ascii_only($label)); ?>
+                    <?php if ($isRequired) { ?><span class="requiredHint">(Pflichtfeld)</span><?php } ?>
+                  </label>
+                  <input type="hidden" id="<?php echo h('q_'.$id); ?>" name="q[<?php echo h($id); ?>]" value="" />
+                  <div class="scaleValue" data-scale-value="1" aria-live="polite">Bitte auswaehlen</div>
+                  <div class="scaleEndpoints">
+                    <span><b><?php echo h(numeric_text($scaleMin)); ?></b> – <?php echo h(ascii_only($scaleLeft)); ?></span>
+                    <span><b><?php echo h(numeric_text($scaleMax)); ?></b> – <?php echo h(ascii_only($scaleRight)); ?></span>
+                  </div>
+                  <input
+                    id="<?php echo h('scale_'.$id); ?>"
+                    class="scaleRange"
+                    type="range"
+                    min="<?php echo h(numeric_text($scaleMin)); ?>"
+                    max="<?php echo h(numeric_text($scaleMax)); ?>"
+                    step="<?php echo h(numeric_text($scaleStep)); ?>"
+                    value="<?php echo h(numeric_text($scaleInitial)); ?>"
+                    data-scale-range="1"
+                    data-answer-target="<?php echo h('q_'.$id); ?>"
+                    aria-label="<?php echo h(ascii_only($label)); ?>"
+                    aria-valuetext="Bitte auswaehlen"
+                  />
+                  <?php if ($tickCount > 0) { ?>
+                    <div class="scaleTicks" role="group" aria-label="Wert direkt auswaehlen">
+                      <?php for ($tick = 0; $tick < $tickCount; $tick++) { ?>
+                        <?php $tickValue = numeric_text($scaleMin + $tick * $scaleStep); ?>
+                        <button
+                          type="button"
+                          class="scaleTick"
+                          data-scale-tick="1"
+                          data-range-target="<?php echo h('scale_'.$id); ?>"
+                          data-scale-value-option="<?php echo h($tickValue); ?>"
+                          aria-label="<?php echo h(ascii_only($label) . ': ' . $tickValue); ?>"
+                          aria-pressed="false"
+                        ><?php echo h($tickValue); ?></button>
+                      <?php } ?>
+                    </div>
+                  <?php } ?>
+              <?php } elseif ($qType === 'yesno') { ?>
                   <label><?php echo h(ascii_only($label)); ?></label>
                   <div class="radioRow">
                     <label class="radioPill">
@@ -1439,6 +2102,24 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
   </div>
 
   <script>
+    var FOLLOW_UP_SCROLL_KEY = 'fragebogenpi-follow-up-scroll-top';
+    var SHOULD_SCROLL_TO_TOP = false;
+    try {
+      if (sessionStorage.getItem(FOLLOW_UP_SCROLL_KEY) === '1') {
+        SHOULD_SCROLL_TO_TOP = true;
+        sessionStorage.removeItem(FOLLOW_UP_SCROLL_KEY);
+        if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+        window.scrollTo(0, 0);
+        requestAnimationFrame(function(){ window.scrollTo(0, 0); });
+        setTimeout(function(){ window.scrollTo(0, 0); }, 0);
+      }
+    } catch (e) {}
+    window.addEventListener('pageshow', function(){
+      if (!SHOULD_SCROLL_TO_TOP) return;
+      window.scrollTo(0, 0);
+      setTimeout(function(){ window.scrollTo(0, 0); }, 50);
+    });
+
     var SCRIPT_NAME = <?php echo json_encode($scriptName, JSON_UNESCAPED_SLASHES); ?>;
 
     var POST_URL;
@@ -1455,23 +2136,134 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
       statusEl.style.color = isError ? "#d00" : "#333";
     }
 
-    function getAnswerValue(qid) {
-      var cb = formEl.querySelector('input[type="checkbox"][name="q['+CSS.escape(qid)+']"]');
-      if (cb) return cb.checked ? true : false;
+    function questionWrapForId(qid) {
+      var wraps = formEl.querySelectorAll('[data-qwrap="1"]');
+      for (var i = 0; i < wraps.length; i++) {
+        if ((wraps[i].getAttribute('data-qid') || '') === qid) return wraps[i];
+      }
+      return null;
+    }
 
-      var cbs = formEl.querySelectorAll('input[type="checkbox"][name="q['+CSS.escape(qid)+'][]"]');
+    function getAnswerValue(qid) {
+      var wrap = questionWrapForId(qid);
+      if (!wrap) return "";
+
+      var cbs = wrap.querySelectorAll('input[type="checkbox"]');
+      if (cbs && cbs.length === 1 && (cbs[0].name || '').slice(-2) !== '[]') {
+        return cbs[0].checked ? true : false;
+      }
       if (cbs && cbs.length) {
         var vals = [];
         cbs.forEach(function(x){ if (x.checked) vals.push(x.value || ""); });
         return vals;
       }
 
-      var r = formEl.querySelector('input[type="radio"][name="q['+CSS.escape(qid)+']"]:checked');
+      var r = wrap.querySelector('input[type="radio"]:checked');
       if (r) return r.value;
 
-      var t = formEl.querySelector('[name="q['+CSS.escape(qid)+']"]');
+      var t = wrap.querySelector('input[type="hidden"], input:not([type]), input[type="text"], input[type="number"], textarea, select');
       if (t) return (t.value || "");
       return "";
+    }
+
+    function commitScale(range) {
+      var targetId = range.getAttribute("data-answer-target");
+      var target = targetId ? document.getElementById(targetId) : null;
+      var wrap = range.closest('[data-qwrap="1"]');
+      if (!target || !wrap) return;
+      target.value = range.value;
+      range.setAttribute("aria-valuetext", range.value);
+      var valueEl = wrap.querySelector('[data-scale-value="1"]');
+      if (valueEl) valueEl.textContent = range.value;
+      wrap.querySelectorAll('[data-scale-tick="1"]').forEach(function(tick){
+        var selected = String(tick.getAttribute('data-scale-value-option')) === String(range.value);
+        tick.classList.toggle('selected', selected);
+        tick.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      });
+      wrap.classList.add("answered");
+      wrap.classList.remove("invalid");
+    }
+
+    function setScaleFromPointer(range, event) {
+      if (typeof event.clientX !== 'number') return;
+      if (typeof event.button === 'number' && event.button !== 0) return;
+      var rect = range.getBoundingClientRect();
+      if (!rect || rect.width <= 0) return;
+
+      var minimum = Number(range.min || 0);
+      var maximum = Number(range.max || 100);
+      var step = Number(range.step || 1);
+      if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || !Number.isFinite(step) || step <= 0 || maximum <= minimum) return;
+
+      var ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      var rawValue = minimum + ratio * (maximum - minimum);
+      var snappedValue = minimum + Math.round((rawValue - minimum) / step) * step;
+      snappedValue = Math.max(minimum, Math.min(maximum, snappedValue));
+      range.value = String(Number(snappedValue.toFixed(6)));
+      commitScale(range);
+    }
+
+    formEl.querySelectorAll('[data-scale-range="1"]').forEach(function(range){
+      range.addEventListener("pointerdown", function(event){ setScaleFromPointer(range, event); });
+      range.addEventListener("input", function(){ commitScale(range); });
+      range.addEventListener("change", function(){ commitScale(range); });
+      range.addEventListener("click", function(event){ setScaleFromPointer(range, event); });
+    });
+
+    formEl.querySelectorAll('[data-scale-tick="1"]').forEach(function(tick){
+      tick.addEventListener("click", function(){
+        var rangeId = tick.getAttribute("data-range-target");
+        var range = rangeId ? document.getElementById(rangeId) : null;
+        if (!range) return;
+        range.value = tick.getAttribute("data-scale-value-option") || range.value;
+        commitScale(range);
+        range.focus();
+      });
+    });
+
+    var requiredValidationActive = false;
+
+    function updateRequiredQuestionMarks() {
+      var firstInvalid = null;
+      var missingLabels = [];
+      var required = formEl.querySelectorAll('[data-qwrap="1"][data-required="1"]');
+
+      if (!requiredValidationActive) {
+        required.forEach(function(wrap){ wrap.classList.remove('invalid'); });
+        return { firstInvalid:null, missingLabels:[] };
+      }
+
+      required.forEach(function(wrap){
+        var section = wrap.closest('.section');
+        var hidden = wrap.classList.contains('hidden') || (section && section.classList.contains('hidden'));
+        if (hidden) {
+          wrap.classList.remove('invalid');
+          return;
+        }
+
+        var qid = wrap.getAttribute('data-qid') || '';
+        var value = getAnswerValue(qid);
+        var answered = Array.isArray(value) ? value.length > 0 : (value === true || String(value || '').trim() !== '');
+        wrap.classList.toggle('invalid', !answered);
+        if (!answered) {
+          if (!firstInvalid) firstInvalid = wrap;
+          missingLabels.push(wrap.getAttribute('data-qlabel') || qid);
+        }
+      });
+
+      return { firstInvalid:firstInvalid, missingLabels:missingLabels };
+    }
+
+    function requiredQuestionsValid() {
+      requiredValidationActive = true;
+      var state = updateRequiredQuestionMarks();
+
+      if (state.firstInvalid) {
+        state.firstInvalid.scrollIntoView({ behavior:"smooth", block:"center" });
+        setStatus("Bitte alle Pflichtfragen beantworten. Erste offene Frage: " + state.missingLabels[0], true);
+        return false;
+      }
+      return true;
     }
 
     function parseJsonArrayMaybe(s) {
@@ -1544,9 +2336,13 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
 
     formEl.addEventListener('change', applyShowIf);
     formEl.addEventListener('input', applyShowIf);
+    formEl.addEventListener('change', updateRequiredQuestionMarks);
+    formEl.addEventListener('input', updateRequiredQuestionMarks);
     applyShowIf();
+    updateRequiredQuestionMarks();
 
     submitBtn.addEventListener("click", function () {
+      if (!requiredQuestionsValid()) return;
       submitBtn.disabled = true;
       abortBtn.disabled = true;
       setStatus("Uebermittlung laeuft…", false);
@@ -1574,7 +2370,19 @@ $sections = (isset($yaml['sections']) && is_array($yaml['sections'])) ? $yaml['s
             throw new Error(msg);
           }
           setStatus("✅ erfolgreich uebermittelt", false);
-          setTimeout(function() { location.reload(); }, 1000);
+          var followUpCreated = Array.isArray(r.data.follow_up_created) && r.data.follow_up_created.length > 0;
+          var followUpExisting = Array.isArray(r.data.follow_up_existing) && r.data.follow_up_existing.length > 0;
+          var hasFollowUp = followUpCreated || followUpExisting;
+          if (hasFollowUp) {
+            try {
+              sessionStorage.setItem(FOLLOW_UP_SCROLL_KEY, '1');
+              if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+            } catch (e) {}
+          }
+          setTimeout(function() {
+            if (hasFollowUp) window.scrollTo(0, 0);
+            location.reload();
+          }, 1000);
         })
         .catch(function(err) {
           setStatus("❌ " + (err && err.message ? err.message : String(err)), true);

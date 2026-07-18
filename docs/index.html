@@ -177,6 +177,162 @@
       padding:16px;
     }
 
+    .forms{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:12px;
+      margin-top:12px;
+    }
+
+    .form-card{
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:13px 14px;
+      box-shadow:0 3px 10px rgba(15,23,42,.05);
+    }
+
+    .form-card:nth-child(1){ background:#edf6ff; border-color:#bfdcf5; }
+    .form-card:nth-child(2){ background:#eef8f1; border-color:#c4e2cc; }
+    .form-card:nth-child(3){ background:#fff4e8; border-color:#efd2b2; }
+    .form-card:nth-child(4){ background:#f5f0ff; border-color:#d9c9ef; }
+    .form-card:nth-child(5){ background:#fff0f3; border-color:#edc7d0; }
+    .form-card:nth-child(6){ background:#f0f8f7; border-color:#c1ded9; }
+    .form-card:nth-child(7){ background:#fff9df; border-color:#eadca7; }
+    .form-card:nth-child(8){ background:#f3f4f6; border-color:#d4d7dc; }
+    .form-card:nth-child(9){ background:#eef3ff; border-color:#c6d2ed; }
+    .form-card:nth-child(10){ background:#f8f0ec; border-color:#dfcabe; }
+
+    .form-card strong{
+      display:block;
+      margin-bottom:3px;
+    }
+
+    .form-card span{
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    .image-block{
+      margin-top:22px;
+    }
+
+    .image-block h2{
+      margin:0 0 12px;
+    }
+
+    .image-pair{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:18px;
+      align-items:stretch;
+    }
+
+    .image-card{
+      overflow:hidden;
+      display:flex;
+      flex-direction:column;
+      padding:12px;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    }
+
+    .image-frame{
+      height:680px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      border-radius:12px;
+      background:#f8fafc;
+    }
+
+    .image-frame img{
+      display:block;
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      background:#f8fafc;
+      cursor:zoom-in;
+    }
+
+    .image-frame.composite{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+      padding:10px;
+    }
+
+    .image-frame.composite img{
+      min-width:0;
+      border-radius:9px;
+      background:#fff;
+    }
+
+    .image-frame.landscape{
+      height:520px;
+    }
+
+    .image-caption{
+      padding:12px 4px 2px;
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    .image-caption strong{
+      display:block;
+      margin-bottom:3px;
+      color:var(--text);
+      font-size:16px;
+    }
+
+    .strip img{ cursor:zoom-in; }
+
+    .lightbox{
+      position:fixed;
+      inset:0;
+      z-index:9999;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+      background:rgba(15,23,42,.92);
+    }
+
+    .lightbox[hidden]{ display:none; }
+
+    .lightbox img{
+      display:block;
+      max-width:96vw;
+      max-height:90vh;
+      width:auto;
+      height:auto;
+      object-fit:contain;
+      border-radius:10px;
+      background:#fff;
+      box-shadow:0 18px 60px rgba(0,0,0,.45);
+    }
+
+    .lightbox-close{
+      position:fixed;
+      top:14px;
+      right:18px;
+      width:46px;
+      height:46px;
+      padding:0;
+      border:1px solid rgba(255,255,255,.65);
+      border-radius:50%;
+      background:#fff;
+      color:#0f172a;
+      font-size:32px;
+      line-height:42px;
+      cursor:pointer;
+      box-shadow:0 8px 24px rgba(0,0,0,.3);
+    }
+
+    body.lightbox-open{ overflow:hidden; }
+
     footer{
       margin-top:28px;
       font-size:13px;
@@ -190,6 +346,18 @@
     /* Mobile: wenn extrem schmal, nicht zu hoch werden */
     @media (max-width: 520px){
       h1{ font-size:30px; }
+      .forms{ grid-template-columns:1fr; }
+    }
+
+    @media (max-width: 900px){
+      .image-frame{ height:520px; }
+      .image-frame.landscape{ height:440px; }
+    }
+
+    @media (max-width: 700px){
+      .image-pair{ grid-template-columns:1fr; }
+      .image-frame{ height:520px; }
+      .image-frame.landscape{ height:400px; }
     }
   </style>
 </head>
@@ -266,14 +434,93 @@ sudo bash install.sh</pre>
   </ol>
 </section>
 
-<!-- UNTEN: 2 Bilder (Anamnesebogen | Praxissoftware Screenshot) -->
-<section class="strip" id="strip-bottom"
-  data-minh="280" data-maxh="560" style="margin-top:22px;">
-  <div class="cell">
-    <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Anamnesebogen">
+<section class="image-block">
+  <h2>Fragebögen übersichtlich ausfüllen</h2>
+  <div class="image-pair">
+    <article class="image-card">
+      <div class="image-frame">
+        <img src="BBC1843E-DC89-49B6-ACD5-4767C0164B96_4_5005_c.jpeg" alt="Allgemeiner Anamnesebogen auf dem Tablet">
+      </div>
+      <div class="image-caption"><strong>Allgemeine Anamnese</strong>Vorerkrankungen, Medikamente, Risiken und weitere Angaben strukturiert am Tablet erfassen.</div>
+    </article>
+    <article class="image-card">
+      <div class="image-frame">
+        <img src="cat-formular.png" alt="COPD Assessment Test mit Schiebereglern und Pflichtfeldmarkierung">
+      </div>
+      <div class="image-caption"><strong>COPD Assessment Test (CAT)</strong>Gut bedienbare Skalen und eine klare Markierung noch unbeantworteter Pflichtfragen.</div>
+    </article>
   </div>
-  <div class="cell">
-    <img src="Screenshot 2026-02-06 at 13.48.59.png" alt="Praxissoftware">
+</section>
+
+<section class="flow">
+  <h2>Vorhandene Formularvorlagen</h2>
+  <p class="subtitle">Eine praxistaugliche Auswahl für Anamnese, Verlaufskontrolle, Screening und Dokumentation:</p>
+  <div class="forms">
+    <div class="form-card"><strong>Allgemeine Anamnese</strong><span>Vorerkrankungen, Beschwerden, Medikamente, Risiken und Hilfsmittel</span></div>
+    <div class="form-card"><strong>Asthmakontrolltest (ACT)</strong><span>Standardisierte Einschätzung der Asthmakontrolle</span></div>
+    <div class="form-card"><strong>COPD Assessment Test (CAT)</strong><span>Belastung und Beschwerden bei COPD</span></div>
+    <div class="form-card"><strong>Fagerström-Test (FTND)</strong><span>Grad der Nikotinabhängigkeit</span></div>
+    <div class="form-card"><strong>AUDIT-Fragebogen</strong><span>Screening des Alkoholkonsums</span></div>
+    <div class="form-card"><strong>PHQ-2</strong><span>Kurzes Depressionsscreening mit automatischem PHQ-9-Folgebogen</span></div>
+    <div class="form-card"><strong>PHQ-9</strong><span>Vertiefender Gesundheitsfragebogen</span></div>
+    <div class="form-card"><strong>Barthel-Index</strong><span>Erfassung von Selbstständigkeit und Hilfsbedarf im Alltag</span></div>
+    <div class="form-card"><strong>Kopfschmerz-Schnelltest</strong><span>Strukturierte Erfassung typischer Kopfschmerzmerkmale</span></div>
+    <div class="form-card"><strong>Datenschutzerklärung</strong><span>Dokumentation mit E-Mail-/SMS-Einwilligung, Unterschrift und PDF</span></div>
+  </div>
+</section>
+
+<section class="image-block">
+  <h2>Datenschutz digital dokumentieren</h2>
+  <div class="image-pair">
+    <article class="image-card">
+      <div class="image-frame">
+        <img src="dsgvo.png" alt="Datenschutzerklärung mit Einwilligungen und Unterschrift auf dem Tablet">
+      </div>
+      <div class="image-caption"><strong>Datenschutzerklärung am Tablet</strong>Einwilligungen auswählen und direkt im feststehenden Unterschriftsfeld unterzeichnen.</div>
+    </article>
+    <article class="image-card">
+      <div class="image-frame">
+        <img src="datenschutz-fertig.jpg" alt="Fertige Datenschutzerklärung als PDF mit Unterschrift">
+      </div>
+      <div class="image-caption"><strong>Fertiges PDF</strong>Die vollständige Erklärung wird mit Auswahl, Unterschrift und Versionsangaben als PDF dokumentiert.</div>
+    </article>
+  </div>
+</section>
+
+<section class="image-block">
+  <h2>Befunddokumentation und Selfie</h2>
+  <div class="image-pair">
+    <article class="image-card">
+      <div class="image-frame composite">
+        <img src="leberfleck-aufnahme.jpeg" alt="Leberfleck mit der Smartphone-Kamera aufnehmen">
+        <img src="leberfleck-auswahl.png" alt="Zwei Leberfleckbilder zur Befunddokumentation ausgewählt">
+      </div>
+      <div class="image-caption"><strong>Befund dokumentieren</strong>Links die Fotoaufnahme, daneben beide ausgewählten Leberfleckbilder für die Übernahme in die Patientenakte.</div>
+    </article>
+    <article class="image-card">
+      <div class="image-frame">
+        <img src="31ADF5AB-B8A3-42E4-B179-2B3518145C82_1_105_c.jpeg" alt="Patientenselfie aufnehmen und hochladen">
+      </div>
+      <div class="image-caption"><strong>Patientenselfie</strong>Den Patienten am Empfang ein Selfie aufnehmen lassen.</div>
+    </article>
+  </div>
+</section>
+
+<section class="image-block">
+  <h2>Auswahl und Rückschrieb in der Praxissoftware</h2>
+  <div class="image-pair">
+    <article class="image-card">
+      <div class="image-frame landscape">
+        <img src="praxissoftware.jpg" alt="Formularauswahl und zurückgeschriebene Ergebnisse in der Praxissoftware">
+      </div>
+      <div class="image-caption"><strong>Formulare direkt auswählen</strong>Anamnese, Scores, Datenschutz, Befunddokumentation und Selfie werden aus der Praxissoftware heraus gestartet.</div>
+    </article>
+    <article class="image-card">
+      <div class="image-frame landscape">
+        <img src="praxissoftware-anamnese.png" alt="Ausführliche Anamnese als Rückschrieb in der Patientenakte">
+      </div>
+      <div class="image-caption"><strong>Strukturierter Rückschrieb</strong>Antworten, Hinweise und Bildanhänge erscheinen übersichtlich und dauerhaft in der elektronischen Patientenakte.</div>
+    </article>
   </div>
 </section>
 
@@ -282,6 +529,11 @@ sudo bash install.sh</pre>
   <div><a href="/impressum/">Impressum</a></div>
 </footer>
 
+</div>
+
+<div class="lightbox" id="imageLightbox" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Bild vergrößert anzeigen">
+  <button class="lightbox-close" id="imageLightboxClose" type="button" aria-label="Bildansicht schließen">×</button>
+  <img id="imageLightboxImage" src="" alt="">
 </div>
 
 <script>
@@ -340,9 +592,7 @@ sudo bash install.sh</pre>
 
   function layoutAll(){
     const top = document.getElementById('strip-top');
-    const bottom = document.getElementById('strip-bottom');
     if (top) layoutStrip(top);
-    if (bottom) layoutStrip(bottom);
   }
 
   window.addEventListener('resize', () => {
@@ -352,6 +602,48 @@ sudo bash install.sh</pre>
   });
 
   layoutAll();
+
+  const lightbox = document.getElementById('imageLightbox');
+  const lightboxImage = document.getElementById('imageLightboxImage');
+  const lightboxClose = document.getElementById('imageLightboxClose');
+  const zoomImages = Array.from(document.querySelectorAll('.strip img, .image-frame img'));
+
+  function openLightbox(img){
+    lightboxImage.src = img.currentSrc || img.src;
+    lightboxImage.alt = img.alt || 'Vergrößerte Ansicht';
+    lightbox.hidden = false;
+    lightbox.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('lightbox-open');
+    lightboxClose.focus();
+  }
+
+  function closeLightbox(){
+    lightbox.hidden = true;
+    lightbox.setAttribute('aria-hidden', 'true');
+    lightboxImage.src = '';
+    document.body.classList.remove('lightbox-open');
+  }
+
+  zoomImages.forEach(img => {
+    img.setAttribute('tabindex', '0');
+    img.setAttribute('role', 'button');
+    img.setAttribute('aria-label', (img.alt || 'Bild') + ' vergrößern');
+    img.addEventListener('click', () => openLightbox(img));
+    img.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openLightbox(img);
+      }
+    });
+  });
+
+  lightboxClose.addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', ev => {
+    if (ev.target === lightbox) closeLightbox();
+  });
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && !lightbox.hidden) closeLightbox();
+  });
 })();
 </script>
 </body>

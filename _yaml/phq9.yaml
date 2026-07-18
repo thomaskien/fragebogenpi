@@ -1,0 +1,232 @@
+# phq9.yaml
+# Gesundheitsfragebogen fuer Patienten (PHQ-9)
+# Version 1.0.1
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der neun Antworten werden zur PHQ-9-Summe addiert.
+# - Der Summenwert liegt zwischen 0 und 27 Punkten.
+#
+# Schwereeinteilung:
+# - 0 bis 4 Punkte: Gesund
+# - 5 bis 9 Punkte: Unauffaellig
+# - 10 bis 14 Punkte: Leichtgradige Depression
+# - 15 bis 19 Punkte: Mittelgradige Depression
+# - 20 bis 27 Punkte: Schwergradige Depression
+#
+# Zusatzhinweis des Testbogens:
+# - Ein Unterschied von 5 Punkten gilt als klinisch relevanter Unterschied.
+# - Angegebene Testguete: 60 bis 80 Prozent Sensitivitaet,
+#   90 bis 95 Prozent Spezifitaet.
+#
+# Changelog:
+# - 1.0.1: Allgemeine Summen-, Schweregrad- und GDT-Auswertung.
+# - 1.0.0: Erste Fassung des PHQ-9.
+
+meta:
+  title: "Gesundheitsfragebogen fuer Patienten (PHQ-9)"
+  subtitle: "Beschwerden im Verlauf der letzten 2 Wochen"
+  version: "1.0.1"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Depressive Beschwerden"
+    gdt_output: false
+    questions:
+      - id: phq9_interesse
+        label: "Wenig Interesse oder Freude an Ihren Taetigkeiten"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_niedergeschlagenheit
+        label: "Niedergeschlagenheit, Schwermut oder Hoffnungslosigkeit"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_schlaf
+        label: "Schwierigkeiten ein- oder durchzuschlafen oder vermehrter Schlaf"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_muedigkeit
+        label: "Muedigkeit oder das Gefuehl, keine Energie zu haben"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_appetit
+        label: "Verminderter Appetit oder uebermaessiges Beduerfnis zu essen"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_selbstwert
+        label: "Schlechte Meinung von sich selbst; Gefuehl, ein Versager zu sein oder die Familie enttaeuscht zu haben"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_konzentration
+        label: "Schwierigkeiten, sich auf etwas zu konzentrieren, z. B. beim Zeitunglesen oder Fernsehen"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_bewegung_sprache
+        label: "Waren Ihre Bewegungen oder Ihre Sprache so verlangsamt, dass es auch anderen auffallen wuerde? Oder waren Sie im Gegenteil zappelig oder ruhelos und hatten dadurch einen staerkeren Bewegungsdrang als sonst?"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq9_todesgedanken
+        label: "Gedanken, dass Sie lieber tot waeren oder sich Leid zufuegen moechten"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: phq9_summe
+        label: "PHQ-9-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - phq9_interesse
+            - phq9_niedergeschlagenheit
+            - phq9_schlaf
+            - phq9_muedigkeit
+            - phq9_appetit
+            - phq9_selbstwert
+            - phq9_konzentration
+            - phq9_bewegung_sprache
+            - phq9_todesgedanken
+          minimum: 0
+          maximum: 27
+
+      - id: phq9_bewertung
+        label: "Bewertung"
+        type: derived
+        source: phq9_summe
+        ranges:
+          - minimum: 0
+            maximum: 4
+            status: "Gesund"
+
+          - minimum: 5
+            maximum: 9
+            status: "Unauffaellig"
+
+          - minimum: 10
+            maximum: 14
+            status: "Leichtgradige Depression"
+
+          - minimum: 15
+            maximum: 19
+            status: "Mittelgradige Depression"
+
+          - minimum: 20
+            maximum: 27
+            status: "Schwergradige Depression"
+
+gdt:
+  sections:
+    - title: "PHQ-9"
+      elements:
+        - type: score
+          source: phq9_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: phq9_bewertung

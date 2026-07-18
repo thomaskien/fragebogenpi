@@ -1,6 +1,6 @@
 # datenschutz.yaml
 # fragebogenpi.de - Datenschutz/DSGVO-Unterschrift
-# Version 1.3
+# Version 1.3.4
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -28,12 +28,29 @@
 #   + Erlaeuterung zum moeglichen Einsatz digitaler Assistenzsysteme einschliesslich KI-gestuetzter Verfahren aufgenommen.
 #   + Klarstellung ergaenzt, dass digitale Assistenzsysteme keine aerztliche Entscheidung ersetzen.
 #   + Datenschutz- und berufsrechtliche Voraussetzungen fuer externe Dienstleister ergaenzt.
+# - v1.3.1-test:
+#   + Als technische Testversion in das zentrale YAML-Verzeichnis verschoben.
+#   + Optionale E-Mail-Einwilligung mit eigener ID fuer die PDF-Dokumentation versehen.
+#   + Deutlicher Testhinweis aufgenommen; Praxisplatzhalter muessen vor Produktivbetrieb ersetzt werden.
+# - v1.3.2-test:
+#   + Formular-ID dsgv und spezialisierter Handler fuer die Tablet-Warteschlange deklariert.
+# - v1.3.3-test:
+#   + Zweite optionale Einwilligung fuer SMS-Kommunikation ergaenzt.
+# - v1.3.4-test:
+#   + Checkboxtexte fuer eine einzeilige Darstellung auf Tablets gekuerzt.
+# - v1.3.4:
+#   + Technischen Teststand als stabile Formularversion 1.3.4 zusammengefuehrt.
+#   + Versionssuffix und technisches Statusfeld "test" entfernt.
+#   + Deutlicher Hinweisbanner bis zur Ersetzung der Praxisplatzhalter beibehalten.
 
 meta:
   title: "Datenschutzerklärung"
   pdf_title: "Datenschutzerklärung"
-  version: "1.3"
+  version: "1.3.4"
   language: "de"
+  form_ids: [dsgv]
+  handler: "datenschutz.php"
+  warning_notice: "TESTVERSION - nicht produktiv verwenden; Praxisangaben und Rechtstext vor Einsatz pruefen."
   submit_label: "✅ Datenschutzerklärung unterschreiben und absenden"
 
 document:
@@ -123,17 +140,23 @@ document:
 
         Zuständige Aufsichtsbehörde in Nordrhein-Westfalen ist die Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Kavalleriestraße 2-4, 40213 Düsseldorf.
 
-    - title: "Optionale Einwilligung: unverschlüsselte E-Mail-Kommunikation"
+    - title: "Optionale Einwilligung: unverschlüsselte E-Mail-Kommunikation / SMS"
       text: |
-        Die nachfolgende Einwilligung ist freiwillig und betrifft ausschließlich die Kommunikation per unverschlüsselter E-Mail. Die übrige Datenverarbeitung im Rahmen Ihrer Behandlung ist hiervon unabhängig.
+        Die nachfolgende Einwilligung ist freiwillig und betrifft ausschließlich die Kommunikation per unverschlüsselter E-Mail bzw. SMS. Die übrige Datenverarbeitung im Rahmen Ihrer Behandlung ist hiervon unabhängig.
 
-        Wenn Sie die untenstehende Checkbox aktivieren, willigen Sie ausdrücklich ein, dass wir Ihnen an die von Ihnen angegebene E-Mail-Adresse ohne weitere Sicherungsmaßnahmen, insbesondere ohne Verschlüsselung, E-Mails über anstehende Termine und Folgetermine sowie Erinnerungen über fällige Gesundheitsuntersuchungen oder Vorsorgeuntersuchungen übermitteln dürfen.
+        Wenn Sie die jeweilige untenstehende Checkbox aktivieren, willigen Sie ausdrücklich ein, dass wir Ihnen an die von Ihnen angegebene E-Mail-Adresse / Handynummer ohne weitere Sicherungsmaßnahmen, insbesondere ohne Verschlüsselung, E-Mails / SMS über anstehende Termine und Folgetermine sowie Erinnerungen über fällige Gesundheitsuntersuchungen oder Vorsorgeuntersuchungen übermitteln dürfen.
 
         Diese Einwilligung umfasst auch die unverschlüsselte Übermittlung besonderer personenbezogener Daten, insbesondere Gesundheitsdaten, soweit dies für die oben genannten Zwecke erforderlich ist.
 
-        Die Kommunikation per unverschlüsselter E-Mail kann mit einem Verlust an Vertraulichkeit und Sicherheit verbunden sein. Unverschlüsselte E-Mails können auf dem Übertragungsweg von Dritten eingesehen oder verändert werden. Bitte halten Sie die Zugangsdaten zu Ihrem E-Mail-Postfach vertraulich, um unbefugten Dritten keinen Zugriff auf eingehende E-Mails der Praxis zu ermöglichen.
+        Die Kommunikation per unverschlüsselter E-Mail kann mit einem Verlust an Vertraulichkeit und Sicherheit verbunden sein. Unverschlüsselte Nachrichten können auf dem Übertragungsweg von Dritten eingesehen oder verändert werden. Bitte halten Sie die Zugangsdaten zu Ihrem E-Mail-Postfach vertraulich, um unbefugten Dritten keinen Zugriff auf eingehende E-Mails der Praxis zu ermöglichen.
 
         Diese Einwilligung gilt, bis Sie der weiteren Nutzung widersprechen oder Ihre Einwilligung widerrufen. Ein Widerruf ist jederzeit mit Wirkung für die Zukunft möglich. Nach einem Widerruf erhalten Sie keine unverschlüsselten elektronischen Nachrichten im vorbeschriebenen Umfang mehr.
 
 consent:
-  checkbox_label: "Kontakt per unverschlüsselter Email erlauben (Optional)"
+  id: "email_unverschluesselt"
+  checkbox_label: "Unverschl. E-Mail erlauben (optional)"
+  pdf_label: "Optionale Einwilligung zur unverschlüsselten E-Mail-Kommunikation"
+  sms_id: "sms_unverschluesselt"
+  sms_checkbox_label: "SMS erlauben (optional)"
+  sms_pdf_label: "Optionale Einwilligung zur SMS-Kommunikation"
+  optional: true

@@ -1,0 +1,347 @@
+# goeb.yaml
+# Kopfschmerz-Schnelltest nach Prof. Dr. Hartmut Göbel
+# Version 1.0.2
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Jede mit „Ja“ beantwortete Frage zählt 1 Punkt, „Nein“ zählt 0 Punkte.
+# - Für jede der vier Kopfschmerzformen wird eine eigene Summe von 0 bis 3 gebildet.
+# - Mindestens 2 Punkte beziehungsweise mindestens zwei „Ja“-Antworten
+#   machen die jeweilige Diagnose wahrscheinlich.
+#
+# Changelog:
+# - 1.0.1: Vier getrennte Score-Auswertungen und vollstaendige GDT-Ausgabe
+#   aller Ja-/Nein-Angaben mit doppelten --- Trennzeilen.
+# - 1.0.2: Sichtbare Hauptueberschrift ergaenzt und jede Punktesumme durch
+#   eine zusaetzliche --- Trennzeile vom vorherigen Antwortblock abgesetzt.
+# - 1.0.0: Erste Fassung des Kopfschmerz-Schnelltests.
+
+meta:
+  title: "Kopfschmerz-Schnelltest"
+  subtitle: "Nach Prof. Dr. Hartmut Göbel"
+  version: "1.0.2"
+  language: "de"
+
+ui:
+  show_contact_section: false
+  heading: "Kopfschmerz-Schnelltest nach Prof. Dr. Hartmut Göbel"
+
+sections:
+
+  - title: "Ist es Migräne?"
+    description: "Mindestens zwei Ja-Antworten machen die Diagnose wahrscheinlich."
+    gdt_output: false
+    questions:
+      - id: goeb_migraene_aktivitaet
+        label: "Können körperliche Aktivitäten wie Treppensteigen oder Laufen in frischer Luft die Kopfschmerzen verstärken?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_migraene_uebelkeit
+        label: "Verspüren Sie während der Kopfschmerzen Übelkeit?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_migraene_beeintraechtigung
+        label: "Behindern die Kopfschmerzen Ihre üblichen Tätigkeiten (Arbeit, Schule, Freizeit) erheblich?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_migraene_summe
+        label: "Migräne-Punktzahl"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - goeb_migraene_aktivitaet
+            - goeb_migraene_uebelkeit
+            - goeb_migraene_beeintraechtigung
+          minimum: 0
+          maximum: 3
+
+      - id: goeb_migraene_bewertung
+        label: "Bewertung Migräne"
+        type: derived
+        source: goeb_migraene_summe
+        ranges:
+          - minimum: 0
+            maximum: 1
+            status: "Migraene nach Schnelltest nicht wahrscheinlich"
+          - minimum: 2
+            maximum: 3
+            status: "Migraene nach Schnelltest wahrscheinlich"
+
+  - title: "Ist es Spannungskopfschmerz?"
+    description: "Mindestens zwei Ja-Antworten machen die Diagnose wahrscheinlich."
+    gdt_output: false
+    questions:
+      - id: goeb_spannung_aktivitaet
+        label: "Können körperliche Aktivitäten wie Treppensteigen oder Laufen in frischer Luft die Kopfschmerzen unbeeinflusst lassen oder sogar verbessern?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_spannung_appetit
+        label: "Ist während der Kopfschmerzen Ihr Appetit ungestört?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_spannung_taetigkeiten
+        label: "Können Sie trotz der Kopfschmerzen Ihren üblichen Tätigkeiten (Arbeit, Schule, Freizeit) nachgehen?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_spannung_summe
+        label: "Spannungskopfschmerz-Punktzahl"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - goeb_spannung_aktivitaet
+            - goeb_spannung_appetit
+            - goeb_spannung_taetigkeiten
+          minimum: 0
+          maximum: 3
+
+      - id: goeb_spannung_bewertung
+        label: "Bewertung Spannungskopfschmerz"
+        type: derived
+        source: goeb_spannung_summe
+        ranges:
+          - minimum: 0
+            maximum: 1
+            status: "Spannungskopfschmerz nach Schnelltest nicht wahrscheinlich"
+          - minimum: 2
+            maximum: 3
+            status: "Spannungskopfschmerz nach Schnelltest wahrscheinlich"
+
+  - title: "Ist es Kopfschmerz bei Medikamentenübergebrauch?"
+    description: "Mindestens zwei Ja-Antworten machen die Diagnose wahrscheinlich."
+    gdt_output: false
+    questions:
+      - id: goeb_medikamente_akutbehandlung
+        label: "Nehmen Sie an mehr als 10 Tagen pro Monat Medikamente zur Akutbehandlung Ihrer Kopfschmerzen ein?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_medikamente_kopfschmerztage
+        label: "Treten Kopfschmerzen an mehr als 15 Tagen pro Monat auf?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_medikamente_zunahme
+        label: "Nehmen die Kopfschmerzen in ihrer Häufigkeit immer mehr zu?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_medikamente_summe
+        label: "Medikamentenübergebrauch-Punktzahl"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - goeb_medikamente_akutbehandlung
+            - goeb_medikamente_kopfschmerztage
+            - goeb_medikamente_zunahme
+          minimum: 0
+          maximum: 3
+
+      - id: goeb_medikamente_bewertung
+        label: "Bewertung Medikamentenübergebrauch"
+        type: derived
+        source: goeb_medikamente_summe
+        ranges:
+          - minimum: 0
+            maximum: 1
+            status: "Medikamentenuebergebrauch nach Schnelltest nicht wahrscheinlich"
+          - minimum: 2
+            maximum: 3
+            status: "Medikamentenuebergebrauch nach Schnelltest wahrscheinlich"
+
+  - title: "Ist es Cluster-Kopfschmerz?"
+    description: "Mindestens zwei Ja-Antworten machen die Diagnose wahrscheinlich."
+    gdt_output: false
+    questions:
+      - id: goeb_cluster_dauer
+        label: "Treten die Kopfschmerzen in Anfällen einseitig im Augen-/Schläfenbereich für eine Dauer von 15 Minuten bis 3 Stunden auf?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_cluster_begleitsymptome
+        label: "Werden die Kopfschmerzen auf der gleichen Seite von Augenrötung, Augentränen, Nasenverstopfung, Nasenlaufen, hängendem Augenlid oder körperlicher Unruhe begleitet?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_cluster_haeufigkeit
+        label: "Treten die Kopfschmerzen in Attacken jeden 2. Tag bis zu 8-mal pro Tag auf?"
+        type: choice
+        required: true
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: goeb_cluster_summe
+        label: "Cluster-Kopfschmerz-Punktzahl"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - goeb_cluster_dauer
+            - goeb_cluster_begleitsymptome
+            - goeb_cluster_haeufigkeit
+          minimum: 0
+          maximum: 3
+
+      - id: goeb_cluster_bewertung
+        label: "Bewertung Cluster-Kopfschmerz"
+        type: derived
+        source: goeb_cluster_summe
+        ranges:
+          - minimum: 0
+            maximum: 1
+            status: "Cluster-Kopfschmerz nach Schnelltest nicht wahrscheinlich"
+          - minimum: 2
+            maximum: 3
+            status: "Cluster-Kopfschmerz nach Schnelltest wahrscheinlich"
+
+gdt:
+  sections:
+    - title: "Migraene"
+      separator_lines: 2
+      elements:
+        - type: answer_list
+          fields:
+            - goeb_migraene_aktivitaet
+            - goeb_migraene_uebelkeit
+            - goeb_migraene_beeintraechtigung
+        - type: text
+          text: "---"
+        - type: score
+          source: goeb_migraene_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: goeb_migraene_bewertung
+
+    - title: "Spannungskopfschmerz"
+      separator_lines: 2
+      elements:
+        - type: answer_list
+          fields:
+            - goeb_spannung_aktivitaet
+            - goeb_spannung_appetit
+            - goeb_spannung_taetigkeiten
+        - type: text
+          text: "---"
+        - type: score
+          source: goeb_spannung_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: goeb_spannung_bewertung
+
+    - title: "Medikamentenuebergebrauch"
+      separator_lines: 2
+      elements:
+        - type: answer_list
+          fields:
+            - goeb_medikamente_akutbehandlung
+            - goeb_medikamente_kopfschmerztage
+            - goeb_medikamente_zunahme
+        - type: text
+          text: "---"
+        - type: score
+          source: goeb_medikamente_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: goeb_medikamente_bewertung
+
+    - title: "Cluster-Kopfschmerz"
+      separator_lines: 2
+      elements:
+        - type: answer_list
+          fields:
+            - goeb_cluster_dauer
+            - goeb_cluster_begleitsymptome
+            - goeb_cluster_haeufigkeit
+        - type: text
+          text: "---"
+        - type: score
+          source: goeb_cluster_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: goeb_cluster_bewertung

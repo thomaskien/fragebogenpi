@@ -1,0 +1,217 @@
+# bart.yaml
+# Barthel-Index
+# Version 1.0.2
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der zehn Antworten werden zur Barthel-Gesamtpunktzahl addiert.
+# - Der Summenwert liegt zwischen 0 und 100 Punkten.
+# - 0 bis 30 Punkte: Weitgehend pflegeabhaengig.
+# - 35 bis 80 Punkte: Hilfsbeduerftig.
+# - 85 bis 95 Punkte: Punktuell hilfsbeduerftig.
+# - 100 Punkte: Weitgehend oder komplett selbststaendig.
+#
+# Changelog:
+# - 1.0.2: Eingruppierung anhand der Gesamtpunktzahl in der GDT-Antwort ergaenzt.
+# - 1.0.1: Allgemeine Summenberechnung und kompakte GDT-Ausgabe.
+# - 1.0.0: Erste Fassung des Barthel-Index.
+
+meta:
+  title: "Barthel-Index"
+  subtitle: "Erfassung der Selbststaendigkeit bei Aktivitaeten des taeglichen Lebens"
+  version: "1.0.2"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Aktivitaeten des taeglichen Lebens"
+    gdt_output: false
+    questions:
+      - id: bart_essen
+        label: "Essen"
+        type: choice
+        required: true
+        options:
+          - "Komplett selbstaendig, benutzt Geschirr und Besteck"
+          - "Benoetigt Hilfe bei der Zubereitung (z. B. Schneiden), isst aber selbstaendig"
+          - "Volle Uebernahme erforderlich"
+        scores:
+          "Komplett selbstaendig, benutzt Geschirr und Besteck": 10
+          "Benoetigt Hilfe bei der Zubereitung (z. B. Schneiden), isst aber selbstaendig": 5
+          "Volle Uebernahme erforderlich": 0
+
+      - id: bart_transfer
+        label: "Bett- / Rollstuhltransfer"
+        type: choice
+        required: true
+        options:
+          - "Komplett selbstaendig aus liegender Position in den (Roll-)Stuhl und zurueck"
+          - "Aufsicht oder geringe Hilfe (ungeschulte Laienhilfe) erforderlich"
+          - "Erhebliche Hilfe (geschulte Laienhilfe oder professionelle Hilfe) erforderlich"
+          - "Bettlaegerig"
+        scores:
+          "Komplett selbstaendig aus liegender Position in den (Roll-)Stuhl und zurueck": 15
+          "Aufsicht oder geringe Hilfe (ungeschulte Laienhilfe) erforderlich": 10
+          "Erhebliche Hilfe (geschulte Laienhilfe oder professionelle Hilfe) erforderlich": 5
+          "Bettlaegerig": 0
+
+      - id: bart_waschen
+        label: "Waschen"
+        type: choice
+        required: true
+        options:
+          - "Vor Ort komplett selbstaendig inklusive Zaehneputzen, Rasieren und Frisieren"
+          - "Nicht erfuellt"
+        scores:
+          "Vor Ort komplett selbstaendig inklusive Zaehneputzen, Rasieren und Frisieren": 5
+          "Nicht erfuellt": 0
+
+      - id: bart_toilettenbenutzung
+        label: "Toilettenbenutzung"
+        type: choice
+        required: true
+        options:
+          - "Unabhaengig bei Nutzung von Toilette oder Toilettenstuhl"
+          - "Benoetigt Hilfe, z. B. fuer Gleichgewicht, Kleidung aus- oder anziehen oder Toilettenpapier"
+          - "Benutzt weder Toilette noch Toilettenstuhl"
+        scores:
+          "Unabhaengig bei Nutzung von Toilette oder Toilettenstuhl": 10
+          "Benoetigt Hilfe, z. B. fuer Gleichgewicht, Kleidung aus- oder anziehen oder Toilettenpapier": 5
+          "Benutzt weder Toilette noch Toilettenstuhl": 0
+
+      - id: bart_baden
+        label: "Baden"
+        type: choice
+        required: true
+        options:
+          - "Selbstaendiges Baden oder Duschen"
+          - "Benoetigt Hilfe beim Baden oder Duschen"
+        scores:
+          "Selbstaendiges Baden oder Duschen": 5
+          "Benoetigt Hilfe beim Baden oder Duschen": 0
+
+      - id: bart_mobilitaet
+        label: "Gehen / Rollstuhl fahren"
+        type: choice
+        required: true
+        options:
+          - "Unabhaengiges Gehen ueber 50 m; Hilfsmittel erlaubt, kein Gehwagen erlaubt"
+          - "Geringe Hilfe oder Ueberwachung erforderlich; kann mit Hilfsmittel 50 m gehen"
+          - "Nicht selbstaendig beim Gehen, kann aber mindestens 50 m Rollstuhl fahren"
+          - "Nicht selbstaendig beim Gehen oder Rollstuhl fahren"
+        scores:
+          "Unabhaengiges Gehen ueber 50 m; Hilfsmittel erlaubt, kein Gehwagen erlaubt": 15
+          "Geringe Hilfe oder Ueberwachung erforderlich; kann mit Hilfsmittel 50 m gehen": 10
+          "Nicht selbstaendig beim Gehen, kann aber mindestens 50 m Rollstuhl fahren": 5
+          "Nicht selbstaendig beim Gehen oder Rollstuhl fahren": 0
+
+      - id: bart_treppensteigen
+        label: "Treppensteigen"
+        type: choice
+        required: true
+        options:
+          - "Unabhaengig bei der Bewaeltigung einer Treppe mit mehreren Stufen"
+          - "Benoetigt Hilfe oder Ueberwachung beim Treppensteigen"
+          - "Treppensteigen nicht moeglich"
+        scores:
+          "Unabhaengig bei der Bewaeltigung einer Treppe mit mehreren Stufen": 10
+          "Benoetigt Hilfe oder Ueberwachung beim Treppensteigen": 5
+          "Treppensteigen nicht moeglich": 0
+
+      - id: bart_ankleiden
+        label: "An- und Auskleiden"
+        type: choice
+        required: true
+        options:
+          - "Unabhaengig beim An- und Auskleiden, gegebenenfalls auch mit Korsett oder Bruchband"
+          - "Benoetigt Hilfe, kann aber 50 Prozent der Taetigkeiten selbst verrichten"
+          - "Voellig abhaengig"
+        scores:
+          "Unabhaengig beim An- und Auskleiden, gegebenenfalls auch mit Korsett oder Bruchband": 10
+          "Benoetigt Hilfe, kann aber 50 Prozent der Taetigkeiten selbst verrichten": 5
+          "Voellig abhaengig": 0
+
+      - id: bart_stuhlkontrolle
+        label: "Stuhlkontrolle"
+        type: choice
+        required: true
+        options:
+          - "Kontinent"
+          - "Teilweise inkontinent"
+          - "Inkontinent"
+        scores:
+          "Kontinent": 10
+          "Teilweise inkontinent": 5
+          "Inkontinent": 0
+
+      - id: bart_harnkontrolle
+        label: "Harnkontrolle"
+        type: choice
+        required: true
+        options:
+          - "Kontinent"
+          - "Teilweise inkontinent"
+          - "Inkontinent"
+        scores:
+          "Kontinent": 10
+          "Teilweise inkontinent": 5
+          "Inkontinent": 0
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: bart_summe
+        label: "Barthel-Gesamtpunktzahl"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - bart_essen
+            - bart_transfer
+            - bart_waschen
+            - bart_toilettenbenutzung
+            - bart_baden
+            - bart_mobilitaet
+            - bart_treppensteigen
+            - bart_ankleiden
+            - bart_stuhlkontrolle
+            - bart_harnkontrolle
+          minimum: 0
+          maximum: 100
+
+      - id: bart_eingruppierung
+        label: "Eingruppierung"
+        type: derived
+        source: bart_summe
+        ranges:
+          - minimum: 0
+            maximum: 30
+            status: "Weitgehend pflegeabhaengig"
+
+          - minimum: 35
+            maximum: 80
+            status: "Hilfsbeduerftig"
+
+          - minimum: 85
+            maximum: 95
+            status: "Punktuell hilfsbeduerftig"
+
+          - minimum: 100
+            maximum: 100
+            status: "Weitgehend oder komplett selbststaendig"
+
+gdt:
+  sections:
+    - title: "Barthel-Index"
+      elements:
+        - type: score
+          source: bart_summe
+          label: "Gesamtpunktzahl"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: bart_eingruppierung

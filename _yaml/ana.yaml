@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.3.0
+# Version 2.3.5
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -51,11 +51,24 @@
 #            when:
 #              id: asthma
 #              equals: true
+# - 2.3.1: PHQ-2 vor den Hilfsmitteln ergaenzt; ab 3 Punkten folgt der PHQ-9.
+#          Folgeformulare fuer aktive Raucher (Fagerstroem), Alkohol oft/taeglich/frueher
+#          (ALKA), COPD (CAT) und Asthma (ACT) konfiguriert.
+#          Alkoholoption "oft" sowie das zuvor fehlende Auswahlfeld wiederhergestellt.
+# - 2.3.2: PHQ-2-Fragen sind im Anamnesebogen freiwillig. Die Diagnoseangaben
+#          Rauchen und Alkoholkrankheit starten zusaetzlich Fagerstroem bzw. ALKA.
+# - 2.3.3: Formular-IDs ana und anam explizit deklariert, damit beide
+#          entsprechenden GDT-Auftragsnamen denselben Anamnesebogen starten.
+# - 2.3.4: Alkohol- und Drogendetails bleiben bei leerer Auswahl sowie bei
+#          "nein" geschlossen und erscheinen erst nach Auswahl eines Konsums.
+# - 2.3.5: Raucherdetails bleiben bei leerer Auswahl sowie bei "nein"
+#          geschlossen und erscheinen erst bei "ja" oder "ex-raucher".
 
 meta:
   title: "Anamnese"
-  version: "2.3.0"
+  version: "2.3.5"
   language: "de"
+  form_ids: [ana, anam]
 
 # Folgeformulare werden nach dem Absenden als neue -i.gdt angelegt.
 # Die Ziel-YAML-Datei muss im selben Formular-Share vorhanden sein.
@@ -66,7 +79,41 @@ meta:
 #       id: asthma
 #       equals: true
 
-follow_up_forms: []
+follow_up_forms:
+  - form: fage
+    when:
+      id: raucher
+      equals: ja
+
+  - form: fage
+    when:
+      id: rauchen_checklist
+      equals: true
+
+  - form: phq9
+    when:
+      id: phq2_summe
+      greater_than_or_equal: 3
+
+  - form: alka
+    when:
+      id: alkohol
+      in: [oft, taeglich, frueher]
+
+  - form: alka
+    when:
+      id: alkoholkrankheit
+      equals: true
+
+  - form: cat
+    when:
+      id: copd
+      equals: true
+
+  - form: act
+    when:
+      id: asthma
+      equals: true
 
 sections:
 
@@ -327,6 +374,48 @@ sections:
         multiline: true
 
 
+  - title: "Depressive Beschwerden (PHQ-2)"
+    questions:
+      - id: phq2_interesse
+        label: "Wenig Interesse oder Freude an Ihren Taetigkeiten"
+        type: choice
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq2_niedergeschlagenheit
+        label: "Niedergeschlagenheit, Schwermut oder Hoffnungslosigkeit"
+        type: choice
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq2_summe
+        label: "PHQ-2-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - phq2_interesse
+            - phq2_niedergeschlagenheit
+          minimum: 0
+          maximum: 6
+
+
   - title: "Hilfsmittel"
     questions:
       - id: hilfsmittel_verwendet
@@ -412,61 +501,62 @@ sections:
         type: number
         show_if:
           id: raucher
-          not_equals: nein
+          in: [ja, ex-raucher]
 
       - id: rauchen_jahre
         label: "Anzahl Jahre gesamt"
         type: number
         show_if:
           id: raucher
-          not_equals: nein
+          in: [ja, ex-raucher]
 
       - id: packyears
         label: "Packyears"
         type: derived
         show_if:
           id: raucher
-          not_equals: nein
+          in: [ja, ex-raucher]
 
       - id: rauchen_rauchpausen_anzahl
         label: "Wie oft aufgehoert?"
         type: number
         show_if:
           id: raucher
-          not_equals: nein
+          in: [ja, ex-raucher]
 
       - id: rauchen_rauchpausen_details
         label: "Wie lange maximal bisher?"
         type: text
         show_if:
           id: raucher
-          not_equals: nein
+          in: [ja, ex-raucher]
+
 
       - id: alkohol
         label: "Alkoholkonsum"
         type: choice
-        options: [nein, gelegentlich, taeglich, frueher]
+        options: [nein, gelegentlich, oft, taeglich, frueher]
 
       - id: alkohol_jahre_konsum
         label: "Anzahl Jahre Konsum (Alkohol)"
         type: number
         show_if:
           id: alkohol
-          not_equals: nein
+          in: [gelegentlich, oft, taeglich, frueher]
 
       - id: alkohol_getraenke_woche
         label: "Getraenke pro Woche"
         type: text
         show_if:
           id: alkohol
-          not_equals: nein
+          in: [gelegentlich, oft, taeglich, frueher]
 
       - id: alkohol_entzugsbehandlungen
         label: "Anzahl Entzugsbehandlungen (Alkohol)"
         type: number
         show_if:
           id: alkohol
-          not_equals: nein
+          in: [gelegentlich, oft, taeglich, frueher]
 
       - id: drogenkonsum
         label: "Substanzen (z. B. Drogen, Anabolika)"
@@ -478,14 +568,14 @@ sections:
         type: number
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          in: [gelegentlich, taeglich, frueher]
 
       - id: drogen
         label: "Substanzen"
         type: multiselect
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          in: [gelegentlich, taeglich, frueher]
         options:
           - Cannabis
           - Kokain
@@ -507,14 +597,14 @@ sections:
         type: yesno
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          in: [gelegentlich, taeglich, frueher]
 
       - id: drogen_konsumform
         label: "Konsumform"
         type: multiselect
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          in: [gelegentlich, taeglich, frueher]
         options:
           - oral
           - "rauchen / inhalativ"
@@ -526,7 +616,7 @@ sections:
         type: number
         show_if:
           id: drogenkonsum
-          not_equals: nein
+          in: [gelegentlich, taeglich, frueher]
 
 
   - title: "Haeufige gesundheitliche Probleme"

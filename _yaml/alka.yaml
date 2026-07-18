@@ -1,0 +1,253 @@
+# alka.yaml
+# AUDIT-Fragebogen
+# Version 1.0.1
+# Autor: Dr. Thomas Kienzle
+#
+# Ein Glas Alkohol entspricht:
+# - 0,33 Liter Bier
+# - 0,25 Liter Wein oder Sekt
+# - 0,02 Liter Spirituosen
+#
+# Auswertung:
+# - Die Punkte der zehn Antworten werden zum AUDIT-Gesamtscore addiert.
+# - Der Summenwert liegt zwischen 0 und 40 Punkten.
+# - Ab 8 Punkten besteht der Verdacht auf eine alkoholbezogene Störung.
+# - Mit höherem Score steigt die Wahrscheinlichkeit einer Abhängigkeit.
+# - Kritischer Wert: 15 bis 20 Punkte.
+#
+# Changelog:
+# - 1.0.1: Allgemeine Summen-, Grenzwert- und GDT-Auswertung.
+# - 1.0.0: Erste Fassung des AUDIT-Fragebogens.
+
+meta:
+  title: "AUDIT-Fragebogen"
+  subtitle: "Fragebogen zum Alkoholkonsum"
+  version: "1.0.1"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Alkoholkonsum"
+    description: "Ein Glas Alkohol entspricht 0,33 Liter Bier, 0,25 Liter Wein oder Sekt beziehungsweise 0,02 Liter Spirituosen."
+    gdt_output: false
+    questions:
+      - id: alka_haeufigkeit
+        label: "Wie oft trinken Sie Alkohol?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Etwa einmal pro Monat"
+          - "2- bis 4-mal pro Monat"
+          - "2- bis 3-mal pro Woche"
+          - "4-mal oder öfter pro Woche"
+        scores:
+          "Nie": 0
+          "Etwa einmal pro Monat": 1
+          "2- bis 4-mal pro Monat": 2
+          "2- bis 3-mal pro Woche": 3
+          "4-mal oder öfter pro Woche": 4
+
+      - id: alka_menge
+        label: "Wenn Sie an einem Tag Alkohol trinken, wie viele alkoholhaltige Getränke trinken Sie dann typischerweise?"
+        type: choice
+        required: true
+        options:
+          - "1 oder 2"
+          - "3 oder 4"
+          - "5 oder 6"
+          - "7 oder 8"
+          - "10 oder mehr"
+        scores:
+          "1 oder 2": 0
+          "3 oder 4": 1
+          "5 oder 6": 2
+          "7 oder 8": 3
+          "10 oder mehr": 4
+
+      - id: alka_mehr_als_sechs
+        label: "Wie oft haben Sie an einem Tag mehr als 6 alkoholische Getränke getrunken?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_mehr_als_gewollt
+        label: "Wie oft haben Sie im letzten Jahr festgestellt, dass Sie mehr getrunken haben, als Sie eigentlich wollten?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_aufgabe_nicht_erledigt
+        label: "Wie oft haben Sie im letzten Jahr im Zusammenhang mit dem Alkoholtrinken eine Aufgabe nicht erledigt, die man eigentlich von Ihnen erwartet hatte?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_morgens
+        label: "Wie oft haben Sie im letzten Jahr morgens Alkohol getrunken, um in Schwung zu kommen?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_schuldgefuehl
+        label: "Wie oft fühlten Sie sich im letzten Jahr schuldig oder hatten ein schlechtes Gewissen aufgrund Ihres Alkoholtrinkens?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_erinnerungsluecken
+        label: "Wie oft waren Sie im letzten Jahr aufgrund des Alkoholtrinkens nicht in der Lage, sich an Ereignisse der letzten Nacht zu erinnern?"
+        type: choice
+        required: true
+        options:
+          - "Nie"
+          - "Seltener als einmal pro Monat"
+          - "Einmal im Monat"
+          - "Einmal pro Woche"
+          - "Täglich oder fast täglich"
+        scores:
+          "Nie": 0
+          "Seltener als einmal pro Monat": 1
+          "Einmal im Monat": 2
+          "Einmal pro Woche": 3
+          "Täglich oder fast täglich": 4
+
+      - id: alka_verletzung
+        label: "Wurden Sie oder jemand anderes schon einmal verletzt, weil Sie Alkohol getrunken hatten?"
+        type: choice
+        required: true
+        options:
+          - "Nein"
+          - "Ja, aber nicht im letzten Jahr"
+          - "Ja, im letzten Jahr"
+        scores:
+          "Nein": 0
+          "Ja, aber nicht im letzten Jahr": 2
+          "Ja, im letzten Jahr": 4
+
+      - id: alka_sorge_anderer
+        label: "Hat sich schon einmal ein Verwandter, ein Freund, ein Arzt oder jemand anderes über Ihr Alkoholtrinken Sorgen gemacht oder Ihnen vorgeschlagen, weniger zu trinken?"
+        type: choice
+        required: true
+        options:
+          - "Nein"
+          - "Ja, aber nicht im letzten Jahr"
+          - "Ja, im letzten Jahr"
+        scores:
+          "Nein": 0
+          "Ja, aber nicht im letzten Jahr": 2
+          "Ja, im letzten Jahr": 4
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: alka_summe
+        label: "AUDIT-Gesamtscore"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - alka_haeufigkeit
+            - alka_menge
+            - alka_mehr_als_sechs
+            - alka_mehr_als_gewollt
+            - alka_aufgabe_nicht_erledigt
+            - alka_morgens
+            - alka_schuldgefuehl
+            - alka_erinnerungsluecken
+            - alka_verletzung
+            - alka_sorge_anderer
+          minimum: 0
+          maximum: 40
+
+      - id: alka_bewertung
+        label: "Bewertung"
+        type: derived
+        source: alka_summe
+        ranges:
+          - minimum: 0
+            maximum: 7
+            status: "AUDIT-Grenzwert nicht erreicht"
+
+          - minimum: 8
+            maximum: 14
+            status: "Verdacht auf eine alkoholbezogene Stoerung"
+
+          - minimum: 15
+            maximum: 20
+            status: "Kritischer AUDIT-Wert; Verdacht auf eine alkoholbezogene Stoerung"
+
+          - minimum: 21
+            maximum: 40
+            status: "Sehr hoher AUDIT-Wert; erhoehte Wahrscheinlichkeit einer Alkoholabhaengigkeit"
+
+gdt:
+  sections:
+    - title: "AUDIT"
+      elements:
+        - type: score
+          source: alka_summe
+          label: "Gesamtpunktzahl"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: alka_bewertung

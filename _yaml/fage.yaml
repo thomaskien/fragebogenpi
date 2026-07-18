@@ -1,0 +1,179 @@
+# fage.yaml
+# Fagerstroem-Test fuer Nikotinabhaengigkeit (FTND)
+# Version 1.0.1
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der sechs Antworten werden zur Fagerstroem-Summe addiert.
+# - Der Summenwert liegt zwischen 0 und 10 Punkten.
+#
+# Schwereeinteilung:
+# - 0 bis 2 Punkte: Geringe Abhaengigkeit
+# - 3 bis 5 Punkte: Mittlere Abhaengigkeit
+# - 6 bis 7 Punkte: Starke Abhaengigkeit
+# - 8 bis 10 Punkte: Sehr starke Abhaengigkeit
+#
+# Changelog:
+# - 1.0.1: Allgemeine Score-Auswertung mit Abhaengigkeitsstufe und
+#   auffaelligen Problemfeldern fuer die GDT-Ausgabe.
+# - 1.0.0: Erste Fassung des Fagerstroem-Tests.
+
+meta:
+  title: "Fagerstroem-Test fuer Nikotinabhaengigkeit (FTND)"
+  subtitle: "Erfassung der koerperlichen Nikotinabhaengigkeit"
+  version: "1.0.1"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Nikotinabhaengigkeit"
+    gdt_output: false
+    questions:
+      - id: fage_erste_zigarette
+        label: "Wann nach dem Aufwachen rauchen Sie Ihre erste Zigarette?"
+        type: choice
+        required: true
+        problem_label: "Erste Zigarette innerhalb von 30 Minuten nach dem Aufwachen"
+        options:
+          - "Innerhalb von 5 Minuten"
+          - "Innerhalb von 6 bis 30 Minuten"
+          - "Innerhalb von 30 bis 60 Minuten"
+          - "Es dauert laenger als 60 Minuten"
+        scores:
+          "Innerhalb von 5 Minuten": 3
+          "Innerhalb von 6 bis 30 Minuten": 2
+          "Innerhalb von 30 bis 60 Minuten": 1
+          "Es dauert laenger als 60 Minuten": 0
+
+      - id: fage_rauchverbot
+        label: "Finden Sie es schwierig, an Orten, an denen das Rauchen verboten ist (z. B. in der Kirche, in der Bibliothek oder im Kino), das Rauchen sein zu lassen?"
+        type: choice
+        required: true
+        problem_label: "Rauchverzicht an verbotenen Orten schwierig"
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: fage_unverzichtbare_zigarette
+        label: "Auf welche Zigarette wuerden Sie nicht verzichten wollen?"
+        type: choice
+        required: true
+        problem_label: "Erste Zigarette am Morgen unverzichtbar"
+        options:
+          - "Die erste am Morgen"
+          - "Eine andere"
+        scores:
+          "Die erste am Morgen": 1
+          "Eine andere": 0
+
+      - id: fage_zigaretten_pro_tag
+        label: "Wie viele Zigaretten rauchen Sie durchschnittlich pro Tag?"
+        type: choice
+        required: true
+        problem_label: "Mehr als 20 Zigaretten pro Tag"
+        options:
+          - "Mehr als 30"
+          - "21 bis 30"
+          - "11 bis 20"
+          - "0 bis 10"
+        scores:
+          "Mehr als 30": 3
+          "21 bis 30": 2
+          "11 bis 20": 1
+          "0 bis 10": 0
+
+      - id: fage_morgens_mehr
+        label: "Rauchen Sie in den ersten Stunden nach dem Erwachen im Allgemeinen mehr als am Rest des Tages?"
+        type: choice
+        required: true
+        problem_label: "Verstaerktes Rauchen am Morgen"
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+      - id: fage_bei_krankheit
+        label: "Kommt es vor, dass Sie rauchen, wenn Sie krank sind und tagsueber im Bett bleiben muessen?"
+        type: choice
+        required: true
+        problem_label: "Rauchen auch bei Krankheit und Bettruhe"
+        options:
+          - "Ja"
+          - "Nein"
+        scores:
+          "Ja": 1
+          "Nein": 0
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: fage_summe
+        label: "Fagerstroem-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - fage_erste_zigarette
+            - fage_rauchverbot
+            - fage_unverzichtbare_zigarette
+            - fage_zigaretten_pro_tag
+            - fage_morgens_mehr
+            - fage_bei_krankheit
+          minimum: 0
+          maximum: 10
+
+      - id: fage_bewertung
+        label: "Bewertung"
+        type: derived
+        source: fage_summe
+        ranges:
+          - minimum: 0
+            maximum: 2
+            status: "Geringe Nikotinabhaengigkeit"
+
+          - minimum: 3
+            maximum: 5
+            status: "Mittlere Nikotinabhaengigkeit"
+
+          - minimum: 6
+            maximum: 7
+            status: "Starke Nikotinabhaengigkeit"
+
+          - minimum: 8
+            maximum: 10
+            status: "Sehr starke Nikotinabhaengigkeit"
+
+gdt:
+  sections:
+    - title: "Fagerstroem-Test"
+      elements:
+        - type: score
+          source: fage_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+        - type: interpretation
+          source: fage_bewertung
+        - type: problem_list
+          title: "Problemfelder"
+          fields:
+            - id: fage_erste_zigarette
+              minimum_score: 2
+            - id: fage_rauchverbot
+              minimum_score: 1
+            - id: fage_unverzichtbare_zigarette
+              minimum_score: 1
+            - id: fage_zigaretten_pro_tag
+              minimum_score: 2
+            - id: fage_morgens_mehr
+              minimum_score: 1
+            - id: fage_bei_krankheit
+              minimum_score: 1

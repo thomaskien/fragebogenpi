@@ -3,13 +3,13 @@
  * datenschutz.php
  * fragebogenpi.de - Datenschutz/DSGVO-Unterschrift auf dem iPad
  *
- * Version: 1.0
+ * Version: 1.1
  * Autor: Dr. Thomas Kienzle
  *
  * Changelog (vollstaendig):
  * - v1.0:
  *   + Erstversion als konservatives fragebogenpi-Modul.
- *   + Feste Dateinamen: dsgvo-in.gdt und dsgvo-out.gdt.
+ *   + Urspruengliche feste Dateinamen: dsgvo-in.gdt und dsgvo-out.gdt.
  *   + YAML-Konfiguration ueber datenschutz.yaml.
  *   + iPad-taugliche Weboberflaeche mit Unterschriftsfeld per Canvas.
  *   + Serverseitige PDF-Erzeugung ueber extern installiertes TCPDF-Paket.
@@ -18,17 +18,63 @@
  *   + PDF-Rueckgabe per GDT-Dateiverweis nach Muster aus befund.php.
  *   + GDT-Grundstruktur, Patientendaten und 3000/0193-Logik angelehnt an anamnesebogen.php.
  *   + Zeitstempel/Protokollinformationen im PDF-Footer.
+ * - v1.0.1-test:
+ *   + YAML aus dem zentralen Formularverzeichnis, mit lokaler Test-Fallbackdatei.
+ *   + Unterschrift und erfolgreiche PDF-Erzeugung sind zwingend.
+ *   + Optionale E-Mail-Einwilligung wird als Ja/Nein in der PDF dokumentiert.
+ *   + PDF-Import per GDT 6302-6305 an den funktionierenden Befundbildweg angeglichen.
+ * - v1.0.2-test:
+ *   + Transparenter Aufruf durch tablet.php mit Rueckkehr zur Tablet-Warteschlange.
+ *   + Dateinamen zunaechst auf dsgv-in.gdt und dsgv-out.gdt geaendert.
+ *   + Unterschriftsbereich dauerhaft am unteren Bildschirmrand fixiert.
+ * - v1.0.3-test:
+ *   + Zweite optionale Einwilligung fuer SMS ergaenzt.
+ *   + SMS- und E-Mail-Status werden gemeinsam in PDF und GDT dokumentiert.
+ * - v1.0.4-test:
+ *   + Dateinamen auf dsgv-i.gdt und dsgv-o.gdt vereinheitlicht.
+ *   + SMS- und E-Mail-Checkbox bleiben zusammen mit dem Unterschriftsfeld fixiert.
+ * - v1.0.5-test:
+ *   + Unterschrift mit Touch- und Maus-Fallback fuer aeltere Tablet-Browser.
+ *   + Fixierter Bereich ohne CSS-Transform, damit Formularelemente anklickbar bleiben.
+ *   + Unterschriftsfeld erhoeht und Einwilligungstexte einzeilig dargestellt.
+ * - v1.0.6-test:
+ *   + Erklaerungstext wieder als eigener abgegrenzter Scrollbereich.
+ *   + Scrollen der gesamten Seite verhindert; Einwilligungen und Unterschrift bleiben stehen.
+ * - v1.0.7-test:
+ *   + Gesamter oberer Bereich einschliesslich Patientendaten gemeinsam scrollbar.
+ *   + Beide Einwilligungscheckboxen linksbuendig nebeneinander angeordnet.
+ * - v1.0.8-test:
+ *   + Separaten Momentum-Scrollcontainer entfernt, der auf alten iPads Touch am
+ *     darin verschachtelten fixierten Unterschriftsfeld blockieren konnte.
+ *   + Oberen Seitenbereich normal scrollbar und Unterschriftsfeld deutlich hoeher.
+ * - v1.0.9-test:
+ *   + Formularversion sichtbar in PDF-Inhalt und PDF-Fusszeile aufgenommen.
+ *   + Checkboxabstaende mit altbrowserkompatiblen Margins statt Flex-Gap.
+ * - v1.0.10-test:
+ *   + Automatisches Leeren der Unterschrift durch Browser-Resize-Ereignisse verhindert.
+ *   + Checkboxabstaende durch explizites Padding browserunabhaengig festgelegt.
+ * - v1.1:
+ *   + Technischen Teststand als stabile Programmversion 1.1 zusammengefuehrt.
+ *   + Versionssuffix "test" aus der sichtbaren PHP-Programmversion entfernt.
+ *   + Programm- und Formularversion werden gemeinsam im PDF-Footer ausgegeben.
+ *   + Deutlicher Hinweisbanner bleibt unabhaengig von der Versionsbezeichnung erhalten.
  */
 
 declare(strict_types=1);
 
 $APP_FOOTER = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.0 (datenschutz.php)';
+$APP_VERSION = 'v1.1 (datenschutz.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
-$REQUEST_GDT_NAME = 'dsgvo-in.gdt';
-$OUT_GDT_NAME = 'dsgvo-out.gdt';
-$YAML_PATH = __DIR__ . '/datenschutz.yaml';
+$requestedGdt = basename((string)($_GET['request_gdt'] ?? 'dsgv-i.gdt'));
+$REQUEST_GDT_NAME = preg_match('/^(?:[1-9]-)?dsgv-i\\.gdt$/', $requestedGdt) ? $requestedGdt : 'dsgv-i.gdt';
+$OUT_GDT_NAME = preg_replace('/-i\\.gdt$/', '-o.gdt', $REQUEST_GDT_NAME) ?: 'dsgv-o.gdt';
+$RETURN_TO = basename((string)($_GET['return_to'] ?? 'tablet.php'));
+if (!preg_match('/^tablet(?:[1-9])?\\.php$/', $RETURN_TO)) $RETURN_TO = 'tablet.php';
+$YAML_PATH = '/srv/fragebogenpi/formulare/datenschutz.yaml';
+if (!is_file($YAML_PATH) && is_file(__DIR__ . '/_yaml/datenschutz.yaml')) {
+    $YAML_PATH = __DIR__ . '/_yaml/datenschutz.yaml';
+}
 
 $DEFAULT_8315 = 'BOGI_GDT';
 $DEFAULT_8316 = 'BIMP_GDT';
@@ -117,7 +163,7 @@ function json_out(int $code, array $payload): void {
 
 function gdt_line(string $field4, string $value): string {
     $rest = $field4 . $value;
-    $len = 3 + strlen($rest) + 2; // +CRLF, wie anamnesebogen.php
+    $len = 3 + strlen($rest); // wie beim funktionierenden Befundbildimport
     return str_pad((string)$len, 3, '0', STR_PAD_LEFT) . $rest;
 }
 
@@ -281,7 +327,7 @@ if (!class_exists('DatenschutzTcpdf', false) && class_exists('TCPDF')) {
     }
 }
 
-function make_pdf(string $targetPath, array $yaml, array $patient, string $signaturePng, string $protocolFooter, string $appFooter): void {
+function make_pdf(string $targetPath, array $yaml, array $patient, string $signaturePng, bool $emailConsent, bool $smsConsent, string $protocolFooter, string $appFooter, string $appVersion): void {
     $err = require_tcpdf_or_error();
     if ($err !== null) throw new RuntimeException($err);
 
@@ -304,8 +350,12 @@ function make_pdf(string $targetPath, array $yaml, array $patient, string $signa
     if (!is_array($meta)) $meta = [];
     $pdfTitle = (string)($meta['pdf_title'] ?? $meta['title'] ?? 'Datenschutzerklaerung');
 
+    $formVersion = trim((string)($meta['version'] ?? ''));
+
     $pdf = new DatenschutzTcpdf('P', 'mm', 'A4', true, 'UTF-8', false);
-    $pdf->fragebogenFooter = $appFooter;
+    $pdf->fragebogenFooter = $appFooter
+        . ' | Programmversion: ' . $appVersion
+        . ($formVersion !== '' ? ' | Formularversion: ' . $formVersion : '');
     $pdf->protocolFooter = $protocolFooter;
     $pdf->SetCreator('fragebogenpi.de');
     $pdf->SetAuthor('fragebogenpi.de');
@@ -318,6 +368,23 @@ function make_pdf(string $targetPath, array $yaml, array $patient, string $signa
     $pdf->SetFont('dejavusans', 'B', 16);
     $pdf->Write(8, $pdfTitle);
     $pdf->Ln(10);
+
+    if ($formVersion !== '') {
+        $pdf->SetFont('dejavusans', '', 8);
+        $pdf->SetTextColor(90, 90, 90);
+        $pdf->Write(5, 'Formularversion: ' . $formVersion);
+        $pdf->Ln(7);
+        $pdf->SetTextColor(20, 20, 20);
+    }
+
+    $noticeBanner = trim((string)($meta['warning_notice'] ?? ''));
+    if ($noticeBanner !== '') {
+        $pdf->SetTextColor(176, 0, 32);
+        $pdf->SetFont('dejavusans', 'B', 10);
+        $pdf->MultiCell(0, 6, $noticeBanner, 1, 'L', false, 1);
+        $pdf->Ln(3);
+        $pdf->SetTextColor(20, 20, 20);
+    }
 
     $pdf->SetFont('dejavusans', '', 10);
     $patientHtml = '<table cellpadding="3" cellspacing="0" border="0">'
@@ -348,10 +415,22 @@ function make_pdf(string $targetPath, array $yaml, array $patient, string $signa
 
     $consent = $yaml['consent'] ?? [];
     if (!is_array($consent)) $consent = [];
-    $consentText = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschutzerklaerung gelesen und bestaetige die Kenntnisnahme.');
+    $emailLabel = (string)($consent['pdf_label'] ?? $consent['checkbox_label'] ?? 'Optionale E-Mail-Einwilligung');
+    $smsLabel = (string)($consent['sms_pdf_label'] ?? $consent['sms_checkbox_label'] ?? 'Optionale SMS-Einwilligung');
+    $emailStatus = $emailConsent ? 'JA' : 'NEIN';
+    $smsStatus = $smsConsent ? 'JA' : 'NEIN';
     $pdf->Ln(4);
     $pdf->SetFont('dejavusans', '', 10);
-    $pdf->writeHTML('<b>Bestaetigung:</b><br>' . nl2br(h($consentText)), true, false, true, false, '');
+    $pdf->writeHTML(
+        '<b>Optionale Kommunikationseinwilligungen:</b><br>'
+        . h($smsLabel) . ': ' . $smsStatus . '<br>'
+        . h($emailLabel) . ': ' . $emailStatus,
+        true,
+        false,
+        true,
+        false,
+        ''
+    );
 
     $pdf->Ln(6);
     $pdf->SetFont('dejavusans', 'B', 10);
@@ -418,7 +497,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$hasRequest) json_out(409, ['status'=>'error','message'=>'Keine Auftrags-GDT gefunden ('.$REQUEST_GDT_NAME.').']);
     if ($yamlError !== null) json_out(500, ['status'=>'error','message'=>$yamlError,'yaml'=>$YAML_PATH]);
     if ($ans3000 === '' && $ans0193 === '') json_out(422, ['status'=>'error','message'=>'Weder 3000 noch 0193 in der Auftrags-GDT vorhanden']);
-    if (($_POST['consent_ok'] ?? '') !== 'yes') json_out(400, ['status'=>'error','message'=>'Bestaetigung fehlt.']);
+    $emailConsent = (($_POST['email_consent'] ?? '') === 'yes');
+    $smsConsent = (($_POST['sms_consent'] ?? '') === 'yes');
 
     [$sigPng, $sigErr] = signature_data_to_png_file((string)($_POST['signature_data'] ?? ''));
     if ($sigErr !== null || $sigPng === null) json_out(400, ['status'=>'error','message'=>$sigErr ?? 'Unterschrift fehlt.']);
@@ -433,14 +513,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'birthdate' => $gebdat_ui,
             'patient_no' => req_to_utf8_for_ui($patientNoForFileRaw),
         ];
-        make_pdf($pdfPath, $yaml, $patient, $sigPng, $protocolFooter, $APP_FOOTER);
+        make_pdf($pdfPath, $yaml, $patient, $sigPng, $emailConsent, $smsConsent, $protocolFooter, $APP_FOOTER, $APP_VERSION);
         @unlink($sigPng);
-        $sha = is_file($pdfPath) ? hash_file('sha256', $pdfPath) : '';
+        if (!is_file($pdfPath) || filesize($pdfPath) === 0) {
+            throw new RuntimeException('PDF wurde nicht erfolgreich erzeugt.');
+        }
+        $sha = hash_file('sha256', $pdfPath) ?: '';
 
         $lines = [];
         $lines[] = gdt_line('8000', '6310');
         $lines[] = gdt_line('8100', '000000');
-        $lines[] = gdt_line('9218', '02.00');
+        $lines[] = gdt_line('8315', $ans8315);
+        $lines[] = gdt_line('8316', $ans8316);
+        $lines[] = gdt_line('9206', '2');
+        $lines[] = gdt_line('9218', '02.10');
         if ($ans3000 !== '') {
             $lines[] = gdt_line('3000', $ans3000);
         } elseif ($ans0193 !== '') {
@@ -450,21 +536,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($nachname_raw !== '') $lines[] = gdt_line('3101', req_value_passthrough($nachname_raw, 120));
         if ($vorname_raw !== '') $lines[] = gdt_line('3102', req_value_passthrough($vorname_raw, 120));
         if ($gebdat_raw !== '') $lines[] = gdt_line('3103', req_value_passthrough($gebdat_raw, 40));
-        $lines[] = gdt_line('8315', $ans8315);
-        $lines[] = gdt_line('8316', $ans8316);
         if ($req4109 !== '') $lines[] = gdt_line('4109', $req4109);
         if ($req4104 !== '') $lines[] = gdt_line('4104', $req4104);
-        if ($ans0193 !== '') $lines[] = gdt_line('6200', ascii_only($ANSWER_6200));
+        $lines[] = gdt_line('6200', ascii_only($ANSWER_6200));
         $lines[] = gdt_line('6201', ascii_only($ANSWER_6201));
         foreach (to_ascii_wrapped_lines('Datenschutzerklaerung unterschrieben am ' . date('d.m.Y H:i:s') . '.', $MAX_6228_BYTES) as $l) {
             $lines[] = gdt_line('6228', $l);
         }
+        $lines[] = gdt_line('6228', 'Datenschutzerklaerung:');
+        $lines[] = gdt_line('6228', 'SMS: ' . ($smsConsent ? 'JA' : 'NEIN') . ' //  eMail: ' . ($emailConsent ? 'JA' : 'NEIN'));
         $lines[] = gdt_line('6302', '000001');
         $lines[] = gdt_line('6303', 'PDF');
         $lines[] = gdt_line('6304', 'Datenschutzerklaerung');
         $lines[] = gdt_line('6305', $pdfName);
-        $lines[] = gdt_line('4109', date('Ymd'));
-        $lines[] = gdt_line('4121', '1');
+        $lines[] = gdt_line('9999', '');
 
         $outGdtPath = rtrim($dirGdt, '/') . '/' . $OUT_GDT_NAME;
         write_gdt_file($outGdtPath, $lines);
@@ -492,7 +577,9 @@ $doc = (isset($yaml['document']) && is_array($yaml['document'])) ? $yaml['docume
 $consent = (isset($yaml['consent']) && is_array($yaml['consent'])) ? $yaml['consent'] : [];
 $docHeading = (string)($doc['heading'] ?? ($meta['title'] ?? 'Datenschutzerklaerung'));
 $submitLabel = (string)($meta['submit_label'] ?? '✅ Datenschutzerklaerung unterschreiben und absenden');
-$checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschutzerklaerung gelesen und bestaetige die Kenntnisnahme.');
+$checkboxLabel = (string)($consent['checkbox_label'] ?? 'Optionale Einwilligung');
+$smsCheckboxLabel = (string)($consent['sms_checkbox_label'] ?? 'Kontakt per SMS erlauben (Optional)');
+$noticeBanner = trim((string)($meta['warning_notice'] ?? ''));
 ?>
 <!doctype html>
 <html lang="de">
@@ -504,7 +591,10 @@ $checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschut
 <title><?php echo h($UI_TITLE); ?></title>
 <style>
 :root{--bg:#f5f5f7;--card:#fff;--text:#1d1d1f;--muted:#6e6e73;--line:#d2d2d7;--accent:#0a7cff;--danger:#b00020;--ok:#0a7f37;}
-*{box-sizing:border-box} body{margin:0;padding:calc(env(safe-area-inset-top) + 22px) 18px 18px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:18px;line-height:1.45}.wrap{max-width:980px;margin:0 auto}.top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:14px}.brand{font-weight:700;font-size:22px}.ver{font-size:13px;color:var(--muted);text-align:right}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}h1{font-size:28px;margin:0 0 12px}h2{font-size:22px;margin:22px 0 8px}.muted{color:var(--muted)}.patient{display:grid;grid-template-columns:190px 1fr;gap:6px 14px}.err{color:var(--danger);font-weight:700}.ok{color:var(--ok);font-weight:700}.doc-text{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff}.doc-text p{margin:0 0 12px}.sigbox{border:2px solid var(--line);border-radius:12px;background:#fff;overflow:hidden;touch-action:none}.sigbox canvas{display:block;width:100%;height:240px;touch-action:none}.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{appearance:none;border:0;border-radius:12px;padding:13px 18px;font-size:18px;font-weight:700;background:var(--accent);color:white}button.secondary{background:#e5e5ea;color:#111}button.danger{background:var(--danger)}button:disabled{opacity:.45}.checkline{display:flex;gap:12px;align-items:flex-start;margin-top:14px}.checkline input{width:26px;height:26px;margin-top:2px}.footer{font-size:13px;color:var(--muted);text-align:center;margin:20px 0 4px}@media(max-width:650px){body{font-size:17px;padding-left:12px;padding-right:12px}.patient{grid-template-columns:1fr}.top{display:block}.ver{text-align:left;margin-top:4px}.sigbox canvas{height:220px}}
+*{box-sizing:border-box} html,body{min-height:100%} body{margin:0;padding:calc(env(safe-area-inset-top) + 22px) 18px 430px;overflow-y:auto;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:18px;line-height:1.45}.wrap{max-width:980px;margin:0 auto}.top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:14px}.brand{font-weight:700;font-size:22px}.ver{font-size:13px;color:var(--muted);text-align:right}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}h1{font-size:28px;margin:0 0 12px}h2{font-size:22px;margin:22px 0 8px}.muted{color:var(--muted)}.patient{display:grid;grid-template-columns:190px 1fr;gap:6px 14px}.err{color:var(--danger);font-weight:700}.ok{color:var(--ok);font-weight:700}.testnotice{border:2px solid var(--danger);border-radius:12px;background:#fff3f2;color:var(--danger);font-weight:800;padding:12px;margin-bottom:14px}.doc-text{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff}.doc-text p{margin:0 0 12px}.signatureDock{position:fixed;left:12px;right:12px;bottom:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:1000;width:auto;max-width:980px;margin:0 auto;background:#fff;border:2px solid #0a7cff;border-radius:16px;padding:10px 14px;box-shadow:0 -8px 28px rgba(0,0,0,.18)}.signatureDock h2{font-size:18px;margin:0 0 6px}.consentLines{display:flex;justify-content:flex-start;margin-bottom:8px}.checkline+.checkline{margin-left:20px}.sigbox{position:relative;border:2px solid var(--line);border-radius:10px;background:#fff;overflow:hidden;touch-action:none}.sigbox canvas{display:block;width:100%;height:210px;touch-action:none}.btns{display:flex;display:grid;grid-template-columns:1fr 2fr 1fr;gap:8px;margin-top:8px}.btns button{width:auto;flex:1 1 auto}button{appearance:none;border:0;border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;background:var(--accent);color:white}button.secondary{background:#e5e5ea;color:#111}button.danger{background:var(--danger)}button:disabled{opacity:.45}.checkline{display:flex;align-items:center;margin:0;font-size:16px;line-height:1.15;white-space:nowrap}.checkline input{width:26px;height:26px;margin:0 8px 0 0;flex:0 0 auto}.signatureDock #status{margin:6px 0 0;font-size:14px}.footer{font-size:13px;color:var(--muted);text-align:center;margin:20px 0 4px}@media(max-width:650px){body{font-size:17px;padding-left:12px;padding-right:12px;padding-bottom:390px}.patient{grid-template-columns:1fr}.top{display:block}.ver{text-align:left;margin-top:4px}.signatureDock{left:6px;right:6px;padding:8px}.checkline+.checkline{margin-left:14px}.checkline{font-size:13px}.checkline input{width:23px;height:23px;margin-right:6px}.sigbox canvas{height:185px}.btns{grid-template-columns:1fr 1.6fr 1fr}button{font-size:14px;padding:10px 8px}}
+.warningNotice{border:2px solid var(--danger);border-radius:12px;background:#fff3f2;color:var(--danger);font-weight:800;padding:12px;margin-bottom:14px}
+.checkline input{margin:0}.checkText{display:inline-block;padding-left:8px}.checkline.smsConsentLine{margin-left:0;padding-left:28px}
+@media(max-width:650px){.checkText{padding-left:6px}.checkline.smsConsentLine{margin-left:0;padding-left:18px}}
 </style>
 </head>
 <body>
@@ -521,7 +611,7 @@ $checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschut
     <p>Erwarteter Dateiname: <code><?php echo h($REQUEST_GDT_NAME); ?></code></p>
     <p class="muted">Seite aktualisiert sich automatisch alle 3 Sekunden.</p>
   </div>
-  <script>setTimeout(()=>location.reload(),3000);</script>
+  <script>setTimeout(function(){ window.location.reload(); },3000);</script>
 <?php else: ?>
   <div class="card">
     <h1><?php echo h($docHeading); ?></h1>
@@ -536,6 +626,9 @@ $checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschut
     <div class="card err">YAML-Fehler: <?php echo h((string)$yamlError); ?></div>
   <?php else: ?>
     <form id="dsgvoForm" class="card" method="post">
+      <?php if ($noticeBanner !== ''): ?>
+        <div class="warningNotice"><?php echo h($noticeBanner); ?></div>
+      <?php endif; ?>
       <div class="doc-text">
         <?php foreach (yaml_text_blocks($yaml) as $block): ?>
           <?php if ($block['type'] === 'heading'): ?>
@@ -548,20 +641,27 @@ $checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschut
         <?php endforeach; ?>
       </div>
 
-      <label class="checkline">
-        <input type="checkbox" name="consent_ok" value="yes" required>
-        <span><?php echo h($checkboxLabel); ?></span>
-      </label>
-
-      <h2>Unterschrift</h2>
-      <div class="sigbox"><canvas id="sigCanvas"></canvas></div>
-      <input type="hidden" name="signature_data" id="signatureData" value="">
-      <div class="btns">
-        <button type="button" class="secondary" id="clearSig">Unterschrift loeschen</button>
-        <button type="submit" id="submitBtn"><?php echo h($submitLabel); ?></button>
-        <button type="button" class="danger" id="abortBtn">❌ Abbruch</button>
+      <div class="signatureDock">
+        <div class="consentLines">
+          <label class="checkline" for="emailConsent">
+            <input id="emailConsent" type="checkbox" name="email_consent" value="yes">
+            <span class="checkText"><?php echo h($checkboxLabel); ?></span>
+          </label>
+          <label class="checkline smsConsentLine" for="smsConsent">
+            <input id="smsConsent" type="checkbox" name="sms_consent" value="yes">
+            <span class="checkText"><?php echo h($smsCheckboxLabel); ?></span>
+          </label>
+        </div>
+        <h2>Unterschrift</h2>
+        <div class="sigbox"><canvas id="sigCanvas"></canvas></div>
+        <input type="hidden" name="signature_data" id="signatureData" value="">
+        <div class="btns">
+          <button type="button" class="secondary" id="clearSig">Unterschrift loeschen</button>
+          <button type="submit" id="submitBtn"><?php echo h($submitLabel); ?></button>
+          <button type="button" class="danger" id="abortBtn">❌ Abbruch</button>
+        </div>
+        <p id="status" class="muted"></p>
       </div>
-      <p id="status" class="muted"></p>
     </form>
   <?php endif; ?>
 <?php endif; ?>
@@ -571,68 +671,107 @@ $checkboxLabel = (string)($consent['checkbox_label'] ?? 'Ich habe die Datenschut
 
 <script>
 (function(){
-  const canvas = document.getElementById('sigCanvas');
+  var RETURN_TO = <?php echo json_encode($RETURN_TO, JSON_UNESCAPED_SLASHES); ?>;
+  var canvas = document.getElementById('sigCanvas');
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  let drawing = false, signed = false;
+  var ctx = canvas.getContext('2d');
+  var drawing = false;
+  var signed = false;
   function resize(){
-    const ratio = Math.max(window.devicePixelRatio || 1, 1);
-    const rect = canvas.getBoundingClientRect();
+    var ratio = Math.max(window.devicePixelRatio || 1, 1);
+    var rect = canvas.getBoundingClientRect();
     canvas.width = Math.round(rect.width * ratio);
     canvas.height = Math.round(rect.height * ratio);
-    ctx.setTransform(ratio,0,0,ratio,0,0);
+    if (ctx.setTransform) ctx.setTransform(ratio,0,0,ratio,0,0);
+    else ctx.scale(ratio,ratio);
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#111';
   }
   function pos(ev){
-    const r = canvas.getBoundingClientRect();
-    return {x: ev.clientX - r.left, y: ev.clientY - r.top};
+    var point = ev;
+    if (ev.touches && ev.touches.length) point = ev.touches[0];
+    else if (ev.changedTouches && ev.changedTouches.length) point = ev.changedTouches[0];
+    var r = canvas.getBoundingClientRect();
+    return {x: point.clientX - r.left, y: point.clientY - r.top};
   }
-  function start(ev){ drawing = true; signed = true; const p = pos(ev); ctx.beginPath(); ctx.moveTo(p.x,p.y); ev.preventDefault(); }
-  function move(ev){ if(!drawing) return; const p = pos(ev); ctx.lineTo(p.x,p.y); ctx.stroke(); ev.preventDefault(); }
-  function end(ev){ drawing = false; ev.preventDefault(); }
-  resize(); window.addEventListener('resize', resize);
-  canvas.addEventListener('pointerdown', start);
-  canvas.addEventListener('pointermove', move);
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
-  canvas.addEventListener('pointerleave', end);
-  document.getElementById('clearSig')?.addEventListener('click', function(){ resize(); signed=false; document.getElementById('signatureData').value=''; });
+  function stopDefault(ev){ if (ev && ev.preventDefault) ev.preventDefault(); }
+  function start(ev){ drawing = true; signed = true; var p = pos(ev); ctx.beginPath(); ctx.moveTo(p.x,p.y); stopDefault(ev); }
+  function move(ev){ if(!drawing) return; var p = pos(ev); ctx.lineTo(p.x,p.y); ctx.stroke(); stopDefault(ev); }
+  function end(ev){ if (!drawing) return; drawing = false; stopDefault(ev); }
+  resize();
+  if (window.PointerEvent) {
+    canvas.addEventListener('pointerdown', start, false);
+    canvas.addEventListener('pointermove', move, false);
+    canvas.addEventListener('pointerup', end, false);
+    canvas.addEventListener('pointercancel', end, false);
+    canvas.addEventListener('pointerleave', end, false);
+  } else {
+    canvas.addEventListener('touchstart', start, false);
+    canvas.addEventListener('touchmove', move, false);
+    canvas.addEventListener('touchend', end, false);
+    canvas.addEventListener('touchcancel', end, false);
+    canvas.addEventListener('mousedown', start, false);
+    canvas.addEventListener('mousemove', move, false);
+    canvas.addEventListener('mouseup', end, false);
+    canvas.addEventListener('mouseleave', end, false);
+  }
 
-  const form = document.getElementById('dsgvoForm');
-  const status = document.getElementById('status');
-  const submitBtn = document.getElementById('submitBtn');
-  form?.addEventListener('submit', async function(ev){
+  var clearBtn = document.getElementById('clearSig');
+  if (clearBtn) clearBtn.addEventListener('click', function(){ resize(); signed=false; document.getElementById('signatureData').value=''; }, false);
+
+  var form = document.getElementById('dsgvoForm');
+  var status = document.getElementById('status');
+  var submitBtn = document.getElementById('submitBtn');
+
+  function sendForm(formData, done){
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', window.location.href, true);
+    xhr.setRequestHeader('Cache-Control', 'no-store');
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState !== 4) return;
+      var data = {};
+      try { data = JSON.parse(xhr.responseText || '{}'); } catch (ignore) {}
+      done(xhr.status >= 200 && xhr.status < 300, data);
+    };
+    xhr.onerror = function(){ done(false, {message:'Netzwerkfehler'}); };
+    xhr.send(formData);
+  }
+
+  if (form) form.addEventListener('submit', function(ev){
     ev.preventDefault();
-    if (!form.reportValidity()) return;
+    if (form.checkValidity && !form.checkValidity()) {
+      if (form.reportValidity) form.reportValidity();
+      return;
+    }
     if (!signed) { alert('Bitte unterschreiben.'); return; }
     document.getElementById('signatureData').value = canvas.toDataURL('image/png');
     submitBtn.disabled = true;
     status.textContent = 'Wird gespeichert ...';
-    try {
-      const fd = new FormData(form);
-      const res = await fetch(location.href, {method:'POST', body:fd, cache:'no-store'});
-      const data = await res.json();
-      if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Fehler');
+    sendForm(new FormData(form), function(ok, data){
+      if (!ok || data.status !== 'ok') {
+        status.className = 'err';
+        status.textContent = 'Fehler: ' + (data.message || 'Uebertragung fehlgeschlagen');
+        submitBtn.disabled = false;
+        return;
+      }
       status.className = 'ok';
       status.textContent = 'Fertig. PDF: ' + data.pdf + ' | GDT: ' + data.answer_gdt;
-    } catch(e) {
-      status.className = 'err';
-      status.textContent = 'Fehler: ' + e.message;
-      submitBtn.disabled = false;
-    }
-  });
+      setTimeout(function(){ window.location.href = RETURN_TO; }, 1200);
+    });
+  }, false);
 
-  document.getElementById('abortBtn')?.addEventListener('click', async function(){
-    if (!confirm('Auftrag abbrechen und dsgvo-in.gdt loeschen?')) return;
-    const fd = new FormData(); fd.append('action','abort');
-    const res = await fetch(location.href, {method:'POST', body:fd, cache:'no-store'});
-    const data = await res.json().catch(()=>({message:'abgebrochen'}));
-    alert(data.message || 'abgebrochen');
-    location.reload();
-  });
+  var abortBtn = document.getElementById('abortBtn');
+  if (abortBtn) abortBtn.addEventListener('click', function(){
+    if (!confirm('Auftrag abbrechen und <?php echo h($REQUEST_GDT_NAME); ?> loeschen?')) return;
+    var fd = new FormData();
+    fd.append('action','abort');
+    sendForm(fd, function(ok, data){
+      alert(data.message || 'abgebrochen');
+      window.location.href = RETURN_TO;
+    });
+  }, false);
 })();
 </script>
 </body>

@@ -1,0 +1,196 @@
+# cat.yaml
+# COPD Assessment Test (CAT)
+# Version 1.0.2
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der acht Antworten werden zur CAT-Summe addiert.
+# - Der Summenwert liegt zwischen 0 und 40 Punkten.
+#
+# Schwereeinteilung:
+# - Weniger als 10 Punkte: Geringe Einschraenkung (wenig Symptome)
+# - 10 bis 20 Punkte: Mittlere Einschraenkung
+# - 21 bis 30 Punkte: Hohe Einschraenkung
+# - Mehr als 30 Punkte: Sehr hohe Einschraenkung
+#
+# Changelog:
+# - 1.0.2: Acht diskrete Slider von 0 bis 5, allgemeines GDT-Elementschema
+#   und formularseitige Problembezeichnungen ohne CAT-Sonderlogik in PHP.
+# - 1.0.1: Kompakte GDT-Auswertung mit Punktwert, Einschraenkungsstufe und
+#   Problemfeldern fuer alle Antworten mit 4 oder 5 Punkten.
+# - 1.0.0: Erste Fassung des CAT.
+
+meta:
+  title: "COPD Assessment Test (CAT)"
+  subtitle: "Fragebogen zur Erfassung der Lebensqualitaet bei COPD"
+  version: "1.0.2"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Auswirkungen der COPD"
+    gdt_output: false
+    questions:
+      - id: cat_husten
+        label: "Husten"
+        type: scale
+        required: true
+        problem_label: "Starker oder staendiger Husten"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich huste nie"
+          right_label: "Ich huste staendig"
+
+      - id: cat_verschleimung
+        label: "Verschleimung"
+        type: scale
+        required: true
+        problem_label: "Ausgepraegte Verschleimung"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich bin ueberhaupt nicht verschleimt"
+          right_label: "Ich bin voellig verschleimt"
+
+      - id: cat_brustenge
+        label: "Engegefuehl in der Brust"
+        type: scale
+        required: true
+        problem_label: "Starkes Engegefuehl in der Brust"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich spuere keinerlei Engegefuehl in der Brust"
+          right_label: "Ich spuere ein sehr starkes Engegefuehl in der Brust"
+
+      - id: cat_ausser_atem
+        label: "Ausser Atem bei Belastung"
+        type: scale
+        required: true
+        problem_label: "Starke Atemnot bei Belastung"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Beim Bergauf- oder Treppensteigen komme ich nicht ausser Atem"
+          right_label: "Beim Bergauf- oder Treppensteigen komme ich sehr ausser Atem"
+
+      - id: cat_aktivitaeten
+        label: "Einschraenkung bei haeuslichen Aktivitaeten"
+        type: scale
+        required: true
+        problem_label: "Starke Einschraenkung bei haeuslichen Aktivitaeten"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich bin bei meinen haeuslichen Aktivitaeten nicht eingeschraenkt"
+          right_label: "Ich bin bei meinen haeuslichen Aktivitaeten sehr stark eingeschraenkt"
+
+      - id: cat_haus_verlassen
+        label: "Bedenken, das Haus zu verlassen"
+        type: scale
+        required: true
+        problem_label: "Grosse Bedenken, das Haus zu verlassen"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich habe keine Bedenken, das Haus zu verlassen"
+          right_label: "Ich habe grosse Bedenken, das Haus zu verlassen"
+
+      - id: cat_schlaf
+        label: "Schlaf"
+        type: scale
+        required: true
+        problem_label: "Schlaf durch Lungenerkrankung deutlich beeintraechtigt"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich schlafe tief und fest"
+          right_label: "Wegen meiner Lungenerkrankung schlafe ich nicht tief und fest"
+
+      - id: cat_energie
+        label: "Energie"
+        type: scale
+        required: true
+        problem_label: "Deutlicher Energiemangel"
+        scale:
+          minimum: 0
+          maximum: 5
+          step: 1
+          left_label: "Ich bin voller Energie"
+          right_label: "Ich habe ueberhaupt keine Energie"
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: cat_summe
+        label: "CAT-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - cat_husten
+            - cat_verschleimung
+            - cat_brustenge
+            - cat_ausser_atem
+            - cat_aktivitaeten
+            - cat_haus_verlassen
+            - cat_schlaf
+            - cat_energie
+          minimum: 0
+          maximum: 40
+
+      - id: cat_bewertung
+        label: "Bewertung"
+        type: derived
+        source: cat_summe
+        ranges:
+          - minimum: 0
+            maximum: 9
+            status: "Geringe Einschraenkung durch COPD"
+
+          - minimum: 10
+            maximum: 20
+            status: "Mittlere Einschraenkung durch COPD"
+
+          - minimum: 21
+            maximum: 30
+            status: "Hohe Einschraenkung durch COPD"
+
+          - minimum: 31
+            maximum: 40
+            status: "Sehr hohe Einschraenkung durch COPD"
+
+gdt:
+  sections:
+    - title: "CAT"
+      elements:
+        - type: score
+          source: cat_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+        - type: interpretation
+          source: cat_bewertung
+        - type: problem_list
+          title: "Problemfelder"
+          minimum_score: 4
+          fields:
+            - cat_husten
+            - cat_verschleimung
+            - cat_brustenge
+            - cat_ausser_atem
+            - cat_aktivitaeten
+            - cat_haus_verlassen
+            - cat_schlaf
+            - cat_energie

@@ -1,0 +1,57 @@
+{
+  "geraet" : {
+    "konfiguration" : {
+      "name" : "Kopfschmerz",
+      "serviceId" : 0,
+      "eintragFachinformationstyp" : 1,
+      "gdtKonfiguration" : {
+        "gdtId" : "goe2_GDT",
+        "gdtAbsender" : "T2MED_PX",
+        "gdtKuerzel" : "MGRT",
+        "geraetVerfahren" : "ALLG0",
+        "testIdent" : null,
+        "zeichensatz" : "2",
+        "betriebsmodus" : 3,
+        "anzeigeZeitpunkt" : 1,
+        "einzelverarbeitung" : false,
+        "abweichendeImportdatei" : "goeb-o.gdt",
+        "abweichendeExportdatei" : "goeb-i.gdt",
+        "langzeitmessung" : false,
+        "serienmessung" : false,
+        "annahmeOhneMessauftrag" : true,
+        "dezimalzeichen" : 1,
+        "satzart" : 1,
+        "automatischeZuordnung" : 1
+      },
+      "dokumenteUebernehmen" : true,
+      "kurzeintragGewuenscht" : false,
+      "koerpermassStrukturiertUebernehmen" : true,
+      "kostentraegerIKUebertragen" : false,
+      "sswUebertragen" : true,
+      "telefonUebertragen" : true,
+      "emailUebertragen" : true,
+      "zeitpunktUebernehmen" : false,
+      "messauftragGruppenweitSuchen" : false,
+      "inhaltsbeschreibungUebernehmen" : false,
+      "anzahlDerZeilen" : 5,
+      "messergebnisPraesentationTyp" : 3,
+      "freieKategorieAuswertung" : 1,
+      "nachtraeglicheBefundung" : 1,
+      "verwendeteMessergebnisFelder" : [ ],
+      "gruppe" : null
+    },
+    "stationZuordnung" : {
+      "importverzeichnis" : "/Volumes/GDT",
+      "exportverzeichnis" : "/Volumes/GDT",
+      "programm" : "/System/Applications/TextEdit.app",
+      "parameter" : null,
+      "wiederaufrufProgramm" : null,
+      "wiederaufrufParameter" : null,
+      "verwendungszweck" : 1,
+      "separatKonfiguriert" : false,
+      "einleseverzoegerung" : null,
+      "messgeraetVerbergen" : false,
+      "netzwerkpfad" : true
+    }
+  }
+}

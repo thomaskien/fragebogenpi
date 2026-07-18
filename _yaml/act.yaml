@@ -1,0 +1,182 @@
+# act.yaml
+# Asthmakontrolltest (ACT) fuer Erwachsene
+# Version 1.0.2
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der fuenf Antworten werden zur ACT-Summe addiert.
+# - 20-25 Punkte: Asthma gut unter Kontrolle.
+# - 16-19 Punkte: Asthma nicht gut unter Kontrolle.
+# - 5-15 Punkte: Asthma sehr schlecht kontrolliert.
+#
+# Changelog:
+# - 1.0.2: Umstellung auf das allgemeine GDT-Elementschema mit
+#   formularseitigen Problembezeichnungen.
+# - 1.0.1: Kompakte GDT-Auswertung mit Punktwert, Kontrollstufe und
+#   Problemfeldern fuer alle Antworten mit 1 oder 2 Punkten.
+# - 1.0.0: Erste Fassung des ACT.
+
+meta:
+  title: "Asthmakontrolltest (ACT)"
+  subtitle: "Kontrolle des Asthmas in den letzten 4 Wochen"
+  version: "1.0.2"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Asthmakontrolle"
+    gdt_output: false
+    questions:
+      - id: act_alltag
+        label: "Wie oft hat Ihr Asthma Sie in den letzten 4 Wochen daran gehindert, bei der Arbeit, in der Schule/im Studium oder zu Hause so viel zu erledigen wie sonst?"
+        type: choice
+        required: true
+        problem_label: "Deutliche Einschraenkungen im Alltag"
+        options:
+          - "Immer"
+          - "Meistens"
+          - "Manchmal"
+          - "Selten"
+          - "Nie"
+        scores:
+          "Immer": 1
+          "Meistens": 2
+          "Manchmal": 3
+          "Selten": 4
+          "Nie": 5
+
+      - id: act_kurzatmigkeit
+        label: "Wie oft haben Sie in den letzten 4 Wochen unter Kurzatmigkeit gelitten?"
+        type: choice
+        required: true
+        problem_label: "Haeufige Kurzatmigkeit"
+        options:
+          - "Mehr als einmal am Tag"
+          - "Einmal am Tag"
+          - "3 bis 6 Mal pro Woche"
+          - "Ein- oder zweimal pro Woche"
+          - "Ueberhaupt nicht"
+        scores:
+          "Mehr als einmal am Tag": 1
+          "Einmal am Tag": 2
+          "3 bis 6 Mal pro Woche": 3
+          "Ein- oder zweimal pro Woche": 4
+          "Ueberhaupt nicht": 5
+
+      - id: act_nacht
+        label: "Wie oft sind Sie in den letzten 4 Wochen wegen Ihrer Asthmabeschwerden (pfeifendes Atemgeraeusch, Husten, Kurzatmigkeit, Engegefuehl oder Schmerzen in der Brust) nachts wach geworden oder morgens frueher als gewoehnlich aufgewacht?"
+        type: choice
+        required: true
+        problem_label: "Naechtliche Atemnot oder Asthmabeschwerden"
+        options:
+          - "4 oder mehr Naechte pro Woche"
+          - "2 oder 3 Naechte pro Woche"
+          - "Einmal pro Woche"
+          - "Ein- oder zweimal"
+          - "Ueberhaupt nicht"
+        scores:
+          "4 oder mehr Naechte pro Woche": 1
+          "2 oder 3 Naechte pro Woche": 2
+          "Einmal pro Woche": 3
+          "Ein- oder zweimal": 4
+          "Ueberhaupt nicht": 5
+
+      - id: act_notfallmedikament
+        label: "Wie oft haben Sie in den letzten 4 Wochen Ihr Notfallmedikament zur Inhalation (Spray, Vernebler, wie z. B. Salbutamol) eingesetzt?"
+        type: choice
+        required: true
+        problem_label: "Notfallmedikament haeufig eingesetzt"
+        options:
+          - "3 Mal oder oefter am Tag"
+          - "1 oder 2 Mal am Tag"
+          - "2 oder 3 Mal pro Woche"
+          - "Einmal pro Woche oder weniger"
+          - "Ueberhaupt nicht"
+        scores:
+          "3 Mal oder oefter am Tag": 1
+          "1 oder 2 Mal am Tag": 2
+          "2 oder 3 Mal pro Woche": 3
+          "Einmal pro Woche oder weniger": 4
+          "Ueberhaupt nicht": 5
+
+      - id: act_selbsteinschaetzung
+        label: "Wie gut hatten Sie in den letzten 4 Wochen Ihr Asthma unter Kontrolle?"
+        type: choice
+        required: true
+        problem_label: "Asthma subjektiv schlecht kontrolliert"
+        options:
+          - "Ueberhaupt nicht"
+          - "Schlecht"
+          - "Etwas"
+          - "Gut"
+          - "Voellig"
+        scores:
+          "Ueberhaupt nicht": 1
+          "Schlecht": 2
+          "Etwas": 3
+          "Gut": 4
+          "Voellig": 5
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: act_summe
+        label: "ACT-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - act_alltag
+            - act_kurzatmigkeit
+            - act_nacht
+            - act_notfallmedikament
+            - act_selbsteinschaetzung
+          minimum: 5
+          maximum: 25
+
+      - id: act_bewertung
+        label: "Bewertung"
+        type: derived
+        source: act_summe
+        ranges:
+          - minimum: 20
+            maximum: 25
+            title: "Herzlichen Glueckwunsch!"
+            status: "Asthma gut unter Kontrolle"
+            text: "Sie hatten Ihr Asthma waehrend der vergangenen 4 Wochen anscheinend unter Kontrolle! Bleiben Sie dennoch aufmerksam - wenn Sie Probleme mit Ihrem Asthma feststellen, sprechen Sie mit Ihrem Arzt."
+
+          - minimum: 16
+            maximum: 19
+            title: "Noch im Zielbereich"
+            status: "Asthma nicht gut unter Kontrolle"
+            text: "Sie hatten Ihr Asthma waehrend der vergangenen 4 Wochen teilweise unter Kontrolle. Besprechen Sie das mit Ihrem Arzt."
+
+          - maximum: 15
+            title: "Ausserhalb des Zielbereichs"
+            minimum: 5
+            status: "Asthma sehr schlecht kontrolliert"
+            text: "Sie hatten Ihr Asthma waehrend der vergangenen 4 Wochen nicht unter Kontrolle! Besprechen Sie das mit Ihrem Arzt."
+
+gdt:
+  sections:
+    - title: "ACT"
+      elements:
+        - type: score
+          source: act_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+        - type: interpretation
+          source: act_bewertung
+        - type: problem_list
+          title: "Problemfelder"
+          maximum_score: 2
+          fields:
+            - act_alltag
+            - act_kurzatmigkeit
+            - act_nacht
+            - act_notfallmedikament
+            - act_selbsteinschaetzung

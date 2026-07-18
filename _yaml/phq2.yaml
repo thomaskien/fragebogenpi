@@ -1,0 +1,101 @@
+# phq2.yaml
+# Gesundheitsfragebogen fuer Patienten (PHQ-2)
+# Version 1.0.1
+# Autor: Dr. Thomas Kienzle
+#
+# Auswertung:
+# - Die Punkte der beiden Antworten werden zur PHQ-2-Summe addiert.
+# - Der Summenwert liegt zwischen 0 und 6 Punkten.
+#
+# Grenzwert:
+# - Ab 3 Punkten ist der PHQ-2-Grenzwert erreicht.
+# - Ein Ergebnis ab 3 Punkten gilt als auffaellig und sollte weiter
+#   diagnostisch abgeklärt werden.
+#
+# Changelog:
+# - 1.0.1: Allgemeine Summen-, Grenzwert- und GDT-Auswertung.
+# - 1.0.0: Erste Fassung des PHQ-2.
+
+meta:
+  title: "Gesundheitsfragebogen fuer Patienten (PHQ-2)"
+  subtitle: "Beschwerden im Verlauf der letzten 2 Wochen"
+  version: "1.0.1"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Depressive Beschwerden"
+    gdt_output: false
+    questions:
+      - id: phq2_interesse
+        label: "Wenig Interesse oder Freude an Ihren Taetigkeiten"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+      - id: phq2_niedergeschlagenheit
+        label: "Niedergeschlagenheit, Schwermut oder Hoffnungslosigkeit"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "An einzelnen Tagen"
+          - "An mehr als der Haelfte der Tage"
+          - "Beinahe jeden Tag"
+        scores:
+          "Ueberhaupt nicht": 0
+          "An einzelnen Tagen": 1
+          "An mehr als der Haelfte der Tage": 2
+          "Beinahe jeden Tag": 3
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: phq2_summe
+        label: "PHQ-2-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - phq2_interesse
+            - phq2_niedergeschlagenheit
+          minimum: 0
+          maximum: 6
+
+      - id: phq2_bewertung
+        label: "Bewertung"
+        type: derived
+        source: phq2_summe
+        ranges:
+          - minimum: 0
+            maximum: 2
+            status: "PHQ-2-Grenzwert nicht erreicht"
+
+          - minimum: 3
+            maximum: 6
+            status: "PHQ-2 auffaellig; weitere diagnostische Abklaerung empfohlen"
+
+gdt:
+  sections:
+    - title: "PHQ-2"
+      elements:
+        - type: score
+          source: phq2_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: phq2_bewertung
