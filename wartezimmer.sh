@@ -3,11 +3,16 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.3
+# Version: 1.5.4
 # Stand:   2026-07-18
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
+# - 1.5.4:
+#   - Installer fragt vor der ersten Systemänderung, ob die Installation wirklich gestartet werden soll.
+#   - NetworkManager verwendet das tatsächlich erkannte WLAN-Interface statt festem wlan0.
+#   - WLAN-Ländereinstellung/Funk werden gesetzt beziehungsweise entsperrt; ein fehlendes Gerät wird diagnostiziert.
+#   - Die Firewall verwendet ebenfalls das erkannte WLAN-Interface.
 # - 1.0:
 #   - Basis: Desktop + Kiosk-Browser + Apache/PHP + Samba + Backend + JSON-Konfig.
 # - 1.1:
@@ -63,7 +68,7 @@ set -euo pipefail
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.3"
+VERSION="1.5.4"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -71,6 +76,7 @@ SERVER_CONFIG_DIR="/etc/fragebogenpi-wartezimmer"
 SERVER_CONFIG_JSON="${SERVER_CONFIG_DIR}/server.json"
 
 WLAN_SSID="fragebogenpi"
+WLAN_INTERFACE="wlan0"
 FRAGEBOGENPI_SERVER_IP="10.23.0.1"
 QUERY_INTERVAL_SECONDS="3"
 
@@ -94,6 +100,15 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     die "Bitte als root ausführen."
+  fi
+}
+
+confirm_installation() {
+  local ans=""
+  read -r -p "Installation wirklich starten? [y/N]: " ans
+  if [[ ! "$ans" =~ ^([yY]|yes|YES)$ ]]; then
+    say "Installation abgebrochen."
+    exit 0
   fi
 }
 
@@ -219,6 +234,33 @@ ask_hostname_and_set_robust() {
   fi
 }
 
+detect_wifi_interface() {
+  local iface=""
+  local sys_path
+
+  if command -v nmcli >/dev/null 2>&1; then
+    iface="$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | \
+      awk -F: '$2 == "wifi" && $1 != "" { print $1; exit }' || true)"
+  fi
+
+  if [[ -z "$iface" ]]; then
+    for sys_path in /sys/class/net/*; do
+      [[ -d "${sys_path}/wireless" ]] || continue
+      iface="${sys_path##*/}"
+      break
+    done
+  fi
+
+  if [[ -z "$iface" ]]; then
+    if command -v nmcli >/dev/null 2>&1; then
+      nmcli -f DEVICE,TYPE,STATE,CONNECTION device status >&2 || true
+    fi
+    die "Kein WLAN-Gerät erkannt. Bitte Hardware/Firmware prüfen und den Pi gegebenenfalls neu starten."
+  fi
+
+  WLAN_INTERFACE="$iface"
+}
+
 ask_wlan_enable_and_configure() {
   say "WLAN optional konfigurieren"
   local ans
@@ -246,22 +288,59 @@ ask_wlan_enable_and_configure() {
   [[ -n "$WLAN_SSID" ]] || die "SSID leer."
   (( ${#WLAN_SSID} <= 32 )) || die "SSID ist länger als 32 Zeichen."
 
+  if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_wifi_country DE >/dev/null 2>&1 || true
+  fi
+  if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock wifi >/dev/null 2>&1 || true
+  fi
+
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
-    say "Konfiguriere WLAN über NetworkManager"
+    nmcli networking on >/dev/null 2>&1 || true
+    nmcli radio wifi on >/dev/null 2>&1 || true
+  fi
+
+  detect_wifi_interface
+
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active NetworkManager >/dev/null 2>&1; then
+    say "Konfiguriere WLAN über NetworkManager (${WLAN_INTERFACE})"
     local connection_name="wartezimmer-wlan"
+    local attempt
+
+    nmcli device set "$WLAN_INTERFACE" managed yes >/dev/null 2>&1 || true
+    for attempt in {1..10}; do
+      if nmcli -t -f DEVICE,TYPE device status 2>/dev/null | \
+          grep -Fqx "${WLAN_INTERFACE}:wifi"; then
+        break
+      fi
+      sleep 1
+    done
+
+    if ! nmcli -t -f DEVICE,TYPE device status 2>/dev/null | \
+        grep -Fqx "${WLAN_INTERFACE}:wifi"; then
+      nmcli -f DEVICE,TYPE,STATE,CONNECTION device status >&2 || true
+      die "NetworkManager erkennt ${WLAN_INTERFACE} nicht als WLAN-Gerät."
+    fi
+
     if nmcli -t -f NAME connection show | grep -Fxq "$connection_name"; then
-      nmcli connection modify "$connection_name" 802-11-wireless.ssid "$WLAN_SSID"
+      nmcli connection modify "$connection_name" \
+        connection.interface-name "$WLAN_INTERFACE" \
+        802-11-wireless.ssid "$WLAN_SSID"
     else
-      nmcli connection add type wifi ifname wlan0 con-name "$connection_name" ssid "$WLAN_SSID"
+      nmcli connection add type wifi ifname "$WLAN_INTERFACE" con-name "$connection_name" ssid "$WLAN_SSID"
     fi
     nmcli connection modify "$connection_name" \
+      connection.interface-name "$WLAN_INTERFACE" \
       connection.autoconnect yes \
       802-11-wireless.mode infrastructure \
       802-11-wireless-security.key-mgmt wpa-psk \
       802-11-wireless-security.psk "$pass1" \
       ipv4.method auto \
       ipv6.method auto
-    nmcli connection up "$connection_name" >/dev/null || die "WLAN-Verbindung über NetworkManager fehlgeschlagen."
+    if ! nmcli connection up "$connection_name" ifname "$WLAN_INTERFACE"; then
+      nmcli -f DEVICE,TYPE,STATE,CONNECTION device status >&2 || true
+      die "WLAN-Verbindung über NetworkManager auf ${WLAN_INTERFACE} fehlgeschlagen."
+    fi
     return 0
   fi
 
@@ -359,10 +438,10 @@ check_waiting_room_server_reachable() {
 }
 
 configure_firewall_wlan_only() {
-  say "Firewall (nftables): wlan0 inbound dicht (Ping+DHCP+established), eth0 offen"
+  say "Firewall (nftables): ${WLAN_INTERFACE} inbound dicht (Ping+DHCP+established), eth0 offen"
 
   backup_file /etc/nftables.conf
-  cat >/etc/nftables.conf <<'EOF'
+  cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 flush ruleset
 
@@ -377,15 +456,15 @@ table inet filter {
     iif "eth0" accept
 
     # WLAN: DHCP client replies
-    iif "wlan0" udp sport 67 udp dport 68 accept
-    iif "wlan0" udp sport 547 udp dport 546 accept
+    iif "${WLAN_INTERFACE}" udp sport 67 udp dport 68 accept
+    iif "${WLAN_INTERFACE}" udp sport 547 udp dport 546 accept
 
     # WLAN: Ping erlauben
-    iif "wlan0" ip protocol icmp accept
-    iif "wlan0" ip6 nexthdr icmpv6 accept
+    iif "${WLAN_INTERFACE}" ip protocol icmp accept
+    iif "${WLAN_INTERFACE}" ip6 nexthdr icmpv6 accept
 
     # WLAN: sonst nichts rein
-    iif "wlan0" drop
+    iif "${WLAN_INTERFACE}" drop
 
     drop
   }
@@ -935,7 +1014,7 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.3",
+  "version": "1.5.4",
 
   "_comment0": "Server-IP und Query-Intervall liegen außerhalb des Webroots in /etc/fragebogenpi-wartezimmer/server.json",
   "_comment1": "Die Namenskürzung erfolgt datensparsam auf dem fragebogenpi-Server.",
@@ -990,7 +1069,7 @@ Video:
 
 Firewall:
 - eth0 offen
-- wlan0 inbound blockiert (nur established/related, DHCP, Ping)
+- ${WLAN_INTERFACE} inbound blockiert (nur established/related, DHCP, Ping)
 EOF
 }
 
@@ -1407,6 +1486,7 @@ ask_reboot_now() {
 main() {
   need_root
   say "${APP_NAME} — Installer v${VERSION}"
+  confirm_installation
 
   apt_install
 

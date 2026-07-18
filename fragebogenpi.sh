@@ -4,11 +4,16 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.6.2
+# Version: 1.6.3
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.6.3 (2026-07-18)
+#   * Bugfix der temporären Dateibereinigung:
+#       - alle verbliebenen RETURN-Traps werden nach ihrer ersten Ausführung entfernt
+#       - verhindert weitere "unbound variable"-Fehler beim Verlassen übergeordneter Funktionen
 #
 # - 1.6.2 (2026-07-18)
 #   * Bugfix beim Download von wartezimmer-server.php:
@@ -323,7 +328,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.6.2"
+VERSION="1.6.3"
 STEP_NO=0
 
 banner() {
@@ -1180,7 +1185,7 @@ setup_samba() {
   tmp_global="$(mktemp)"
   tmp_final="$(mktemp)"
   global_block="$(mktemp)"
-  trap 'rm -f "$tmp_strip" "$tmp_shares" "$tmp_global" "$tmp_final" "$global_block"' RETURN
+  trap 'rm -f "$tmp_strip" "$tmp_shares" "$tmp_global" "$tmp_final" "$global_block"; trap - RETURN' RETURN
 
   write_samba_global_block > "$global_block"
   strip_samba_managed_blocks "$smbconf" "$tmp_strip"
@@ -1283,7 +1288,7 @@ setup_samba_waiting_room_only() {
 
   local tmp
   tmp="$(mktemp)"
-  trap 'rm -f "$tmp"' RETURN
+  trap 'rm -f "$tmp"; trap - RETURN' RETURN
 
   strip_samba_waiting_room_share "$smbconf" "$tmp"
   write_samba_waiting_room_block "$use_auth" "$valid_users" >> "$tmp"
@@ -1999,7 +2004,7 @@ download_bootstrap_files_to_webroot() {
 
   local tmp_list
   tmp_list="$(mktemp)"
-  trap 'rm -f "$tmp_list"' RETURN
+  trap 'rm -f "$tmp_list"; trap - RETURN' RETURN
 
   curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_list" || die "Download fehlgeschlagen: bootstrap"
 

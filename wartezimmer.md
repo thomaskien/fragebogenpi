@@ -1,4 +1,4 @@
-# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.3
+# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.4
 
 Stand: 2026-07-18
 
@@ -34,7 +34,7 @@ niemals an den Wartezimmer-Pi übertragen.
   /etc/fragebogenpi/wartezimmer-config.php
   ```
 
-### Wartezimmer-Pi 1.5.3
+### Wartezimmer-Pi 1.5.4
 
 - Apache/PHP liefert die lokale Kiosk-Web-App `wartezimmer.php` aus.
 - Ein lokales Python-Backend fragt ausschließlich folgenden Endpunkt ab:
@@ -135,9 +135,11 @@ Dateiname werden nicht übertragen.
 
 ## Installer-Abfragen des Wartezimmer-Pi
 
-Version 1.5.3 fragt interaktiv:
+Version 1.5.4 fragt interaktiv:
 
 ```text
+Installation wirklich starten? [y/N]
+
 Hostname [wartezimmer]:
 
 WLAN konfigurieren? [J/n]
@@ -150,8 +152,9 @@ Abfrageintervall in Sekunden [3]:
 ```
 
 Die eigene WLAN-IP erhält der Wartezimmer-Pi per DHCP vom fragebogenpi. Bei
-aktivem NetworkManager wird dieser verwendet. Andernfalls wird
-`wpa_supplicant` konfiguriert.
+aktivem NetworkManager wird das tatsächlich erkannte WLAN-Interface verwendet.
+Andernfalls wird `wpa_supplicant` konfiguriert. Die Installation bricht mit
+einer Gerätediagnose ab, wenn kein WLAN-Interface erkannt wird.
 
 Server-IP und Query-Intervall werden außerhalb des Webroots gespeichert:
 
@@ -194,7 +197,8 @@ Bei einem Aufruf:
 - Der zentrale fragebogenpi ist dort standardmäßig unter `10.23.0.1`
   erreichbar.
 - Der Wartezimmer-Pi erhält seine eigene IP per DHCP.
-- Eingehende Verbindungen über `wlan0` des Wartezimmer-Pi bleiben blockiert.
+- Eingehende Verbindungen über das erkannte WLAN-Interface des
+  Wartezimmer-Pi bleiben blockiert.
 - Ausgehende HTTP-Queries zum fragebogenpi sind erlaubt.
 - `eth0` des Wartezimmer-Pi bleibt für lokale Administration und den
   Medien-Samba-Share offen.
