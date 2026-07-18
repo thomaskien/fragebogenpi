@@ -4,11 +4,18 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.6
+# Version: 1.6.1
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.6.1 (2026-07-18)
+#   * Bugfix der Apache-Dienststeuerung bei der Wartezimmer-Einrichtung:
+#       - LAN-Bind-Hilfsdienst bleibt nach erfolgreicher Ausführung aktiv
+#       - eine bestehende Diensteinheit wird entsprechend repariert und ihre Startbegrenzung zurückgesetzt
+#       - WLAN-Apache wird nach der Ergänzung nur neu geladen statt neu gestartet
+#       - Apache-Syntaxprüfung erhält die benötigten Laufzeitvariablen
 #
 # - 1.6 (2026-07-18)
 #   * Optionale Wartezimmer-Schnittstelle ergänzt:
@@ -22,9 +29,6 @@
 #       - Konfiguration liegt außerhalb von Webroot und Samba-Share
 #   * Bestehende Installation: neuer Modus "4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren"
 #   * Für wartezimmer-server.php werden keine Anwendungs- oder Apache-Zugriffslogs geschrieben
-#   * Apache-Dienststeuerung für die Wartezimmer-Einrichtung korrigiert:
-#       - LAN-Bind-Hilfsdienst bleibt nach erfolgreicher Ausführung aktiv
-#       - WLAN-Apache wird nach der Ergänzung nur neu geladen statt neu gestartet
 #
 # - 1.5.9 (2026-06-26)
 #   * Webroot-Isolation für WLAN/LAN:
@@ -314,7 +318,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.6"
+VERSION="1.6.1"
 STEP_NO=0
 
 banner() {

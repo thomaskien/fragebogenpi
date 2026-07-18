@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigte Basisversion ist:
 
 ```text
-fragebogenpi.sh v1.5.9
+fragebogenpi.sh v1.6.1
 ```
 
 Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nicht auf aeltere Varianten zurueckfallen.
@@ -39,8 +39,10 @@ Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nic
    - keine unaufgeforderten Refactorings
    - keine Umbenennungen oder Strukturaenderungen ohne klaren Grund
 3. Versionierung:
-   - normalerweise in Schritten von `0.0.1`
-   - naechste Version waere also `1.5.10`
+   - groessere Erweiterungen normalerweise in Schritten von `0.1`
+   - kleine Bugfixes in Schritten von `0.0.1`
+   - Einstufung und vorgeschlagene Zielversion immer vor der Umsetzung mit dem Nutzer abstimmen
+   - keine eigenmaechtige Versionsentscheidung
 4. Changelog:
    - immer vollstaendig fortfuehren
    - nie alte Changelog-Eintraege entfernen
