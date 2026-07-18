@@ -138,13 +138,48 @@
       box-shadow:0 6px 18px rgba(0,0,0,.08);
     }
 
-    .install{
+    .install-grid{
       margin-top:18px;
+      display:grid;
+      grid-template-columns:minmax(0, 2fr) minmax(280px, .8fr);
+      gap:18px;
+      align-items:stretch;
+    }
+
+    .install{
       background:#fff;
       border-radius:var(--radius);
       border:1px solid var(--line);
       box-shadow:var(--shadow);
       overflow:hidden;
+    }
+
+    .install-shot{
+      margin:0;
+      padding:10px;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+    }
+
+    .install-shot img{
+      display:block;
+      width:100%;
+      max-height:340px;
+      object-fit:contain;
+      border-radius:10px;
+      background:#160000;
+      cursor:zoom-in;
+    }
+
+    .install-shot figcaption{
+      padding:9px 4px 2px;
+      color:var(--muted);
+      font-size:13px;
     }
 
     .install header{
@@ -350,6 +385,8 @@
     }
 
     @media (max-width: 900px){
+      .install-grid{ grid-template-columns:1fr; }
+      .install-shot img{ max-height:560px; }
       .image-frame{ height:520px; }
       .image-frame.landscape{ height:440px; }
     }
@@ -406,24 +443,31 @@
   Läuft mit <b>T2med</b>, <b>x.concept</b>, <b>tomedo</b> und vermutlich fast allen anderen Praxisverwaltungssystemen (PVS).
 </div>
 
-<section class="install">
-  <header>▶ Installation</header>
-  <pre>wget https://fragebogenpi.de/install.sh
+<div class="install-grid">
+  <section class="install">
+    <header>▶ Installation</header>
+    <pre>wget https://fragebogenpi.de/install.sh
 chmod +x install.sh
 sudo bash install.sh</pre>
 
-  <div class="req">
-    <b>Man benötigt</b>
-    <ul>
-      <li><b>Raspberry Pi</b> ab Version 3</li>
-      <li>Raspberry Pi OS (Lite empfohlen)</li>
-      <li>High-Endurance-SD-Karte</li>
-      <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z.B. iPad 7 refurbished, griffiger Silikonüberzug empfohlen)</li>
-      <li>optional: Smartphone für Befundfotos</li>
-      <li>LAN-Anschluss in der Nähe des Wartebereichs</li>
-    </ul>
-  </div>
-</section>
+    <div class="req">
+      <b>Man benötigt</b>
+      <ul>
+        <li><b>Raspberry Pi</b> ab Version 3</li>
+        <li>Raspberry Pi OS (Lite empfohlen)</li>
+        <li>High-Endurance-SD-Karte</li>
+        <li><b>iPad zur Ausfüllung der Anamnesebögen</b> (z.B. iPad 7 refurbished, griffiger Silikonüberzug empfohlen)</li>
+        <li>optional: Smartphone für Befundfotos</li>
+        <li>LAN-Anschluss in der Nähe des Wartebereichs</li>
+      </ul>
+    </div>
+  </section>
+
+  <figure class="install-shot">
+    <img src="installation-terminal.png" alt="Vollständige fragebogenpi-Beispielinstallation mit erzeugten Zugangsdaten">
+    <figcaption>Vollständige Beispielinstallation einschließlich der automatisch erzeugten Beispiel-Zugangsdaten – zum Vergrößern anklicken.</figcaption>
+  </figure>
+</div>
 
 <section class="flow">
   <h2>Ablauf</h2>
@@ -462,7 +506,7 @@ sudo bash install.sh</pre>
     <div class="form-card"><strong>Fagerström-Test (FTND)</strong><span>Grad der Nikotinabhängigkeit</span></div>
     <div class="form-card"><strong>AUDIT-Fragebogen</strong><span>Screening des Alkoholkonsums</span></div>
     <div class="form-card"><strong>PHQ-2</strong><span>Kurzes Depressionsscreening mit automatischem PHQ-9-Folgebogen</span></div>
-    <div class="form-card"><strong>PHQ-9</strong><span>Vertiefender Gesundheitsfragebogen</span></div>
+    <div class="form-card"><strong>PHQ-9</strong><span>Vertiefender Depressionsfragebogen</span></div>
     <div class="form-card"><strong>Barthel-Index</strong><span>Erfassung von Selbstständigkeit und Hilfsbedarf im Alltag</span></div>
     <div class="form-card"><strong>Kopfschmerz-Schnelltest</strong><span>Strukturierte Erfassung typischer Kopfschmerzmerkmale</span></div>
     <div class="form-card"><strong>Datenschutzerklärung</strong><span>Dokumentation mit E-Mail-/SMS-Einwilligung, Unterschrift und PDF</span></div>
@@ -606,7 +650,7 @@ sudo bash install.sh</pre>
   const lightbox = document.getElementById('imageLightbox');
   const lightboxImage = document.getElementById('imageLightboxImage');
   const lightboxClose = document.getElementById('imageLightboxClose');
-  const zoomImages = Array.from(document.querySelectorAll('.strip img, .image-frame img'));
+  const zoomImages = Array.from(document.querySelectorAll('.strip img, .install-shot img, .image-frame img'));
 
   function openLightbox(img){
     lightboxImage.src = img.currentSrc || img.src;
