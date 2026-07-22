@@ -40,12 +40,30 @@
       margin-bottom:14px;
     }
 
+    .brand-group{
+      display:flex;
+      align-items:center;
+      gap:18px;
+    }
+
     .brand{
       font-weight:800;
       display:flex;
       align-items:center;
       gap:10px;
+      color:var(--text);
+      text-decoration:none;
     }
+
+    .brand:hover{ text-decoration:underline; }
+
+    .all-projects{
+      font-size:14px;
+      color:var(--muted);
+      text-decoration:none;
+    }
+
+    .all-projects:hover{ text-decoration:underline; }
 
     .dot{
       width:10px;
@@ -403,11 +421,11 @@
 <div class="wrap">
 
 <header>
-  <div class="brand"><span class="dot"></span>fragebogenpi</div>
+  <div class="brand-group">
+    <a class="brand" href="https://kienzlebox.de/kienzlebox-frame.php?projekt=fragebogenpi"><span class="dot"></span>fragebogenpi.de</a>
+    <a class="all-projects" href="https://kienzlebox.de">Alle Projekte: kienzlebox.de</a>
+  </div>
   <nav>
-    <a href="http://kienzlelock.de">kienzlelock.de - NFC Bildschirmsperre</a>
-    <a href="http://wartezi.de">wartezi.de - Patientenaufruf</a>
-    <a href="https://kienzlefax.de">kienzleFAX.de - Fax Für Prax</a>
     <a href="https://github.com/thomaskien/fragebogenpi">GitHub</a>
     <a href="/impressum/">Impressum</a>
   </nav>
