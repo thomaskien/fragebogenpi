@@ -102,6 +102,39 @@ chmod +x wartezimmer.sh
 sudo bash ./wartezimmer.sh
 ```
 
+## Mehrgeraetebetrieb der Tablet-Formulare
+
+Der Installer fragt, ob ein oder mehrere Tablets verwendet werden. Die
+PHP-Dateien muessen bei mehreren Tablets nicht manuell dupliziert werden.
+Der Installer legt automatisch `tablet1.php`, `tablet2.php` usw. an, maximal
+bis `tablet9.php`.
+
+Bei nur einem Tablet wird verwendet:
+
+```text
+Web-App:    tablet.php
+Eingabe:    anam-i.gdt
+Antwort:    anam-o.gdt
+```
+
+Bei mehreren Tablets erhaelt jedes Geraet eine eigene Web-App und ein eigenes
+GDT-Praefix:
+
+```text
+Tablet 1:   tablet1.php     1-anam-i.gdt     1-anam-o.gdt
+Tablet 2:   tablet2.php     2-anam-i.gdt     2-anam-o.gdt
+```
+
+Tablet 1 verarbeitet ausschliesslich GDT-Dateien mit `1-`, Tablet 2
+ausschliesslich Dateien mit `2-` usw. Alle Tablets verwenden weiterhin den
+gleichen flachen GDT-Ordner. Es gibt keine getrennten Warteschlangen oder
+Unterverzeichnisse.
+
+Im Mehrgeraetebetrieb ist `tablet.php` selbst nicht aktiv; verwendet werden
+die erzeugten Endpunkte `tablet1.php` bis `tabletN.php`. Die Anzahl der
+Tablets wird vom Installer gespeichert und kann bei einer erneuten
+Einrichtung angepasst werden.
+
 
 
 
