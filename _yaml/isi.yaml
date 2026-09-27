@@ -1,0 +1,206 @@
+# isi.yaml
+# Insomnia Severity Index (ISI)
+# Version 1.0.0
+# Autor: Dr. Thomas Kienzle
+#
+# Quelle: Insomnia-Severity-Index.pdf, ProSomno Klinik fuer Schlafmedizin.
+# Literatur laut Vorlage: Dieck A, Morin CM, Backhaus J.
+# A German version of the Insomnia Severity Index: Validation and
+# identification of a cut-off to detect insomnia. Somnologie. 2018; 22: 27-35.
+# Bezugszeitraum wie in der bereitgestellten Vorlage: letzte 4 Wochen.
+#
+# Auswertung: sieben Antworten mit jeweils 0 bis 4 Punkten; Summe 0 bis 28.
+# - 0 bis 7 Punkte: Keine Schlaflosigkeit.
+# - 8 bis 14 Punkte: Unterschwellige Schlaflosigkeit.
+# - 15 bis 21 Punkte: Moderate Schlaflosigkeit.
+# - 22 bis 28 Punkte: Schwere Schlaflosigkeit.
+#
+# Changelog:
+# - 1.0.0: Erste Fassung nach der PDF-Vorlage mit Summenwert,
+#   Schweregrad und kompakter GDT-Auswertung.
+
+meta:
+  title: "Insomnia Severity Index (ISI)"
+  subtitle: "Bitte beantworten Sie die untenstehenden Fragen zu Ihrem Schlaf und dessen Auswirkungen auf die Tagesbefindlichkeit rueckblickend ueber die letzten 4 Wochen."
+  version: "1.0.0"
+  language: "de"
+
+ui:
+  show_contact_section: false
+
+sections:
+
+  - title: "Schlaf und Tagesbefindlichkeit in den letzten 4 Wochen"
+    gdt_output: false
+    questions:
+      - id: isi_einschlafen
+        label: "Schwierigkeit, einzuschlafen."
+        type: choice
+        required: true
+        options:
+          - "Keine"
+          - "Leichte"
+          - "Maessige"
+          - "Starke"
+          - "Sehr starke"
+        scores:
+          "Keine": 0
+          "Leichte": 1
+          "Maessige": 2
+          "Starke": 3
+          "Sehr starke": 4
+
+      - id: isi_durchschlafen
+        label: "Schwierigkeit, durchzuschlafen."
+        type: choice
+        required: true
+        options:
+          - "Keine"
+          - "Leichte"
+          - "Maessige"
+          - "Starke"
+          - "Sehr starke"
+        scores:
+          "Keine": 0
+          "Leichte": 1
+          "Maessige": 2
+          "Starke": 3
+          "Sehr starke": 4
+
+      - id: isi_fruehes_erwachen
+        label: "Das Problem, am Morgen frueh aufzuwachen."
+        type: choice
+        required: true
+        options:
+          - "Kein"
+          - "Leicht"
+          - "Maessig"
+          - "Stark"
+          - "Sehr stark"
+        scores:
+          "Kein": 0
+          "Leicht": 1
+          "Maessig": 2
+          "Stark": 3
+          "Sehr stark": 4
+
+      - id: isi_zufriedenheit
+        label: "Wie zufrieden / unzufrieden sind Sie mit Ihrem aktuellen Schlafverhalten?"
+        type: choice
+        required: true
+        options:
+          - "Sehr zufrieden"
+          - "Zufrieden"
+          - "Neutral"
+          - "Unzufrieden"
+          - "Sehr unzufrieden"
+        scores:
+          "Sehr zufrieden": 0
+          "Zufrieden": 1
+          "Neutral": 2
+          "Unzufrieden": 3
+          "Sehr unzufrieden": 4
+
+      - id: isi_alltag
+        label: "In welchem Ausmass beeinflussen Ihre Schlafprobleme Ihrer Ansicht nach Ihre Alltagsfunktionen (z.B. Tagesmuedigkeit, Faehigkeit auf der Arbeit/bei Alltagstaetigkeiten zu funktionieren, Konzentration, Erinnerung, Stimmung)?"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "Wenig"
+          - "Etwas"
+          - "Stark"
+          - "Sehr stark"
+        scores:
+          "Ueberhaupt nicht": 0
+          "Wenig": 1
+          "Etwas": 2
+          "Stark": 3
+          "Sehr stark": 4
+
+      - id: isi_wahrnehmung_mitmenschen
+        label: "In welchem Ausmass nehmen Ihrer Ansicht nach Ihre Mitmenschen Ihr Schlafproblem und die damit verbundene Beeinflussung Ihrer Lebensqualitaet wahr?"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "Wenig"
+          - "Etwas"
+          - "Stark"
+          - "Sehr stark"
+        scores:
+          "Ueberhaupt nicht": 0
+          "Wenig": 1
+          "Etwas": 2
+          "Stark": 3
+          "Sehr stark": 4
+
+      - id: isi_besorgnis
+        label: "Wie besorgt/bedrueckt sind Sie durch Ihre gegenwaertigen Schlafprobleme?"
+        type: choice
+        required: true
+        options:
+          - "Ueberhaupt nicht"
+          - "Wenig"
+          - "Etwas"
+          - "Stark"
+          - "Sehr stark"
+        scores:
+          "Ueberhaupt nicht": 0
+          "Wenig": 1
+          "Etwas": 2
+          "Stark": 3
+          "Sehr stark": 4
+
+  - title: "Auswertung"
+    gdt_output: false
+    ui_output: false
+    questions:
+      - id: isi_summe
+        label: "ISI-Summe"
+        type: derived
+        calculation:
+          operation: sum_scores
+          fields:
+            - isi_einschlafen
+            - isi_durchschlafen
+            - isi_fruehes_erwachen
+            - isi_zufriedenheit
+            - isi_alltag
+            - isi_wahrnehmung_mitmenschen
+            - isi_besorgnis
+          minimum: 0
+          maximum: 28
+
+      - id: isi_bewertung
+        label: "Bewertung"
+        type: derived
+        source: isi_summe
+        ranges:
+          - minimum: 0
+            maximum: 7
+            status: "Keine Schlaflosigkeit"
+
+          - minimum: 8
+            maximum: 14
+            status: "Unterschwellige Schlaflosigkeit"
+
+          - minimum: 15
+            maximum: 21
+            status: "Moderate Schlaflosigkeit"
+
+          - minimum: 22
+            maximum: 28
+            status: "Schwere Schlaflosigkeit"
+
+gdt:
+  sections:
+    - title: "ISI"
+      elements:
+        - type: score
+          source: isi_summe
+          label: "Punktwert"
+          suffix: "Punkte"
+          singular_suffix: "Punkt"
+        - type: interpretation
+          source: isi_bewertung

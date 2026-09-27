@@ -2,10 +2,15 @@
 declare(strict_types=1);
 
 /*
- * tablet.php v1.8.2
+ * tablet.php v1.8.3
  * fragebogenpi.de von Dr. Thomas Kienzle 2026
  *
  * Changelog (vollstaendig)
+ * - v1.8.3:
+ *   + Folgeformulare speichern ihre Ergebnisse im urspruenglichen Auftrag und
+ *     liefern gemeinsam dessen Antwort-GDT; Einzelauftraege bleiben eigenstaendig.
+ *   + Persistenter Fortschritt, Schutz vor doppelten/veralteten Uebermittlungen
+ *     und vor dem Ueberschreiben noch nicht importierter Antworten.
  * - v1.8.2:
  *   + YAML kann ueber meta.handler einen spezialisierten PHP-Formularhandler
  *     deklarieren; die Tablet-Warteschlange uebergibt Auftrag und Ruecksprungziel.
@@ -123,7 +128,7 @@ declare(strict_types=1);
  */
 
 $APP_FOOTER  = 'fragebogenpi.de von Dr. Thomas Kienzle 2026';
-$APP_VERSION = 'v1.8.2 (tablet.php)';
+$APP_VERSION = 'v1.8.3 (tablet.php)';
 
 $dirGdt = '/srv/fragebogenpi/GDT';
 
@@ -297,7 +302,7 @@ function parse_gdt(string $path): array {
     return $fields;
 }
 
-function write_gdt_file(string $path, array $lines): void {
+function encode_gdt_lines(array $lines): string {
     $joined = implode("\r\n", $lines) . "\r\n";
     $totalBytes = strlen($joined);
     $total6 = str_pad((string)$totalBytes, 6, '0', STR_PAD_LEFT);
@@ -326,7 +331,14 @@ function write_gdt_file(string $path, array $lines): void {
         $joined2 = implode("\r\n", $lines) . "\r\n";
     }
 
-    file_put_contents($path, $joined2);
+    return $joined2;
+}
+
+function write_gdt_file(string $path, array $lines): void {
+    $bytes = encode_gdt_lines($lines);
+    if (file_put_contents($path, $bytes) !== strlen($bytes)) {
+        throw new RuntimeException('GDT-Datei konnte nicht vollstaendig geschrieben werden.');
+    }
 }
 
 function to_ascii_wrapped_lines(string $s, int $maxBytes, string $firstPrefix = '', string $nextPrefix = ''): array {
@@ -1114,61 +1126,6 @@ function follow_up_forms_for_answers(
     return ['forms' => $forms, 'errors' => $errors];
 }
 
-/**
- * Legt Folgeauftraege als sichere Kopien der aktuellen Eingabe-GDT an.
- * Der temporaere Dateiname wird erst nach vollstaendigem Kopieren per Hardlink
- * sichtbar gemacht, damit tablet.php keine halbe GDT-Datei einliest.
- */
-function create_follow_up_requests(
-    string $dirGdt,
-    string $tabletPrefix,
-    string $sourcePath,
-    string $currentFormId,
-    array $followUpForms
-): array {
-    $created = [];
-    $existing = [];
-    $errors = [];
-
-    foreach ($followUpForms as $followUp) {
-        $formId = (string)($followUp['form_id'] ?? '');
-        if ($formId === '' || $formId === $currentFormId) {
-            $errors[] = 'Ungueltiges Folgeformular: ' . $formId;
-            continue;
-        }
-
-        $name = $tabletPrefix . $formId . '-i.gdt';
-        $path = rtrim($dirGdt, '/') . '/' . $name;
-        if (is_file($path)) {
-            $existing[] = $name;
-            continue;
-        }
-
-        $tmp = @tempnam($dirGdt, '.fragebogenpi-followup-');
-        if ($tmp === false || !@copy($sourcePath, $tmp)) {
-            if ($tmp !== false) @unlink($tmp);
-            $errors[] = 'Folgeauftrag konnte nicht vorbereitet werden: ' . $name;
-            continue;
-        }
-
-        if (@link($tmp, $path)) {
-            @unlink($tmp);
-            @chmod($path, 0664);
-            $created[] = $name;
-            continue;
-        }
-
-        @unlink($tmp);
-        if (is_file($path)) {
-            $existing[] = $name;
-        } else {
-            $errors[] = 'Folgeauftrag konnte nicht angelegt werden: ' . $name;
-        }
-    }
-
-    return ['created' => $created, 'existing' => $existing, 'errors' => $errors];
-}
-
 function tablet_input_pattern(string $tabletId): string {
     $prefix = ($tabletId === '') ? '' : preg_quote($tabletId . '-', '/');
     return '/^' . $prefix . '([a-z][a-z0-9_-]{0,3})-i\\.gdt$/';
@@ -1252,11 +1209,260 @@ function delete_request_files(array $requests): int {
     return $deleted;
 }
 
+// ----------------- persistente Formularfolgen -----------------
+function chain_state_path(string $dir, string $name): string {
+    if (!preg_match('/^(?:[1-9]-)?[a-z][a-z0-9_-]{0,3}-i\.gdt$/', $name)) {
+        throw new RuntimeException('Ungueltiger Formularauftrag.');
+    }
+    return rtrim($dir, '/') . '/.fragebogenpi-chain-' . $name . '.json';
+}
+
+function chain_request_stamp(string $path): string {
+    clearstatcache(true, $path);
+    $stat = @stat($path);
+    $raw = @file_get_contents($path);
+    if ($stat === false || $raw === false) throw new RuntimeException('Formularauftrag nicht mehr lesbar.');
+    return hash('sha256', $raw . "\0" . implode(':', [$stat['dev'], $stat['ino'], $stat['size'], $stat['mtime'], $stat['ctime']]));
+}
+
+function chain_save(string $path, array $state): void {
+    $json = json_encode($state, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+    $tmp = @tempnam(dirname($path), '.fragebogenpi-state-');
+    if ($tmp === false) throw new RuntimeException('Antworten konnten nicht gespeichert werden. Bitte erneut versuchen.');
+    try {
+        @chmod($tmp, 0660);
+        if (@file_put_contents($tmp, $json) !== strlen($json) || !@rename($tmp, $path)) {
+            throw new RuntimeException('Antworten konnten nicht gespeichert werden. Bitte erneut versuchen.');
+        }
+    } finally {
+        if (is_file($tmp)) @unlink($tmp);
+    }
+}
+
+function chain_load(array $root, string $dir): array {
+    $path = chain_state_path($dir, (string)$root['name']);
+    $stamp = chain_request_stamp((string)$root['path']);
+    // Dispatcher und Folge muessen denselben unveraenderten Request gesehen haben.
+    if (parse_gdt((string)$root['path']) !== $root['fields']
+        || !hash_equals($stamp, chain_request_stamp((string)$root['path']))) {
+        throw new RuntimeException('Der Auftrag wurde gerade geaendert. Bitte neu laden.');
+    }
+    if (is_file($path)) {
+        try {
+            $state = json_decode((string)@file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            throw new RuntimeException('Gespeicherte Formularfolge ist nicht lesbar. Bitte bei Mitarbeiter melden.');
+        }
+        if (!is_array($state) || ($state['version'] ?? null) !== 1
+            || ($state['root'] ?? '') !== $root['name'] || ($state['root_form'] ?? '') !== $root['form_id']
+            || !is_array($state['pending'] ?? null) || !is_array($state['done'] ?? null)
+            || !is_array($state['parts'] ?? null) || !is_string($state['token'] ?? null)
+            || !in_array($state['phase'] ?? '', ['active', 'ready', 'publishing', 'published'], true)) {
+            throw new RuntimeException('Gespeicherte Formularfolge ist ungueltig. Bitte bei Mitarbeiter melden.');
+        }
+        if (!hash_equals((string)($state['stamp'] ?? ''), $stamp)) {
+            throw new RuntimeException('Der Auftrag wurde waehrend der Formularfolge ersetzt. Bitte bei Mitarbeiter melden.');
+        }
+        return $state;
+    }
+    $state = [
+        'version' => 1, 'root' => $root['name'], 'root_form' => $root['form_id'],
+        'stamp' => $stamp, 'token' => bin2hex(random_bytes(24)), 'phase' => 'active',
+        'pending' => [['form_id' => $root['form_id'], 'priority' => $root['priority']]],
+        'done' => [], 'parts' => [],
+    ];
+    chain_save($path, $state);
+    return $state;
+}
+
+function chain_current_request(array $root, array $state, string $formDir, int $maxLength): array {
+    $id = (string)($state['pending'][0]['form_id'] ?? '');
+    if (!preg_match('/^[a-z][a-z0-9_-]{0,3}$/', $id)) throw new RuntimeException('Formularfolge enthaelt keinen offenen Bogen.');
+    $info = form_yaml_for_id($formDir, $id, $maxLength);
+    if (isset($info['error'])) throw new RuntimeException((string)$info['error']);
+    $fields = $root['fields'];
+    foreach ($state['parts'] as $part) {
+        $bytes = base64_decode((string)$part['lines'], true);
+        if ($bytes === false) throw new RuntimeException('Gespeicherte Antworten sind nicht lesbar.');
+        foreach (explode("\r\n", $bytes) as $line) {
+            $field = substr($line, 3, 4);
+            if (in_array($field, ['3622', '3623', '3626', '3618', '3619'], true)) $fields[$field] = substr($line, 7);
+        }
+    }
+    return array_replace($root, ['form_id' => $id, 'yaml_path' => $info['path'], 'priority' => $info['priority'], 'fields' => $fields]);
+}
+
+function chain_check_post(array $state, array $post): void {
+    if (!is_string($post['chain_token'] ?? null) || !hash_equals($state['token'], $post['chain_token'])
+        || !is_string($post['form_id'] ?? null) || $post['form_id'] !== (string)($state['pending'][0]['form_id'] ?? $state['last_form'] ?? '')) {
+        throw new RuntimeException('Diese Formularseite ist nicht mehr aktuell. Bitte neu laden.');
+    }
+}
+
+function chain_validate_followups(array $forms): void {
+    foreach ($forms as $form) {
+        $yaml = yaml_load_or_die_ascii((string)$form['yaml_path']);
+        if (isset($yaml['__error'])) throw new RuntimeException((string)$yaml['__error']);
+        if ((string)($yaml['meta']['handler'] ?? '') !== '') {
+            throw new RuntimeException('Dieses Folgeformular verwendet einen eigenen Ablauf und muss separat angefordert werden: ' . $form['form_id']);
+        }
+    }
+}
+
+function chain_advance(array $state, string $title, array $lines, array $followups, bool $aborted = false): array {
+    $current = array_shift($state['pending']);
+    $id = (string)$current['form_id'];
+    $state['done'][] = $id;
+    $state['last_form'] = $id;
+    $state['parts'][] = ['form_id' => $id, 'title' => $title, 'aborted' => $aborted,
+        'lines' => base64_encode(implode("\r\n", $lines))];
+    $seen = array_fill_keys(array_merge($state['done'], array_column($state['pending'], 'form_id')), true);
+    foreach ($followups as $form) {
+        $nextId = (string)$form['form_id'];
+        if (isset($seen[$nextId])) continue;
+        $state['pending'][] = ['form_id' => $nextId, 'priority' => (int)$form['priority']];
+        $seen[$nextId] = true;
+    }
+    usort($state['pending'], static fn($a, $b) => [$a['priority'], $a['form_id']] <=> [$b['priority'], $b['form_id']]);
+    if ($state['pending'] === []) {
+        $state['phase'] = 'ready';
+    } else {
+        $state['token'] = bin2hex(random_bytes(24));
+    }
+    return $state;
+}
+
+function chain_result_lines(array $state): array {
+    $parts = $state['parts'];
+    $decode = static function (array $part): array {
+        $bytes = base64_decode((string)$part['lines'], true);
+        if ($bytes === false) throw new RuntimeException('Gespeicherte Antworten sind nicht lesbar.');
+        return $bytes === '' ? [] : explode("\r\n", $bytes);
+    };
+    $base = $decode(array_shift($parts));
+    $extra = [];
+    $contact = [];
+    foreach ($parts as $part) {
+        $extra = array_merge($extra, build_section_block_lines('Folgeformular: ' . $part['title'], [], 70));
+        foreach ($decode($part) as $line) {
+            $field = substr($line, 3, 4);
+            if ($field === '6228') $extra[] = $line;
+            if (in_array($field, ['3622', '3623', '3626', '3618', '3619'], true)) $contact[$field] = $line;
+        }
+    }
+    // Der letzte 4109/4121-Block (ggf. mit x.concept-Anhang) bleibt am Ende.
+    $insert = count($base);
+    foreach ($base as $i => $line) {
+        if (substr($line, 3, 4) === '4109') $insert = $i;
+    }
+    foreach ($base as $i => $line) {
+        $field = substr($line, 3, 4);
+        if (isset($contact[$field])) { $base[$i] = $contact[$field]; unset($contact[$field]); }
+    }
+    array_splice($base, $insert, 0, array_merge(array_values($contact), $extra));
+    return $base;
+}
+
+function chain_same_file(string $a, string $b): bool {
+    clearstatcache(true, $a); clearstatcache(true, $b);
+    $sa = @stat($a); $sb = @stat($b);
+    return $sa !== false && $sb !== false && $sa['dev'] === $sb['dev'] && $sa['ino'] === $sb['ino'];
+}
+
+function chain_publish(array $root, string $dir, array &$state): string {
+    $statePath = chain_state_path($dir, $root['name']);
+    if (!hash_equals($state['stamp'], chain_request_stamp($root['path']))) {
+        throw new RuntimeException('Der Auftrag wurde waehrend der Formularfolge ersetzt. Bitte bei Mitarbeiter melden.');
+    }
+    $name = substr($root['name'], 0, -6) . '-o.gdt';
+    $output = rtrim($dir, '/') . '/' . $name;
+    $spool = $statePath . '.answer';
+    if ($state['phase'] === 'publishing') {
+        // Nach einem Prozessabbruch nur einen nachweislich publizierten Hardlink bestaetigen.
+        // Fehlt er, koennte das PVS die Antwort schon importiert haben: nicht doppelt liefern.
+        if (!chain_same_file($spool, $output)) {
+            throw new RuntimeException('Uebermittlung wurde unterbrochen. Antworten sind gespeichert; bitte bei Mitarbeiter melden.');
+        }
+        $state['phase'] = 'published';
+        chain_save($statePath, $state);
+    }
+    if ($state['phase'] === 'ready') {
+        if (file_exists($output) || is_link($output)) {
+            throw new RuntimeException('Die vorherige Antwort wurde noch nicht abgeholt. Ihre Antworten sind gespeichert. Bitte nach dem Import erneut versuchen.');
+        }
+        $bytes = encode_gdt_lines(chain_result_lines($state));
+        $tmp = @tempnam($dir, '.fragebogenpi-answer-');
+        if ($tmp === false) throw new RuntimeException('Antwort konnte nicht vorbereitet werden. Ihre Antworten bleiben gespeichert.');
+        try {
+            @chmod($tmp, 0664);
+            if (@file_put_contents($tmp, $bytes) !== strlen($bytes) || !@rename($tmp, $spool)) {
+                throw new RuntimeException('Antwort konnte nicht geschrieben werden. Ihre Antworten bleiben gespeichert.');
+            }
+        } finally {
+            if (is_file($tmp)) @unlink($tmp);
+        }
+        $state['phase'] = 'publishing';
+        chain_save($statePath, $state);
+        if (!@link($spool, $output)) {
+            $state['phase'] = 'ready';
+            chain_save($statePath, $state);
+            throw new RuntimeException('Antwort konnte nicht bereitgestellt werden. Ihre Antworten bleiben gespeichert. Bitte erneut versuchen.');
+        }
+        $state['phase'] = 'published';
+        chain_save($statePath, $state);
+    }
+    if ($state['phase'] !== 'published') throw new RuntimeException('Die Formularfolge ist noch nicht abgeschlossen.');
+    // Erst nach bestaetigter Publikation entfernen; Fehler bleiben wiederholbar.
+    if (!hash_equals($state['stamp'], chain_request_stamp($root['path']))) {
+        throw new RuntimeException('Antwort bereitgestellt, aber der Auftrag wurde ersetzt. Bitte bei Mitarbeiter melden.');
+    }
+    if (!@unlink($root['path'])) throw new RuntimeException('Antwort bereitgestellt; Auftrag konnte nicht abgeschlossen werden. Bitte erneut versuchen.');
+    @unlink($spool);
+    @unlink($statePath);
+    return $name;
+}
+
+function chain_store_result(array $root, string $dir, array &$state, string $title, array $lines, array $followups, bool $aborted = false): array {
+    if (!hash_equals($state['stamp'], chain_request_stamp($root['path']))) {
+        throw new RuntimeException('Der Auftrag wurde waehrend der Formularfolge ersetzt. Bitte bei Mitarbeiter melden.');
+    }
+    $next = chain_advance($state, $title, $lines, $followups, $aborted);
+    chain_save(chain_state_path($dir, $root['name']), $next);
+    $state = $next;
+    $output = $state['phase'] === 'ready' ? chain_publish($root, $dir, $state) : '';
+    return ['status' => 'ok', 'answer_gdt' => $output, 'request_gdt' => $root['name'],
+        'request_deleted' => $output !== '', 'chain_pending' => count($state['pending']) > 0,
+        'message' => $output !== '' ? 'Formularfolge uebermittelt' : 'Antworten gespeichert'];
+}
+
+function chain_cleanup_missing_requests(string $dir, string $tabletId): void {
+    $pattern = tablet_input_pattern($tabletId);
+    foreach ((array)@scandir($dir) as $name) {
+        if (!preg_match('/^\.fragebogenpi-chain-(.+-i\.gdt)\.json$/', $name, $m) || !preg_match($pattern, $m[1])) continue;
+        if (!file_exists(rtrim($dir, '/') . '/' . $m[1])) {
+            @unlink(rtrim($dir, '/') . '/' . $name . '.answer');
+            @unlink(rtrim($dir, '/') . '/' . $name);
+        }
+    }
+}
+
 // ----------------- dir checks -----------------
 if (!is_dir($dirGdt)) @mkdir($dirGdt, 0775, true);
 if ((!is_dir($dirGdt) || !is_writable($dirGdt)) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     json_out(500, ['status'=>'error','message'=>'Zielverzeichnis existiert nicht oder ist nicht beschreibbar','dir'=>$dirGdt]);
 }
+
+// Ein Lock pro Tablet schuetzt Zustandswechsel gegen parallele Browseranfragen.
+$chainLock = @fopen(rtrim($dirGdt, '/') . '/.fragebogenpi-tablet-' . ($tabletId === '' ? 'single' : $tabletId) . '.lock', 'c');
+if ($chainLock === false || !flock($chainLock, LOCK_EX)) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') json_out(503, ['status'=>'error', 'message'=>'Formularspeicher ist nicht verfuegbar. Bitte erneut versuchen.']);
+    http_response_code(503);
+    exit('Formularspeicher ist nicht verfuegbar. Bitte erneut versuchen.');
+}
+register_shutdown_function(static function () use ($chainLock): void { flock($chainLock, LOCK_UN); fclose($chainLock); });
+chain_cleanup_missing_requests($dirGdt, $tabletId);
+$chainState = null;
+$rootRequest = null;
 
 // ----------------- request gdt -----------------
 $dispatch = collect_tablet_requests($dirGdt, $FORM_DIR, $tabletId, $FORM_ID_MAX_LENGTH);
@@ -1264,7 +1470,6 @@ $dispatchError = '';
 $assignmentError = false;
 
 if (requests_have_identity_conflict($dispatch['all'])) {
-    delete_request_files($dispatch['all']);
     $dispatchError = 'Zuordnungsfehler, bitte bei Mitarbeiter melden';
     $assignmentError = true;
 } elseif (count($dispatch['errors']) > 0) {
@@ -1285,13 +1490,35 @@ if ($hasRequest && !has_patient_identity($reqFields)) {
     $dispatchError = 'Weder 3000 noch 0193 in der Auftrags-GDT vorhanden';
 }
 
-if ($hasRequest && $YAML_PATH !== '') {
+if ($hasRequest && $YAML_PATH !== '' && $_SERVER['REQUEST_METHOD'] !== 'POST' && !$assignmentError && $dispatchError === '') {
     $initialYaml = yaml_load_or_die_ascii($YAML_PATH);
+    if (!isset($initialYaml['__error']) && ((string)($initialYaml['meta']['handler'] ?? '') === ''
+        || is_file(chain_state_path($dirGdt, $selectedRequest['name'])))) {
+        try {
+            $rootRequest = $selectedRequest;
+            $chainState = chain_load($rootRequest, $dirGdt);
+            if ($chainState['phase'] !== 'active') {
+                chain_publish($rootRequest, $dirGdt, $chainState);
+                header('Location: ' . $scriptBase, true, 303);
+                exit;
+            }
+            $selectedRequest = chain_current_request($rootRequest, $chainState, $FORM_DIR, $FORM_ID_MAX_LENGTH);
+            $YAML_PATH = $selectedRequest['yaml_path'];
+            $reqFields = $selectedRequest['fields'];
+            $initialYaml = yaml_load_or_die_ascii($YAML_PATH);
+            if ((string)($initialYaml['meta']['handler'] ?? '') !== '') {
+                throw new RuntimeException('Dieser Bogen muss separat angefordert werden. Bitte bei Mitarbeiter melden.');
+            }
+        } catch (Throwable $e) {
+            $dispatchError = $e->getMessage();
+            $hasRequest = false;
+        }
+    }
     if (!isset($initialYaml['__error']) && isset($initialYaml['meta']['title'])) {
         $UI_TITLE = ascii_only((string)$initialYaml['meta']['title']) . ' (Tablet)';
     }
     $specialHandler = (string)($initialYaml['meta']['handler'] ?? '');
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $specialHandler !== '') {
+    if ($hasRequest && $_SERVER['REQUEST_METHOD'] !== 'POST' && $specialHandler !== '') {
         if (!preg_match('/^[a-z][a-z0-9_-]*\\.php$/', $specialHandler)) {
             $dispatchError = 'Ungueltiger Formularhandler: ' . $specialHandler;
         } else {
@@ -1307,6 +1534,8 @@ if ($hasRequest && $YAML_PATH !== '') {
         }
     }
 }
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $dispatchError !== '') $hasRequest = false;
 
 $vorname_raw  = $reqFields['3102'] ?? '';
 $nachname_raw = $reqFields['3101'] ?? '';
@@ -1351,7 +1580,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $liveDispatch = collect_tablet_requests($dirGdt, $FORM_DIR, $tabletId, $FORM_ID_MAX_LENGTH);
     if (requests_have_identity_conflict($liveDispatch['all'])) {
-        delete_request_files($liveDispatch['all']);
         json_out(409, [
             'status' => 'assignment_error',
             'message' => 'Zuordnungsfehler, bitte bei Mitarbeiter melden',
@@ -1371,10 +1599,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         json_out(409, ['status'=>'error','message'=>'Auftrags-GDT nicht mehr vorhanden. Bitte erneut versuchen.']);
     }
 
-    $selectedRequest = $postedRequest;
+    $rootRequest = $postedRequest;
+    try {
+        $chainState = chain_load($rootRequest, $dirGdt);
+        chain_check_post($chainState, $_POST);
+        if ($chainState['phase'] !== 'active') {
+            $output = chain_publish($rootRequest, $dirGdt, $chainState);
+            json_out(200, ['status'=>'ok', 'answer_gdt'=>$output, 'request_deleted'=>true, 'chain_pending'=>false]);
+        }
+        $selectedRequest = chain_current_request($rootRequest, $chainState, $FORM_DIR, $FORM_ID_MAX_LENGTH);
+    } catch (Throwable $e) {
+        json_out(409, ['status'=>'error', 'message'=>$e->getMessage()]);
+    }
     $requestPath = (string)$selectedRequest['path'];
     $REQUEST_GDT_NAME = (string)$selectedRequest['name'];
-    $OUT_GDT_NAME = $tabletPrefix . (string)$selectedRequest['form_id'] . '-o.gdt';
+    $OUT_GDT_NAME = $tabletPrefix . (string)$rootRequest['form_id'] . '-o.gdt';
     $YAML_PATH = (string)$selectedRequest['yaml_path'];
     $reqFields = (array)$selectedRequest['fields'];
     $hasRequest = true;
@@ -1403,13 +1642,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$hasRequest) json_out(409, ['status'=>'error','message'=>'Keine Auftrags-GDT gefunden ('.$REQUEST_GDT_NAME.').']);
     if ($ans3000 === '' && $ans0193 === '') json_out(422, ['status'=>'error','message'=>'Weder 3000 noch 0193 in der Auftrags-GDT vorhanden']);
 
-    if (($_POST['action'] ?? '') === 'abort') {
-        $deleted = @unlink($requestPath);
-        json_out(200, ['status'=>'ok','message'=>'abgebrochen','request_deleted'=>$deleted,'request_gdt'=>$REQUEST_GDT_NAME]);
-    }
-
     $yaml = yaml_load_or_die_ascii($YAML_PATH);
     if (isset($yaml['__error'])) json_out(500, ['status'=>'error','message'=>$yaml['__error'],'yaml'=>$YAML_PATH]);
+    if ((string)($yaml['meta']['handler'] ?? '') !== '') json_out(409, ['status'=>'error','message'=>'Dieser Bogen verwendet einen eigenen Ablauf. Bitte neu laden.']);
+
+    if (($_POST['action'] ?? '') === 'abort') {
+        try {
+            if ($chainState['parts'] === []) {
+                if (!hash_equals($chainState['stamp'], chain_request_stamp($requestPath))) {
+                    throw new RuntimeException('Der Auftrag wurde gerade geaendert. Bitte neu laden.');
+                }
+                if (!@unlink($requestPath)) throw new RuntimeException('Auftrag konnte nicht abgebrochen werden. Bitte erneut versuchen.');
+                @unlink(chain_state_path($dirGdt, $REQUEST_GDT_NAME));
+                json_out(200, ['status'=>'ok','message'=>'abgebrochen','request_deleted'=>true,'request_gdt'=>$REQUEST_GDT_NAME]);
+            }
+            $result = chain_store_result($rootRequest, $dirGdt, $chainState,
+                ascii_only((string)($yaml['meta']['title'] ?? $selectedRequest['form_id'])),
+                build_section_block_lines('Abgebrochen', ['Dieser Fragebogen wurde nicht ausgefuellt.'], $MAX_6228_BYTES), [], true);
+            json_out(200, $result);
+        } catch (Throwable $e) {
+            json_out(500, ['status'=>'error','message'=>$e->getMessage()]);
+        }
+    }
 
     // hardcoded top fields
     $height = ascii_only(clean_utf8_text((string)($_POST['height_cm'] ?? ''), 10));
@@ -1513,6 +1767,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     }
 
+    try {
+        chain_validate_followups($followUpPlan['forms']);
+    } catch (Throwable $e) {
+        json_out(500, ['status'=>'error', 'message'=>$e->getMessage()]);
+    }
+
     // Build 6228 lines
     $lines6228 = [];
 
@@ -1576,40 +1836,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lines[] = gdt_line('4121', '1');
     }
 
-    $outGdtPath = rtrim($dirGdt, '/') . '/' . $OUT_GDT_NAME;
-    write_gdt_file($outGdtPath, $lines);
-
-    $followUpResult = create_follow_up_requests(
-        $dirGdt,
-        $tabletPrefix,
-        $requestPath,
-        (string)$selectedRequest['form_id'],
-        $followUpPlan['forms']
-    );
-    if (count($followUpResult['errors']) > 0) {
-        json_out(500, [
-            'status' => 'error',
-            'message' => 'Folgeformular konnte nicht angelegt werden. Der aktuelle Auftrag bleibt bestehen.',
-            'details' => $followUpResult['errors'],
-        ]);
+    try {
+        $result = chain_store_result($rootRequest, $dirGdt, $chainState,
+            ascii_only((string)($yaml['meta']['title'] ?? $selectedRequest['form_id'])),
+            $lines, $followUpPlan['forms']);
+        json_out(200, $result);
+    } catch (Throwable $e) {
+        json_out(500, ['status'=>'error', 'message'=>$e->getMessage()]);
     }
-
-    $deleted = @unlink($requestPath);
-
-    json_out(200, [
-        'status'          => 'ok',
-        'message'         => 'Anamnese uebermittelt',
-        'answer_gdt'      => $OUT_GDT_NAME,
-        'request_gdt'     => $REQUEST_GDT_NAME,
-        'request_deleted' => $deleted,
-        'contact_changed' => (count($chgBullets) > 0),
-        'id_0193_used'    => $ans0193,
-        'id_3000_used'    => $ans3000,
-        'packyears'       => (string)($answers['_packyears_text'] ?? ''),
-        'xconcept_workaround' => ($ENABLE_XCONCEPT_3000_END_WORKAROUND && $ans3000 !== ''),
-        'follow_up_created' => $followUpResult['created'],
-        'follow_up_existing' => $followUpResult['existing'],
-    ]);
 }
 
 // ----------------- GET -----------------
@@ -1868,6 +2102,8 @@ $formHeading = ascii_only(clean_utf8_text((string)($uiConfig['heading'] ?? ''), 
 
     <form id="anamForm">
       <input type="hidden" name="request_gdt" value="<?php echo h($REQUEST_GDT_NAME); ?>" />
+      <input type="hidden" name="chain_token" value="<?php echo h((string)($chainState['token'] ?? '')); ?>" />
+      <input type="hidden" name="form_id" value="<?php echo h((string)($selectedRequest['form_id'] ?? '')); ?>" />
 
       <?php if ($showContactSection) { ?>
       <div class="section">
@@ -2369,10 +2605,8 @@ $formHeading = ascii_only(clean_utf8_text((string)($uiConfig['heading'] ?? ''), 
             var msg = (r.data && r.data.message) ? r.data.message : "Uebermittlung fehlgeschlagen";
             throw new Error(msg);
           }
-          setStatus("✅ erfolgreich uebermittelt", false);
-          var followUpCreated = Array.isArray(r.data.follow_up_created) && r.data.follow_up_created.length > 0;
-          var followUpExisting = Array.isArray(r.data.follow_up_existing) && r.data.follow_up_existing.length > 0;
-          var hasFollowUp = followUpCreated || followUpExisting;
+          var hasFollowUp = r.data.chain_pending === true;
+          setStatus(hasFollowUp ? "✅ Antworten gespeichert. Der naechste Fragebogen folgt." : "✅ erfolgreich uebermittelt", false);
           if (hasFollowUp) {
             try {
               sessionStorage.setItem(FOLLOW_UP_SCROLL_KEY, '1');
@@ -2392,13 +2626,13 @@ $formHeading = ascii_only(clean_utf8_text((string)($uiConfig['heading'] ?? ''), 
     });
 
     abortBtn.addEventListener("click", function () {
-      if (!confirm("Vorgang wirklich abbrechen? Die Anforderung wird geloescht.")) return;
+      if (!confirm("Diesen Fragebogen wirklich abbrechen? Bereits ausgefuellte Boegen bleiben erhalten; weitere Frageboegen folgen gegebenenfalls.")) return;
 
       submitBtn.disabled = true;
       abortBtn.disabled = true;
       setStatus("Abbruch laeuft…", false);
 
-      var formData = new FormData();
+      var formData = new FormData(formEl);
       formData.append("action", "abort");
 
       fetch(POST_URL, { method: "POST", body: formData })
@@ -2411,7 +2645,10 @@ $formHeading = ascii_only(clean_utf8_text((string)($uiConfig['heading'] ?? ''), 
         })
         .then(function(data) {
           if (!data || data.status !== "ok") throw new Error((data && data.message) ? data.message : "Abbruch fehlgeschlagen");
-          setStatus("❌ abgebrochen", false);
+          setStatus(data.chain_pending ? "Fragebogen abgebrochen. Der naechste Fragebogen folgt." : "Fragebogen abgebrochen.", false);
+          if (data.chain_pending) {
+            try { sessionStorage.setItem(FOLLOW_UP_SCROLL_KEY, '1'); } catch (e) {}
+          }
           setTimeout(function() { location.reload(); }, 800);
         })
         .catch(function(err) {

@@ -135,6 +135,66 @@ die erzeugten Endpunkte `tablet1.php` bis `tabletN.php`. Die Anzahl der
 Tablets wird vom Installer gespeichert und kann bei einer erneuten
 Einrichtung angepasst werden.
 
+## Formularfolgen mit gemeinsamer GDT-Antwort
+
+Seit `tablet.php` **1.8.3** werden die Ergebnisse eines Startbogens und seiner
+bedingten Folgeformulare gemeinsam zurueckgegeben. Beispiel:
+
+```text
+ana-i.gdt -> Anamnese -> ISI -> PHQ-9 -> ana-o.gdt
+```
+
+Die Antwortdatei entsteht erst nach Abschluss der gesamten Folge. Sie enthaelt
+die Ergebnisse aller beantworteten Boegen. Folgeformulare werden intern
+verwaltet; fuer sie entstehen keine eigenen `-i.gdt` oder `-o.gdt`.
+Die Namen und Tablet-Praefixe des Startauftrags bleiben erhalten, beispielsweise
+`1-anam-i.gdt` -> `1-anam-o.gdt`.
+
+Einzelaufrufe bleiben moeglich: Ein separat angefordertes `isi-i.gdt` erzeugt
+weiterhin `isi-o.gdt`. In der Praxissoftware wird eine eigene GDT-Einrichtung
+daher nur fuer die Boegen benoetigt, die direkt gestartet werden sollen.
+Mehrere eigenstaendige Auftraege bleiben auch beim selben Patienten getrennt.
+
+`follow_up_forms` in den YAML-Dateien funktioniert unveraendert. Alle Ziel-YAMLs
+muessen im Formular-Share liegen; numerische Dateipraefixe bestimmen die
+Reihenfolge innerhalb der Folge. Wiederholte Ziele werden pro Formular-ID nur
+einmal bearbeitet. Formulare mit eigenem `meta.handler`, etwa die
+Datenschutz-Unterschrift, werden weiterhin separat angefordert.
+
+Die Antworten werden nach jedem abgesendeten Bogen im GDT-Verzeichnis in
+verborgenen `.fragebogenpi-chain-*.json`-Dateien zwischengespeichert. Diese
+enthalten Patientendaten und gehoeren nicht ins Webroot oder Git-Repository.
+Beim Abschluss werden sie zusammen mit dem Startauftrag entfernt. Wird der
+Startauftrag manuell entfernt, werden seine Zwischenstaende beim naechsten
+Aufruf dieses Tablets verworfen. Auftraege waehrend einer laufenden Folge nicht
+ersetzen; ein erkannter Wechsel wird ohne Vermischung der Antworten blockiert.
+
+Beim Abbruch eines Folgeformulars bleiben die vorherigen Antworten erhalten;
+der ausgelassene Bogen wird in der gemeinsamen Antwort gekennzeichnet und
+weitere offene Boegen werden angeboten. Ein Abbruch des noch unbeantworteten
+Startbogens verwirft den Auftrag ohne Antwortdatei.
+
+Bereits vorhandene Antwortdateien werden nicht ueberschrieben. Nach ihrem
+Import kann die gespeicherte Antwort durch erneutes Absenden oder Neuladen
+bereitgestellt werden. Bei einem Prozessabbruch genau waehrend der Publikation
+kann der Importstatus unklar sein: Dann bleiben die Daten gespeichert und die
+Praxis muss pruefen, ob der Import bereits erfolgt ist, bevor sie den Auftrag
+bereinigt. Eine moeglicherweise schon importierte Antwort wird nicht automatisch
+ein zweites Mal erzeugt.
+
+Zum Aktualisieren `tablet.php` (bei mehreren Tablets entsprechend auch
+`tablet1.php` bis `tabletN.php`) im WLAN-Webroot ersetzen und die benoetigten
+YAML-Dateien aus `_yaml/` in den Formular-Share uebernehmen. Bereits nach dem
+alten Verfahren erzeugte Folge-GDTs bleiben eigenstaendige Auftraege; das Update
+daher zwischen abgeschlossenen Formularfolgen durchfuehren.
+
+Regressionstest ohne Zugriff auf reale Patientendaten:
+
+```bash
+php -l tablet.php
+php tests/tablet_form_chains_test.php
+```
+
 
 
 

@@ -125,11 +125,26 @@ follow_up_forms:
       equals: true
 ```
 
-Nach dem Absenden wird die Ziel-GDT als `act-i.gdt` beziehungsweise mit
-Tablet-Praefix angelegt. Das Ziel-YAML muss im Formular-Share vorhanden sein;
-seine optionale Prioritaet wird weiterhin ueber den YAML-Dateinamen bestimmt,
-zum Beispiel `5-act.yaml`. Folgeformulare duerfen ihrerseits weitere
-Folgeformulare ausloesen.
+Seit `tablet.php` v1.8.3 werden Folgeformulare intern dem Startauftrag
+zugeordnet. Erst am Ende entsteht eine gemeinsame Antwort-GDT unter dem Namen
+des Startbogens, zum Beispiel `ana-o.gdt` oder `1-anam-o.gdt`.
+Es werden keine eigenen Eingabe- oder Antwort-GDTs fuer Folgeformulare erzeugt.
+Einzeln angeforderte Boegen bleiben eigenstaendig (`act-i.gdt` -> `act-o.gdt`).
+Das Ziel-YAML muss im Formular-Share vorhanden sein; seine optionale Prioritaet
+wird weiterhin ueber den YAML-Dateinamen bestimmt, zum Beispiel `5-act.yaml`.
+Folgeformulare duerfen weitere Folgeformulare ausloesen; jede Formular-ID wird
+pro Folge nur einmal bearbeitet. Spezialisierte `meta.handler` werden separat
+angefordert und duerfen nicht als interne Folgeformulare verwendet werden.
+
+Fortschritt und Ergebnisse liegen temporaer in verborgenen
+`.fragebogenpi-chain-*.json`-Dateien im GDT-Verzeichnis. Sie enthalten
+Patientendaten und duerfen nicht eingecheckt werden. Ein Tablet-Lock und
+Schritttoken verhindern konkurrierende bzw. doppelte Uebermittlungen.
+Noch nicht abgeholte Antwortdateien duerfen niemals ueberschrieben werden.
+Beim Abbruch eines Folgeformulars bleiben vorige Ergebnisse erhalten und der
+ausgelassene Bogen wird gekennzeichnet. Bei Patientenkonflikten bleiben die
+Auftraege zur Klaerung erhalten; keine automatische Loeschung oder Vermischung.
+Regressionstest: `php tests/tablet_form_chains_test.php`.
 
 ### Netzwerk und WLAN
 

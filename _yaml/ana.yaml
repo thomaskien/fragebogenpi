@@ -1,6 +1,6 @@
 # anamnesebogen.yaml
 # Editierbarer Anamnesebogen (ohne hardcoded Top-Felder)
-# Version 2.3.5
+# Version 2.3.6
 # Autor: Dr. Thomas Kienzle
 #
 # Changelog (vollstaendig):
@@ -63,10 +63,12 @@
 #          "nein" geschlossen und erscheinen erst nach Auswahl eines Konsums.
 # - 2.3.5: Raucherdetails bleiben bei leerer Auswahl sowie bei "nein"
 #          geschlossen und erscheinen erst bei "ja" oder "ex-raucher".
+# - 2.3.6: Schlafstoerung unter Psychisch / Neurodivers ergaenzt;
+#          bei Auswahl folgt der Insomnia Severity Index (ISI).
 
 meta:
   title: "Anamnese"
-  version: "2.3.5"
+  version: "2.3.6"
   language: "de"
   form_ids: [ana, anam]
 
@@ -113,6 +115,11 @@ follow_up_forms:
   - form: act
     when:
       id: asthma
+      equals: true
+
+  - form: isi
+    when:
+      id: schlafstoerung
       equals: true
 
 sections:
@@ -222,6 +229,7 @@ sections:
       - { id: ptbs, label: "Posttraumatische Belastungsstoerung (PTBS)" }
       - { id: adhs, label: "ADHS" }
       - { id: autismus_spektrum, label: "Autismus-Spektrum" }
+      - { id: schlafstoerung, label: "Schlafstoerung" }
 
       - { type: header, label: "Sucht" }
       - { id: rauchen_checklist, label: "Rauchen" }
