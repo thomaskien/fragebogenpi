@@ -1,6 +1,6 @@
-# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.6
+# fragebogenpi Wartezimmerbildschirm – Spezifikation v1.5.8
 
-Stand: 2026-07-18
+Stand: 2026-09-29
 
 ## Zweck
 
@@ -14,7 +14,7 @@ niemals an den Wartezimmer-Pi übertragen.
 
 ## Systemarchitektur
 
-### Zentraler fragebogenpi 1.6
+### Zentraler fragebogenpi 1.7.1
 
 - Die Praxissoftware schreibt Auftragsdateien über LAN/SMB in den separaten
   Share:
@@ -34,7 +34,7 @@ niemals an den Wartezimmer-Pi übertragen.
   /etc/fragebogenpi/wartezimmer-config.php
   ```
 
-### Wartezimmer-Pi 1.5.6
+### Wartezimmer-Pi 1.5.8
 
 - Apache/PHP liefert die lokale Kiosk-Web-App `wartezimmer.php` aus.
 - Ein lokales Python-Backend fragt ausschließlich folgenden Endpunkt ab:
@@ -139,7 +139,7 @@ Dateiname werden nicht übertragen.
 
 ## Installer-Abfragen des Wartezimmer-Pi
 
-Version 1.5.6 fragt interaktiv:
+Version 1.5.8 fragt interaktiv:
 
 ```text
 Installation wirklich starten? [y/N]
@@ -153,6 +153,9 @@ WLAN Passwort (Wiederholung):
 
 IP-Adresse des fragebogenpi-Servers [10.23.0.1]:
 Abfrageintervall in Sekunden [3]:
+
+Täglich herunterfahren um HH:MM [nein]:
+Zeitzone für das Herunterfahren [Europe/Berlin]:
 ```
 
 Die eigene WLAN-IP erhält der Wartezimmer-Pi per DHCP vom fragebogenpi. Bei
@@ -169,12 +172,30 @@ Server-IP und Query-Intervall werden außerhalb des Webroots gespeichert:
 Für das Query-Intervall gibt es keine fachliche Obergrenze; es muss lediglich
 eine positive Zahl sein.
 
+Chrony verwendet ausschließlich die eingegebene fragebogenpi-IP als Zeitserver;
+öffentliche Fallbacks oder weitere DHCP-Zeitquellen werden nicht konfiguriert.
+Der zentrale Pi kündigt seinen NTP-Dienst zusätzlich per DHCPv4-Option 42 an.
+
+Die optionale Abschaltzeit muss zwischen `00:00` und `23:59` liegen. `nein`
+oder eine leere Eingabe deaktiviert und entfernt nur den eigenen Abschalttimer.
+Die IANA-Zeitzone wird im Timer fest eingetragen, ohne die Systemzeitzone zu
+ändern. Vor dem Abschalten prüft der Dienst mit einem einzelnen Chrony-Versuch
+die Synchronisation und vergleicht nochmals die aktuelle Ortszeit. Verpasste
+Termine werden nicht nachgeholt.
+Der Timer wird erst am Ende der Installation aktiviert. Bei erneuter
+Installation wird ein vorhandener eigener Timer vorher angehalten.
+
+Technische Referenzen: [Chrony-Konfiguration](https://chrony-project.org/doc/4.6/chrony.conf.html),
+[DHCP-Optionen in dnsmasq](https://thekelleys.org.uk/dnsmasq/docs/dnsmasq-man.html),
+[systemd-Timer](https://github.com/systemd/systemd/blob/main/man/systemd.timer.xml).
+
 ## Medien- und Anzeigeverhalten
 
 Die lokale Datei `/var/www/html/wartezimmer.json` enthält ausschließlich die
 Anzeige- und Medienkonfiguration:
 
 - `mode`: `video` oder `slideshow`
+- `video_random_order`: zufällige Video-Reihenfolge (`true` im Installer)
 - `display_seconds`: Dauer des Aufruf-Overlays
 - `video_dir`, `image_dir`, `sound_dir`
 - `default_sound`
@@ -184,7 +205,17 @@ Anzeige- und Medienkonfiguration:
 
 Für die Audioausgabe von Firefox installiert der Installer `pipewire-audio`.
 
-Videos und Bilder werden alphabetisch abgespielt. Dotfiles, AppleDouble-Dateien,
+Mit `video_random_order: true` wird die Video-Playlist beim Start und nach jedem
+vollständigen Durchlauf neu gemischt. Jedes Video kommt pro Durchlauf genau
+einmal vor. Bei mehr als einem Video wird eine direkte Wiederholung am Übergang
+zwischen zwei Durchläufen vermieden. Aufrufpausen behalten die Reihenfolge bei.
+Falls `playlist_restart_on_call_end` aktiviert ist, beginnt nach dem Aufruf
+dieselbe gemischte Playlist erneut von vorne.
+
+Mit `video_random_order: false` (oder fehlender Einstellung in einer vorhandenen
+Konfiguration) werden Videos alphabetisch abgespielt. Eine geänderte Einstellung
+gilt spätestens ab dem nächsten Durchlauf; Neuladen startet sie sofort.
+Bilder werden weiterhin alphabetisch abgespielt. Dotfiles, AppleDouble-Dateien,
 `.DS_Store`, `Thumbs.db` und `desktop.ini` werden ignoriert. Fehlerhafte
 Videos werden übersprungen.
 
@@ -206,6 +237,7 @@ Bei einem Aufruf:
 - Eingehende Verbindungen über das erkannte WLAN-Interface des
   Wartezimmer-Pi bleiben blockiert.
 - Ausgehende HTTP-Queries zum fragebogenpi sind erlaubt.
+- Ausgehende NTP-Anfragen gehen nur an den konfigurierten fragebogenpi-Server.
 - `eth0` des Wartezimmer-Pi bleibt für lokale Administration und den
   Medien-Samba-Share offen.
 - Es gibt kein Routing zwischen WLAN und LAN.
@@ -245,6 +277,9 @@ der Wartezimmer-Anwendungsdaten.
 /var/www/html/images/
 /var/www/html/sounds/
 /etc/fragebogenpi-wartezimmer/server.json
+/etc/chrony/chrony.conf
+/etc/systemd/system/wartezimmer-poweroff.service
+/etc/systemd/system/wartezimmer-poweroff.timer
 /usr/local/bin/infodisplay-backend.py
 /etc/systemd/system/infodisplay-backend.service
 /usr/local/bin/wartezimmer_firefox_kiosk.sh

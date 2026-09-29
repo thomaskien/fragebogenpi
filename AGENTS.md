@@ -26,8 +26,8 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigten Basisversionen sind:
 
 ```text
-fragebogenpi.sh v1.7.0
-wartezimmer.sh v1.5.6
+fragebogenpi.sh v1.7.1
+wartezimmer.sh v1.5.8
 ```
 
 Diese Datei ist die verbindliche Ausgangsbasis. Nicht neu rekonstruieren und nicht auf aeltere Varianten zurueckfallen.
@@ -97,7 +97,7 @@ Diese Punkte sind in `fragebogenpi.sh` seit v1.5.9 umgesetzt:
   - die WLAN-Instanz nutzt ausschliesslich den WLAN-Webroot
   - WLAN darf keine anderen Apache-Anwendungen wie `kienzlefax` oder `telepraxis` erreichen
 - Firewall:
-  - aus dem WLAN werden nur HTTP und bei aktivem HTTPS zusaetzlich HTTPS zur AP-IP erlaubt
+  - aus dem WLAN werden nur HTTP und bei aktivem HTTPS zusaetzlich HTTPS zur AP-IP erlaubt (seit v1.7.1 zusaetzlich NTP)
   - im HTTP-only-Modus darf TCP/443 aus dem WLAN nicht pauschal offen sein
 
 ## Installer-Aenderungen seit v1.6.3
@@ -154,7 +154,7 @@ Regressionstest: `php tests/tablet_form_chains_test.php`.
   - IP: `10.23.0.1/24`
   - DHCP-Bereich: `10.23.0.50` bis `10.23.0.150`
   - kein Routing vom WLAN ins LAN oder Internet
-  - WLAN-Clients duerfen nur HTTP/HTTPS zum Pi nutzen
+  - WLAN-Clients duerfen nur HTTP/HTTPS und NTP zum Pi nutzen
   - SSH und SMB sind auf WLAN blockiert
 - LAN:
   - Interface: `eth0`
@@ -174,6 +174,11 @@ Regressionstest: `php tests/tablet_form_chains_test.php`.
   - falls kein `dhcpcd` vorhanden ist, wird ein eigener systemd-Oneshot-Service verwendet:
     - `/etc/systemd/system/fragebogenpi-ap-ip.service`
     - `/usr/local/sbin/fragebogenpi-ap-ip.sh`
+- Zeitserver:
+  - Chrony bezieht Zeit per LAN von `2.debian.pool.ntp.org`
+  - NTP lauscht nur auf `10.23.0.1`/`wlan0` und erlaubt nur `10.23.0.0/24`
+  - dnsmasq kuendigt `10.23.0.1` in beiden Betriebsarten per DHCPv4-Option 42 an
+  - Wartezimmer-Pis verwenden diese IP explizit als einzigen Chrony-Server
 
 ### Firewall
 
@@ -183,6 +188,7 @@ Aktuelle relevante Regelstrategie:
 - kein globales `flush ruleset`
 - dadurch sollen fremde oder bestehende Netzwerkregeln nicht zerstoert werden
 - `eth0` bleibt unberuehrt
+- UDP/123 ist nur von `10.23.0.0/24` auf `wlan0` zur AP-IP erlaubt
 - Forwarding wird nur zwischen/ueber `wlan0` blockiert
 - `net.ipv4.ip_forward=0`
 - `net.ipv6.conf.all.forwarding=0`
@@ -389,6 +395,9 @@ Wenn `/srv/fragebogenpi` existiert, zeigt der Installer:
 1) Vollstaendige Neu-Konfiguration
 2) Nur Webroot-Update
 3) Nur User hinzufuegen / reparieren
+4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren
+5) Nur Tablet-/Formularbetrieb einrichten / aktualisieren
+6) Nur Zeitserver einrichten / aktualisieren
 ```
 
 ### Modus 1
@@ -416,6 +425,25 @@ Nur User hinzufuegen oder reparieren:
 - keine Aenderungen an WLAN, Firewall, Webroot, Apache oder Shares
 - User einzeln abfragen
 - Passwort setzen und Login-Test durchfuehren
+
+### Modus 6
+
+Nur Zeitserver einrichten oder aktualisieren:
+
+- prueft AP-IP sowie bekannte dnsmasq- und nftables-Struktur vor Aenderungen
+- richtet Chrony, DHCP-Option 42 und die einzelne NTP-Firewallregel ein
+- laesst fremde Firewallregeln und alle anderen Installerbereiche unveraendert
+- fuehrt keinen Reboot aus
+
+### Wartezimmer-Zeit und Abschaltung
+
+`wartezimmer.sh` konfiguriert Chrony als reinen Client des Haupt-Pi. Optional
+wird ein eigener taeglicher systemd-Timer mit validierter IANA-Zeitzone
+eingerichtet. Unsynchronisierte oder verspaetet korrigierte Uhren loesen keine
+Abschaltung aus; `nein` entfernt nur diese eigenen Timer-Units.
+Der Timer wird erst nach Abschluss der Installation aktiviert.
+Regressionstest: `python3 tests/installer_time_test.py` (isolierte Stubs, keine
+echten Dienststarts oder Abschaltungen).
 
 ## Benutzerloeschung und Reboot
 

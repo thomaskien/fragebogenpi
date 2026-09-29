@@ -41,7 +41,7 @@ Man braucht:
 
 Das Projekt richtet einen Raspberry Pi so ein, dass:
 - im **LAN** ein normal erreichbarer Web- und Samba-Server läuft
-- im **WLAN** ein **isoliertes Netz** („fragebogenpi“) bereitgestellt wird, das **ausschließlich** Zugriff auf den lokalen Webserver erlaubt
+- im **WLAN** ein **isoliertes Netz** („fragebogenpi“) bereitgestellt wird, das **ausschließlich** Zugriff auf den lokalen Web- und Zeitserver erlaubt
 - **kein Routing** ins LAN oder Internet möglich ist
 
 ---
@@ -51,7 +51,7 @@ Das Projekt richtet einen Raspberry Pi so ein, dass:
 - **WLAN-Access-Point**
   - SSID: `fragebogenpi`
   - eigenes Subnetz (kein Internet, kein LAN-Zugriff)
-  - nur HTTP/HTTPS erlaubt
+  - nur HTTP/HTTPS und NTP zum Pi erlaubt
   - SSH & SMB im WLAN blockiert
 
 - **LAN-Anbindung**
@@ -82,6 +82,12 @@ Das Projekt richtet einen Raspberry Pi so ein, dass:
   - kein IP-Forwarding / kein Routing
   - SSH nur per Firewall im WLAN blockiert (sshd läuft normal)
 
+- **Zeitsynchronisation**
+  - Der Haupt-Pi synchronisiert sich per LAN mit Debian-NTP-Servern.
+  - Chrony stellt NTP nur am isolierten WLAN-Access-Point bereit.
+  - DHCPv4 kündigt `10.23.0.1` per Option 42 als Zeitserver an.
+  - Die WLAN-Firewall erlaubt dafür ausschließlich UDP/123 zum Haupt-Pi.
+
 ---
 
 ## Installation
@@ -94,6 +100,14 @@ chmod +x fragebogenpi.sh
 sudo bash ./fragebogenpi.sh
 ```
 
+Seit Installer **1.7.1** wird der Zeitserver bei einer Vollinstallation
+automatisch eingerichtet. Auf einem bereits eingerichteten fragebogenpi im
+aktuellen Installer **6) Nur Zeitserver einrichten / aktualisieren** wählen.
+Dieser Modus ergänzt Chrony, die DHCP-Ankündigung und die NTP-Firewallregel,
+ohne Passwörter oder die übrige Einrichtung neu zu setzen. Die Modi 2–5
+rüsten den Zeitserver nicht nach. DHCP-Clients erhalten die Ankündigung beim
+nächsten Bezug bzw. Erneuern ihrer Adresse.
+
 Für den **Wartezimmer-Aufrufschirm** auf ZWEITEM Raspberry pi:
 
 ```bash
@@ -101,6 +115,22 @@ wget https://raw.githubusercontent.com/thomaskien/fragebogenpi/refs/heads/main/w
 chmod +x wartezimmer.sh
 sudo bash ./wartezimmer.sh
 ```
+
+Der Wartezimmer-Pi verwendet den im Installer angegebenen fragebogenpi
+explizit als einzigen Chrony-Zeitserver. Optional kann eine tägliche
+Abschaltzeit samt IANA-Zeitzone (Standard `Europe/Berlin`) eingerichtet werden.
+Bei unsynchronisierter Uhr wird nicht heruntergefahren.
+
+Zur Prüfung auf dem Haupt-Pi und dem Wartezimmer-Pi:
+
+```bash
+sudo chronyc tracking
+sudo chronyc sources -v
+```
+
+Auf dem Wartezimmer-Pi zeigt `systemctl list-timers wartezimmer-poweroff.timer`
+den nächsten Abschalttermin. `nein` oder eine leere Eingabe bei der
+Installationsabfrage deaktiviert den eigenen Abschaltplan.
 
 ## Mehrgeraetebetrieb der Tablet-Formulare
 

@@ -4,11 +4,16 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.7.0
+# Version: 1.7.1
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.7.1 (2026-09-29)
+#   * Chrony stellt die per LAN synchronisierte Zeit ausschließlich im isolierten WLAN bereit.
+#   * DHCP kündigt den Zeitserver per Option 42 an; die Firewall erlaubt dafür nur UDP/123 am AP.
+#   * Neuer bestehender Installationsmodus 6 aktualisiert ausschließlich den Zeitserver.
 #
 # - 1.7.0 (2026-07-18)
 #   * Tablet-Formularbetrieb unterstützt bedingte Folgeformulare aus YAML.
@@ -273,6 +278,12 @@ AP_DHCP_START="10.23.0.50"
 AP_DHCP_END="10.23.0.150"
 AP_NETMASK="255.255.255.0"
 
+# Zeitserver für das isolierte WLAN
+CHRONY_CONF="/etc/chrony/chrony.conf"
+DNSMASQ_CONF="/etc/dnsmasq.d/fragebogenpi.conf"
+NFTABLES_CONF="/etc/nftables.conf"
+SYSCTL_CONF="/etc/sysctl.d/99-fragebogenpi.conf"
+
 # Variante A: Shares außerhalb des Webroots
 SHARE_BASE="/srv/fragebogenpi"
 WEBROOT_LAN="/var/www/html"
@@ -346,7 +357,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.7.0"
+VERSION="1.7.1"
 STEP_NO=0
 
 banner() {
@@ -609,15 +620,17 @@ ask_choice_existing_install() {
   echo "  3) Nur User hinzufügen (legt/aktualisiert zusätzliche Windows-/Samba-User; sonst keine Änderungen)" >&2
   echo "  4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren" >&2
   echo "  5) Nur Tablet-/Formularbetrieb einrichten / aktualisieren" >&2
+  echo "  6) Nur Zeitserver einrichten / aktualisieren" >&2
   while true; do
-    read -r -p "Auswahl [1/2/3/4/5]: " answer
+    read -r -p "Auswahl [1/2/3/4/5/6]: " answer
     case "$answer" in
       1) echo "full"; return 0 ;;
       2) echo "webroot"; return 0 ;;
       3) echo "users"; return 0 ;;
       4) echo "waiting"; return 0 ;;
       5) echo "tablets"; return 0 ;;
-      *) echo "Bitte 1, 2, 3, 4 oder 5 eingeben." >&2 ;;
+      6) echo "time-server"; return 0 ;;
+      *) echo "Bitte 1, 2, 3, 4, 5 oder 6 eingeben." >&2 ;;
     esac
   done
 }
@@ -892,7 +905,7 @@ install_packages_full() {
     apache2 php libapache2-mod-php php-gd php-yaml \
     samba samba-common-bin smbclient \
     hostapd dnsmasq \
-    nftables \
+    nftables chrony \
     acl openssl \
     avahi-daemon \
     python3 \
@@ -901,7 +914,14 @@ install_packages_full() {
     sudo \
     iw
 
-  ok "Pakete installiert (inkl. php-gd, php-yaml, curl, unattended-upgrades, sudo, iw, samba-common-bin, smbclient)"
+  ok "Pakete installiert (inkl. chrony, php-gd, php-yaml, curl, unattended-upgrades, sudo, iw, samba-common-bin, smbclient)"
+}
+
+install_packages_time_server_only() {
+  step "Minimal: Pakete für den Zeitserver sicherstellen"
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y chrony dnsmasq nftables
+  ok "chrony, dnsmasq und nftables sind verfügbar"
 }
 
 install_packages_webroot_only() {
@@ -1553,6 +1573,216 @@ EOF
   ok "AP-IP gesetzt (${AP_INTERFACE} = ${AP_IP})"
 }
 
+write_and_activate_chrony_server_config() {
+  step "Zeitserver (chrony) für das isolierte WLAN konfigurieren"
+
+  mkdir -p "$(dirname "$CHRONY_CONF")"
+  local candidate
+  candidate="$(mktemp "${CHRONY_CONF}.fragebogenpi.XXXXXX")"
+  trap 'rm -f "$candidate"' RETURN
+
+  cat > "$candidate" <<EOF
+# Vollständig verwaltet durch fragebogenpi
+pool 2.debian.pool.ntp.org iburst
+driftfile /var/lib/chrony/chrony.drift
+makestep 1 3
+rtcsync
+bindaddress ${AP_IP}
+binddevice ${AP_INTERFACE}
+allow ${AP_SUBNET_CIDR}
+cmdport 0
+EOF
+
+  chronyd -p -f "$candidate" >/dev/null || die "Chrony-Konfiguration ist ungültig."
+  backup_file "$CHRONY_CONF"
+  install -m 0644 "$candidate" "$CHRONY_CONF"
+  rm -f "$candidate"
+  trap - RETURN
+
+  systemctl enable chrony
+  systemctl restart chrony || print_service_debug_and_die "chrony.service"
+  ok "Zeitserver aktiv: ${AP_IP}:123/UDP nur für ${AP_SUBNET_CIDR}"
+}
+
+validate_time_server_only_prerequisites() {
+  local got_ip
+  got_ip="$(get_iface_ipv4 "$AP_INTERFACE")"
+  [[ "$got_ip" == "$AP_IP" ]] || \
+    die "Modus 6 abgelehnt: ${AP_INTERFACE} hat '${got_ip:-<keine>}' statt der erwarteten AP-IP ${AP_IP}."
+
+  [[ -f "$DNSMASQ_CONF" ]] || die "Modus 6 abgelehnt: ${DNSMASQ_CONF} fehlt."
+  [[ "$(grep -c '^interface=' "$DNSMASQ_CONF" || true)" == "1" ]] || \
+    die "Modus 6 abgelehnt: dnsmasq-interface ist nicht eindeutig."
+  grep -Fxq "interface=${AP_INTERFACE}" "$DNSMASQ_CONF" || \
+    die "Modus 6 abgelehnt: dnsmasq verwendet nicht ${AP_INTERFACE}."
+  [[ "$(grep -c '^listen-address=' "$DNSMASQ_CONF" || true)" == "1" ]] || \
+    die "Modus 6 abgelehnt: dnsmasq-listen-address ist nicht eindeutig."
+  grep -Fxq "listen-address=${AP_IP}" "$DNSMASQ_CONF" || \
+    die "Modus 6 abgelehnt: dnsmasq lauscht nicht auf ${AP_IP}."
+
+  validate_fragebogenpi_firewall_structure "$NFTABLES_CONF"
+  time_server_live_ntp_state >/dev/null
+  ok "Bestehende AP-, DHCP- und Firewall-Struktur für Modus 6 geprüft"
+}
+
+validate_fragebogenpi_firewall_structure() {
+  local file="$1" candidate="${2:-}"
+  [[ -f "$file" ]] || die "Modus 6 abgelehnt: ${file} fehlt."
+  python3 - "$file" "$AP_INTERFACE" "$AP_SUBNET_CIDR" "$AP_IP" "$candidate" <<'PY_FIREWALL' || \
+    die "Modus 6 abgelehnt: unbekannte oder nicht eindeutige fragebogenpi-Firewallstruktur."
+import re
+import sys
+
+path, interface, subnet, address, target = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+rule = f'    iif "{interface}" ip saddr {subnet} ip daddr {address} udp dport 123 accept comment "fragebogenpi-ntp"\n'
+anchor = re.compile(r'^\s*iif\s+"' + re.escape(interface) + r'"\s+drop\s*$')
+depth = 0
+table_depth = input_depth = None
+tables = inputs = 0
+anchors, marked = [], []
+for index, line in enumerate(lines):
+    code = line.split("#", 1)[0]
+    if re.match(r"^\s*table\s+inet\s+fragebogenpi\s*\{", code):
+        tables += 1
+        table_depth = depth + 1
+    elif table_depth is not None and depth == table_depth and re.match(r"^\s*chain\s+input\s*\{", code):
+        inputs += 1
+        input_depth = depth + 1
+    elif input_depth is not None and depth == input_depth:
+        if anchor.match(code):
+            anchors.append(index)
+        if 'comment "fragebogenpi-ntp"' in code:
+            marked.append(index)
+    depth += code.count("{") - code.count("}")
+    if input_depth is not None and depth < input_depth:
+        input_depth = None
+    if table_depth is not None and depth < table_depth:
+        table_depth = None
+
+if tables != 1 or inputs != 1 or len(anchors) != 1 or depth != 0:
+    raise SystemExit("Erwartet: eigene Tabelle mit genau einer input-Chain und WLAN-drop-Regel")
+if marked:
+    if len(marked) != 1 or lines[marked[0]].strip() != rule.strip() or marked[0] >= anchors[0]:
+        raise SystemExit("Markierte NTP-Regel ist unbekannt oder steht hinter der WLAN-Sperre")
+else:
+    lines.insert(anchors[0], rule)
+if target:
+    open(target, "w", encoding="utf-8").writelines(lines)
+PY_FIREWALL
+}
+
+time_server_live_ntp_state() {
+  local rules
+  rules="$(nft list chain inet fragebogenpi input)" || die "Modus 6 abgelehnt: aktive fragebogenpi-input-Chain fehlt."
+  python3 - "$rules" "$AP_INTERFACE" "$AP_SUBNET_CIDR" "$AP_IP" <<'PY_LIVE' || \
+    die "Modus 6 abgelehnt: aktive NTP-/WLAN-Regeln sind unbekannt."
+import re
+import sys
+
+rules, interface, subnet, address = sys.argv[1:]
+lines = [line.strip() for line in rules.splitlines()]
+anchor = re.compile(r'iif(?:name)? "' + re.escape(interface) + r'" drop')
+anchors = [i for i, line in enumerate(lines) if anchor.fullmatch(line)]
+marked = [i for i, line in enumerate(lines) if 'comment "fragebogenpi-ntp"' in line]
+expected = f'ip saddr {subnet} ip daddr {address} udp dport 123 accept comment "fragebogenpi-ntp"'
+if len(anchors) != 1:
+    raise SystemExit("Aktive WLAN-drop-Regel fehlt oder ist nicht eindeutig")
+if marked:
+    valid = [f'iif{suffix} "{interface}" {expected}' for suffix in ("", "name")]
+    if len(marked) != 1 or lines[marked[0]] not in valid or marked[0] >= anchors[0]:
+        raise SystemExit("Aktive NTP-Regel ist unbekannt oder steht hinter der WLAN-Sperre")
+print("yes" if marked else "no")
+PY_LIVE
+}
+
+backup_dnsmasq_file() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    # dnsmasq ignoriert versteckte Dateien auch bei conf-dir ohne *.conf-Filter.
+    cp -a "$file" "$(dirname "$file")/.$(basename "$file").bak.$(date +%Y%m%d_%H%M%S)"
+  fi
+}
+
+patch_dnsmasq_ntp_option() {
+  local candidate destination="${1:-$DNSMASQ_CONF}"
+  candidate="$(mktemp "$(dirname "$DNSMASQ_CONF")/.fragebogenpi-ntp.XXXXXX")"
+  trap 'rm -f "$candidate"' RETURN
+
+  python3 - "$DNSMASQ_CONF" "$candidate" "$AP_IP" <<'PY'
+import sys
+
+source, target, address = sys.argv[1:]
+lines = open(source, encoding="utf-8").read().splitlines(keepends=True)
+wanted = f"dhcp-option-force=option:ntp-server,{address}\n"
+found = False
+out = []
+for line in lines:
+    if line.startswith("dhcp-option-force=option:ntp-server,"):
+        if not found:
+            out.append(wanted)
+            found = True
+        continue
+    out.append(line)
+if not found:
+    insert_at = next((i + 1 for i, line in enumerate(out) if line.startswith("dhcp-range=")), len(out))
+    out.insert(insert_at, wanted)
+open(target, "w", encoding="utf-8").writelines(out)
+PY
+
+  dnsmasq --test --conf-file="$candidate" >/dev/null || die "dnsmasq-Kandidat mit NTP-Option ist ungültig."
+  if ! cmp -s "$candidate" "$destination"; then
+    backup_dnsmasq_file "$destination"
+    cp "$candidate" "$destination"
+  fi
+  rm -f "$candidate"
+  trap - RETURN
+}
+
+patch_firewall_ntp_rule_persistent() {
+  local candidate destination="${1:-$NFTABLES_CONF}"
+  candidate="$(mktemp "${NFTABLES_CONF}.fragebogenpi.XXXXXX")"
+  trap 'rm -f "$candidate"' RETURN
+
+  validate_fragebogenpi_firewall_structure "$NFTABLES_CONF" "$candidate"
+
+  nft -c -f "$candidate" || die "Firewall-Kandidat mit NTP-Regel ist ungültig."
+  if ! cmp -s "$candidate" "$destination"; then
+    backup_file "$destination"
+    cp "$candidate" "$destination"
+  fi
+  rm -f "$candidate"
+  trap - RETURN
+}
+
+activate_time_server_only_changes() (
+  local live_ntp staged
+  live_ntp="$(time_server_live_ntp_state)"
+  staged="$(mktemp -d)"
+  trap 'rm -rf -- "$staged"' EXIT
+  # Beide Kandidaten prüfen, bevor eine laufende Konfiguration geändert wird.
+  patch_dnsmasq_ntp_option "$staged/dnsmasq.conf"
+  patch_firewall_ntp_rule_persistent "$staged/nftables.conf"
+
+  if ! cmp -s "$staged/dnsmasq.conf" "$DNSMASQ_CONF"; then
+    backup_dnsmasq_file "$DNSMASQ_CONF"
+    cp "$staged/dnsmasq.conf" "$DNSMASQ_CONF"
+  fi
+  if ! cmp -s "$staged/nftables.conf" "$NFTABLES_CONF"; then
+    backup_file "$NFTABLES_CONF"
+    cp "$staged/nftables.conf" "$NFTABLES_CONF"
+  fi
+
+  systemctl restart dnsmasq || print_service_debug_and_die "dnsmasq.service"
+
+  if [[ "$live_ntp" == "no" ]]; then
+    nft insert rule inet fragebogenpi input \
+      iifname "\"${AP_INTERFACE}\"" ip saddr "$AP_SUBNET_CIDR" ip daddr "$AP_IP" \
+      udp dport 123 accept comment '"fragebogenpi-ntp"'
+  fi
+  ok "DHCP-Option 42 und einzelne NTP-Firewallregel aktiv"
+)
+
 setup_ap_hostapd_dnsmasq() {
   step "WLAN Access Point (hostapd) + DHCP (dnsmasq) konfigurieren"
   local wifi_pw="$1"
@@ -1589,8 +1819,8 @@ EOF
   backup_file "$hostapd_default"
   sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' "$hostapd_default" || true
 
-  local dnsmasq_conf="/etc/dnsmasq.d/fragebogenpi.conf"
-  backup_file "$dnsmasq_conf"
+  local dnsmasq_conf="$DNSMASQ_CONF"
+  backup_dnsmasq_file "$dnsmasq_conf"
 
   local dns_enabled="yes"
   if port_in_use 53; then
@@ -1598,23 +1828,7 @@ EOF
     warn "Port 53 (DNS) ist belegt. dnsmasq wird DHCP-only gestartet."
   fi
 
-  if [[ "$dns_enabled" == "yes" ]]; then
-    cat > "$dnsmasq_conf" <<EOF
-interface=${AP_INTERFACE}
-bind-interfaces
-listen-address=${AP_IP}
-dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
-address=/#/${AP_IP}
-EOF
-  else
-    cat > "$dnsmasq_conf" <<EOF
-interface=${AP_INTERFACE}
-bind-interfaces
-listen-address=${AP_IP}
-port=0
-dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
-EOF
-  fi
+  write_dnsmasq_ap_config "$dnsmasq_conf" "$dns_enabled"
 
   systemctl unmask hostapd >/dev/null 2>&1 || true
   systemctl enable --now hostapd || true
@@ -1624,6 +1838,31 @@ EOF
   systemctl restart dnsmasq || print_service_debug_and_die "dnsmasq.service"
 
   ok "AP/DHCP aktiv"
+}
+
+write_dnsmasq_ap_config() {
+  local dnsmasq_conf="$1"
+  local dns_enabled="$2"
+
+  if [[ "$dns_enabled" == "yes" ]]; then
+    cat > "$dnsmasq_conf" <<EOF
+interface=${AP_INTERFACE}
+bind-interfaces
+listen-address=${AP_IP}
+dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
+dhcp-option-force=option:ntp-server,${AP_IP}
+address=/#/${AP_IP}
+EOF
+  else
+    cat > "$dnsmasq_conf" <<EOF
+interface=${AP_INTERFACE}
+bind-interfaces
+listen-address=${AP_IP}
+port=0
+dhcp-range=${AP_DHCP_START},${AP_DHCP_END},${AP_NETMASK},12h
+dhcp-option-force=option:ntp-server,${AP_IP}
+EOF
+  fi
 }
 
 ensure_ssl_cert_if_requested() {
@@ -2005,7 +2244,7 @@ setup_firewall_nftables_wlan_only() {
   step "Firewall: nur WLAN beschränken, LAN unberührt lassen (kein Routing)"
   local web_mode="$1"
 
-  local nftconf="/etc/nftables.conf"
+  local nftconf="$NFTABLES_CONF"
   backup_file "$nftconf"
 
   local web_allow_rule='    iif "'${AP_INTERFACE}'" ip daddr '${AP_IP}' tcp dport 80 accept'
@@ -2025,6 +2264,7 @@ table inet fragebogenpi {
     iif "${AP_INTERFACE}" tcp dport 22 drop
     iif "${AP_INTERFACE}" udp dport { 67, 68 } accept
     iif "${AP_INTERFACE}" udp dport 53 accept
+    iif "${AP_INTERFACE}" ip saddr ${AP_SUBNET_CIDR} ip daddr ${AP_IP} udp dport 123 accept comment "fragebogenpi-ntp"
 ${web_allow_rule}
     iif "${AP_INTERFACE}" drop
   }
@@ -2048,7 +2288,7 @@ EOF
   systemctl enable --now nftables
   systemctl restart nftables
 
-  cat > /etc/sysctl.d/99-fragebogenpi.conf <<EOF
+  cat > "$SYSCTL_CONF" <<EOF
 net.ipv4.ip_forward=0
 net.ipv6.conf.all.forwarding=0
 EOF
@@ -2387,6 +2627,27 @@ main() {
   fi
 
   # ------------------------------------------------------
+  # Modus 6: Nur Zeitserver
+  # ------------------------------------------------------
+  if [[ "$mode" == "time-server" ]]; then
+    step "Modus: Nur Zeitserver einrichten / aktualisieren"
+    log "Prüfe die bekannte AP-, DHCP- und Firewallstruktur vor jeder Änderung."
+
+    validate_time_server_only_prerequisites
+    install_packages_time_server_only
+    write_and_activate_chrony_server_config
+    activate_time_server_only_changes
+
+    step "Abschluss (nur Zeitserver)"
+    echo
+    echo "Zeitserver: ${AP_IP}:123/UDP für ${AP_SUBNET_CIDR} auf ${AP_INTERFACE}"
+    echo "DHCPv4: Option 42 kündigt ${AP_IP} an"
+    echo "Andere Netzwerk-, WLAN-, Samba-, Webroot- und Passwortkonfigurationen wurden nicht verändert."
+    echo
+    exit 0
+  fi
+
+  # ------------------------------------------------------
   # Modus 4: Nur Wartezimmer-Schnittstelle
   # ------------------------------------------------------
   if [[ "$mode" == "waiting" ]]; then
@@ -2546,6 +2807,7 @@ main() {
 
   configure_nm_unmanage_wlan0
   configure_ap_ip
+  write_and_activate_chrony_server_config
   setup_ap_hostapd_dnsmasq "$wifi_pw"
   setup_apache_instances "$web_mode"
   if [[ "$WAITING_ROOM_ENABLED" == "yes" ]]; then
@@ -2584,6 +2846,7 @@ main() {
   echo "WLAN SSID:        ${AP_SSID}"
   echo "WLAN Passwort:    ${wifi_pw}"
   echo "WLAN IP (Pi):     ${AP_IP}"
+  echo "Zeitserver (WLAN): ${AP_IP}:123/UDP (per DHCP-Option 42)"
   echo "Webserver (WLAN): http://${AP_IP}/"
   if [[ "$web_mode" == "https" ]]; then
     echo "Webserver (WLAN): https://${AP_IP}/  (self-signed Warnung ist normal)"

@@ -3,11 +3,18 @@ set -euo pipefail
 
 # ==============================================================================
 # fragebogenpi wartezimmerbildschirm — Installer
-# Version: 1.5.6
-# Stand:   2026-07-18
+# Version: 1.5.8
+# Stand:   2026-09-29
 # Autor:   Dr. Thomas Kienzle
 #
 # Changelog (komplett, ab 1.0):
+# - 1.5.8:
+#   - video_random_order mischt die Videos bei jedem Durchlauf neu (Standard: true).
+#   - Jedes Video kommt pro Durchlauf einmal vor; bei mehreren Videos keine direkte Wiederholung am Übergang.
+#   - Aufrufpausen behalten die Video-Reihenfolge bei; Bilder bleiben alphabetisch.
+# - 1.5.7:
+#   - Chrony synchronisiert ausschließlich mit dem konfigurierten fragebogenpi-Server.
+#   - Optionaler täglicher, zeitzonenfester Abschalttimer mit Synchronisationsprüfung.
 # - 1.5.6:
 #   - pipewire-audio ergänzt, damit Firefox auf Minimalinstallationen einen Audio-Server verwenden kann.
 #   - Die nächste Query startet erst nach Anzeigezeit plus konfiguriertem Query-Intervall.
@@ -75,7 +82,7 @@ set -euo pipefail
 # ==============================================================================
 
 APP_NAME="fragebogenpi wartezimmerbildschirm"
-VERSION="1.5.6"
+VERSION="1.5.8"
 
 WEBROOT_DIR="/var/www/html"
 CONFIG_JSON="${WEBROOT_DIR}/wartezimmer.json"
@@ -86,6 +93,12 @@ WLAN_SSID="fragebogenpi"
 WLAN_INTERFACE="wlan0"
 FRAGEBOGENPI_SERVER_IP="10.23.0.1"
 QUERY_INTERVAL_SECONDS="3"
+
+CHRONY_CONF="/etc/chrony/chrony.conf"
+POWEROFF_TIME=""
+POWEROFF_TIMEZONE="Europe/Berlin"
+POWEROFF_SERVICE="/etc/systemd/system/wartezimmer-poweroff.service"
+POWEROFF_TIMER="/etc/systemd/system/wartezimmer-poweroff.timer"
 
 INFODISPLAY_USER="infodisplay"
 INFODISPLAY_GROUP="infodisplay"
@@ -165,6 +178,7 @@ apt_install() {
     samba \
     nftables \
     pipewire-audio \
+    chrony \
     wpasupplicant wireless-tools \
     xserver-xorg xinit x11-xserver-utils \
     lightdm openbox \
@@ -415,6 +429,128 @@ ask_server_query_config() {
     fi
     echo "Bitte eine positive Zahl eingeben." >&2
   done
+}
+
+configure_ntp_client() {
+  say "Zeitsynchronisation mit fragebogenpi konfigurieren"
+
+  mkdir -p "$(dirname "$CHRONY_CONF")"
+  local candidate
+  candidate="$(mktemp "${CHRONY_CONF}.wartezimmer.XXXXXX")"
+  trap 'rm -f "$candidate"' RETURN
+
+  cat > "$candidate" <<EOF
+# Vollständig verwaltet durch fragebogenpi wartezimmerbildschirm
+server ${FRAGEBOGENPI_SERVER_IP} iburst
+driftfile /var/lib/chrony/chrony.drift
+makestep 1 3
+rtcsync
+port 0
+cmdport 0
+EOF
+
+  chronyd -p -f "$candidate" >/dev/null || die "Chrony-Client-Konfiguration ist ungültig."
+  backup_file "$CHRONY_CONF"
+  install -m 0644 "$candidate" "$CHRONY_CONF"
+  rm -f "$candidate"
+  trap - RETURN
+
+  systemctl enable chrony
+  systemctl restart chrony
+  if ! chronyc waitsync 5 0.0 0.0 1; then
+    echo "WARNUNG: Der NTP-Server ${FRAGEBOGENPI_SERVER_IP} ist derzeit nicht synchron erreichbar; chrony versucht es weiter." >&2
+  fi
+}
+
+is_valid_poweroff_timezone() {
+  local zone="$1"
+  [[ -n "$zone" ]] || return 1
+  [[ "$zone" != /* && "$zone" != *".."* ]] || return 1
+  [[ "$zone" =~ ^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$ ]] || return 1
+  [[ -f "/usr/share/zoneinfo/${zone}" ]] || return 1
+  [[ "$(head -c 4 "/usr/share/zoneinfo/${zone}")" == "TZif" ]]
+}
+
+ask_daily_poweroff_config() {
+  say "Optionales tägliches Herunterfahren"
+
+  local value=""
+  while true; do
+    read -r -p "Täglich herunterfahren um HH:MM [nein]: " value
+    value="${value%$'\r'}"
+    if [[ -z "$value" || "$value" =~ ^[nN][eE][iI][nN]$ ]]; then
+      POWEROFF_TIME=""
+      return 0
+    fi
+    if [[ "$value" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+      POWEROFF_TIME="$value"
+      break
+    fi
+    echo "Bitte HH:MM zwischen 00:00 und 23:59 oder 'nein' eingeben." >&2
+  done
+
+  while true; do
+    read -r -p "Zeitzone für das Herunterfahren [${POWEROFF_TIMEZONE}]: " value
+    value="${value%$'\r'}"
+    value="${value:-$POWEROFF_TIMEZONE}"
+    if is_valid_poweroff_timezone "$value"; then
+      POWEROFF_TIMEZONE="$value"
+      return 0
+    fi
+    echo "Bitte eine vorhandene IANA-Zeitzone eingeben (z. B. Europe/Berlin)." >&2
+  done
+}
+
+configure_daily_poweroff() {
+  say "Täglichen Abschaltplan anwenden"
+
+  systemctl stop wartezimmer-poweroff.timer >/dev/null 2>&1 || true
+
+  if [[ -z "$POWEROFF_TIME" ]]; then
+    systemctl disable wartezimmer-poweroff.timer >/dev/null 2>&1 || true
+    rm -f "$POWEROFF_SERVICE" "$POWEROFF_TIMER"
+    systemctl daemon-reload
+    say "Tägliches Herunterfahren ist deaktiviert."
+    return 0
+  fi
+
+  is_valid_poweroff_timezone "$POWEROFF_TIMEZONE" || die "Ungültige Abschalt-Zeitzone: ${POWEROFF_TIMEZONE}"
+  [[ "$POWEROFF_TIME" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "Ungültige Abschaltzeit: ${POWEROFF_TIME}"
+
+  backup_file "$POWEROFF_SERVICE"
+  backup_file "$POWEROFF_TIMER"
+  cat > "$POWEROFF_SERVICE" <<EOF
+# Vollständig verwaltet durch fragebogenpi wartezimmerbildschirm
+[Unit]
+Description=Wartezimmer täglich zur konfigurierten Ortszeit herunterfahren
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/chronyc waitsync 1 1.0 0.0 1
+ExecCondition=/bin/sh -c 'test "\$\$(TZ=${POWEROFF_TIMEZONE} /usr/bin/date +%%H:%%M)" = "${POWEROFF_TIME}"'
+ExecStart=/usr/bin/systemctl poweroff
+EOF
+
+  cat > "$POWEROFF_TIMER" <<EOF
+# Vollständig verwaltet durch fragebogenpi wartezimmerbildschirm
+[Unit]
+Description=Wartezimmer täglicher Abschalttimer
+
+[Timer]
+OnCalendar=*-*-* ${POWEROFF_TIME}:00 ${POWEROFF_TIMEZONE}
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=wartezimmer-poweroff.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable wartezimmer-poweroff.timer
+  systemctl start wartezimmer-poweroff.timer
+  say "Tägliches Herunterfahren: ${POWEROFF_TIME} (${POWEROFF_TIMEZONE})"
 }
 
 write_server_query_config() {
@@ -675,6 +811,7 @@ header("Pragma: no-cache");
   let displaySeconds = 10;
   let slideshowInterval = 10;
   let restartAfterCall = false;
+  let videoRandomOrder = false;
 
   let videoSoundEnabled = false;
   let videoVolume = 0.15;
@@ -715,6 +852,7 @@ header("Pragma: no-cache");
     displaySeconds = Number(cfg.display_seconds ?? 10);
     slideshowInterval = Number(cfg.slideshow_interval_seconds ?? 10);
     restartAfterCall = Boolean(cfg.playlist_restart_on_call_end ?? false);
+    videoRandomOrder = Boolean(cfg.video_random_order ?? false);
 
     const a = (cfg.audio && typeof cfg.audio === 'object') ? cfg.audio : {};
     videoSoundEnabled = Boolean(a.video_sound_enabled ?? false);
@@ -738,9 +876,25 @@ header("Pragma: no-cache");
     return [];
   }
 
+  function shuffleVideoPlaylist(previousVideo = null) {
+    for (let i = playlist.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [playlist[i], playlist[j]] = [playlist[j], playlist[i]];
+    }
+    if (playlist.length > 1 && playlist[0] === previousVideo) {
+      const j = 1 + Math.floor(Math.random() * (playlist.length - 1));
+      [playlist[0], playlist[j]] = [playlist[j], playlist[0]];
+    }
+  }
+
   function nextIndex() {
     if (playlist.length === 0) return 0;
-    return (idx + 1) % playlist.length;
+    const next = (idx + 1) % playlist.length;
+    if (next === 0) {
+      if (videoRandomOrder) shuffleVideoPlaylist(playlist[idx]);
+      else playlist.sort();
+    }
+    return next;
   }
 
   function videoSrcForIndex(i) {
@@ -797,7 +951,7 @@ header("Pragma: no-cache");
     }, 1000);
   }
 
-  async function startVideoMode() {
+  async function startVideoMode(keepOrder = false) {
     clearStage();
     videoEl = document.createElement('video');
     videoEl.autoplay = true;
@@ -806,7 +960,10 @@ header("Pragma: no-cache");
     videoEl.preload = "auto";
     stage.appendChild(videoEl);
 
-    playlist = await ensurePlaylist("videos");
+    if (!keepOrder) {
+      playlist = await ensurePlaylist("videos");
+      if (videoRandomOrder) shuffleVideoPlaylist();
+    }
     if (playlist.length === 0) return;
 
     videoEl.src = videoSrcForIndex(0);
@@ -837,14 +994,14 @@ header("Pragma: no-cache");
     if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
   }
 
-  async function startNormalMode() {
+  async function startNormalMode(keepVideoOrder = false) {
     if (starting) return;
     starting = true;
     try {
       pausedByCall = false;
       stopSlideshowTimer();
       if (mode === "slideshow") await startSlideshowMode();
-      else await startVideoMode();
+      else await startVideoMode(keepVideoOrder);
     } finally {
       starting = false;
     }
@@ -870,7 +1027,7 @@ header("Pragma: no-cache");
     }
 
     if (restartAfterCall) {
-      await startNormalMode();
+      await startNormalMode(videoRandomOrder);
       return;
     }
     if (videoEl) await tryPlayVideo();
@@ -1022,12 +1179,13 @@ EOF
   say "Schreibe wartezimmer.json"
   cat >"${CONFIG_JSON}" <<'EOF'
 {
-  "version": "1.5.6",
+  "version": "1.5.8",
 
   "_comment0": "Server-IP und Query-Intervall liegen außerhalb des Webroots in /etc/fragebogenpi-wartezimmer/server.json",
   "_comment1": "Die Namenskürzung erfolgt datensparsam auf dem fragebogenpi-Server.",
 
   "mode": "video",
+  "video_random_order": true,
   "display_seconds": 10,
   "video_dir": "videos",
   "image_dir": "images",
@@ -1074,6 +1232,7 @@ Audio:
 
 Video:
 - Beispielvideo (falls fehlend): /var/www/html/videos/zzz_beispielvideo.mp4
+- wartezimmer.json -> video_random_order: true mischt jeden Durchlauf; false spielt alphabetisch.
 
 Firewall:
 - eth0 offen
@@ -1497,6 +1656,9 @@ main() {
   say "${APP_NAME} — Installer v${VERSION}"
   confirm_installation
 
+  # Ein bestehender Abschaltplan darf die Installation/Zeiteinstellung nicht unterbrechen.
+  systemctl stop wartezimmer-poweroff.timer >/dev/null 2>&1 || true
+
   apt_install
 
   ensure_group "$INFODISPLAY_GROUP"
@@ -1505,6 +1667,8 @@ main() {
   ask_hostname_and_set_robust
   ask_wlan_enable_and_configure || true
   ask_server_query_config
+  configure_ntp_client
+  ask_daily_poweroff_config
 
   configure_firewall_wlan_only
 
@@ -1517,6 +1681,7 @@ main() {
   install_backend
   configure_kiosk
   check_waiting_room_server_reachable
+  configure_daily_poweroff
 
   say "Fertig."
   echo
@@ -1524,8 +1689,14 @@ main() {
   echo "  - Web:   http://<pi-ip>/wartezimmer.php"
   echo "  - Lokal: http://127.0.0.1/wartezimmer.php"
   echo "  - Server: http://${FRAGEBOGENPI_SERVER_IP}/wartezimmer-server.php"
+  echo "  - Zeitserver: ${FRAGEBOGENPI_SERVER_IP} (chrony, nur Client)"
   echo "  - WLAN-SSID: ${WLAN_SSID}"
   echo "  - Query-Intervall: ${QUERY_INTERVAL_SECONDS} Sekunden"
+  if [[ -n "$POWEROFF_TIME" ]]; then
+    echo "  - Täglich herunterfahren: ${POWEROFF_TIME} (${POWEROFF_TIMEZONE})"
+  else
+    echo "  - Täglich herunterfahren: deaktiviert"
+  fi
   echo
   echo "Firefox Kiosk Start (manuell, falls nötig):"
   echo "  - sudo -u ${KIOSK_USER} firefox-esr -P kiosk --kiosk --no-remote http://127.0.0.1/wartezimmer.php"
