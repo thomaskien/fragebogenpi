@@ -1,0 +1,112 @@
+# Anonymisierte Fassung 2026-10-01
+# Version 1.6.1 – Personen- und Praxisangaben durch Platzhalter ersetzt.
+# Checkboxtexte und Consent-IDs entsprechen unveraendert Version 1.4.0.
+
+meta:
+  title: "Datenschutz und Einwilligung zur Patientenaktenübernahme"
+  pdf_title: "Datenschutz und Einwilligung zur Patientenaktenübernahme"
+  version: "1.6.1"
+  language: "de"
+  form_ids: [dsgv]
+  handler: "datenschutz.php"
+  warning_notice: "TESTVERSION - nicht produktiv verwenden; Praxisangaben und Rechtstext vor Einsatz pruefen."
+  submit_label: "✅ Aktenübernahme erlauben, unterschreiben und absenden"
+
+document:
+  heading: "Patienteninformation zum Datenschutz und Einwilligung zur Patientenaktenübernahme"
+  intro: |
+    Diese Datenschutzinformation gilt ab dem 01.01.2027. Mit Ihrer Unterschrift bestätigen Sie die Kenntnisnahme und willigen zugleich in die unten beschriebene Übernahme Ihrer bisherigen Patientenakte ein.
+
+  sections:
+    - title: "Verantwortlicher und Ansprechpartner"
+      text: |
+        Ab dem 01.01.2027 verantwortlich und nach der Übergabe auch Ansprechpartner für die bisherige Patientenakte:
+
+        [Praxisname], [Name des neuen Praxisinhabers]
+        [Straße und Hausnummer], [PLZ] [Ort]
+        Telefon: [Telefonnummer] · Fax: [Faxnummer]
+        E-Mail: [E-Mail-Adresse] (keine medizinischen Anfragen)
+        Website: [Website]
+
+        Für die bisherige Verarbeitung und die Übergabe verantwortlich:
+
+        Gemeinschaftspraxis
+        [Namen der bisherigen Praxisinhaberinnen]
+        Anschrift wie oben.
+
+    - title: "Datenschutzbeauftragter"
+      text: |
+        Ein Datenschutzbeauftragter ist gesetzlich nicht erforderlich und daher nicht benannt.
+
+    - title: "Daten, Zwecke und Herkunft"
+      text: |
+        Wir verarbeiten die für Behandlung, Dokumentation, Praxisorganisation, Abrechnung und gesetzliche Pflichten erforderlichen Daten. Dazu gehören Personalien, Kontakt- und Versicherungsdaten sowie Gesundheitsdaten wie Anamnese, Diagnosen, Befunde, Medikation und Arztbriefe.
+
+        Die Daten stammen von Ihnen, aus unseren Untersuchungen sowie aus rechtmäßig übermittelten Befunden, Arztbriefen und weiteren Angaben anderer behandelnder Praxen, Krankenhäuser, Labore oder Ihrer Krankenversicherung. Übernommene Altakten stammen aus der oben genannten Gemeinschaftspraxis.
+
+    - title: "Rechtsgrundlagen"
+      text: |
+        Grundlage sind insbesondere der Behandlungsvertrag und gesetzliche Pflichten: Art. 6 Abs. 1 lit. b und c sowie Art. 9 Abs. 2 lit. h DSGVO in Verbindung mit § 22 Abs. 1 Nr. 1 lit. b BDSG. Die Aktenübernahme und freiwillige Kommunikationsdienste beruhen auf Ihrer Einwilligung nach Art. 6 Abs. 1 lit. a und Art. 9 Abs. 2 lit. a DSGVO.
+
+    - title: "Empfänger und Übermittlung"
+      text: |
+        Zur Abrechnung übermitteln wir die hierfür erforderlichen Daten an die beauftragte Abrechnungsstelle. Weitere Empfänger können mitbehandelnde Ärzte, Krankenhäuser, Labore, Krankenversicherungen, Kassenärztliche Vereinigung, Medizinischer Dienst, Ärztekammer, HZV-/DMP-Stellen sowie beauftragte IT- und Softwaredienstleister sein. Die Weitergabe erfolgt im Rahmen der gesetzlichen Vorgaben und unter Wahrung der ärztlichen Schweigepflicht.
+
+        Derzeit findet keine Übermittlung in Länder außerhalb der EU/des EWR oder an internationale Organisationen statt.
+
+    - title: "Kommunikation und Befundversand"
+      text: |
+        Wir übermitteln medizinische Informationen grundsätzlich über geeignete sichere Kommunikationswege, insbesondere verschlüsselt über KIM, per Post oder - soweit im Einzelfall geeignet - per Fax.
+
+        Eine unverschlüsselte Übermittlung per E-Mail erfolgt nur, wenn Sie dies ausdrücklich wünschen und uns die entsprechende E-Mail-Adresse hierfür mitteilen. Wir weisen darauf hin, dass unverschlüsselte E-Mails auf dem Übertragungsweg von Dritten eingesehen oder verändert werden können.
+
+    - title: "Aufbewahrung"
+      text: |
+        Nach § 630f Abs. 3 BGB müssen wir Ihre Patientenakte mindestens zehn Jahre nach Abschluss der Behandlung aufbewahren. Längere Fristen gelten, soweit gesetzlich vorgeschrieben oder zur Wahrung von Rechtsansprüchen erforderlich. Diese Pflichten bestehen auch nach einem Widerruf Ihrer Einwilligung fort. Sonstige Daten werden gelöscht, sobald sie nicht mehr benötigt werden und keine Aufbewahrungspflicht entgegensteht.
+
+    - title: "Digitale Assistenz und KI"
+      text: |
+        Digitale Assistenzsysteme einschließlich KI können Dokumentation, Befundung und Praxisorganisation unterstützen, vorzugsweise praxisintern. Externe Dienste werden nur unter Wahrung von Datenschutz und Schweigepflicht eingesetzt. Medizinische Entscheidungen bleiben beim Arzt; ausschließlich automatisierte Entscheidungen mit rechtlicher oder vergleichbar erheblicher Wirkung finden nicht statt.
+
+    - title: "Mobile Arbeitsplätze und Heimarbeitsplatz"
+      text: |
+        Für Hausbesuche, Dokumentation und Praxisorganisation nutzen berechtigte Personen auch mobile Arbeitsplätze und einen Heimarbeitsplatz. Geräte, Zugänge und Datenübertragungen sind nach dem Stand der Technik gegen unbefugten Zugriff geschützt. Es gelten dieselben Datenschutz- und Vertraulichkeitsanforderungen wie in der Praxis.
+
+    - title: "Ihre Rechte"
+      text: |
+        Sie haben nach den gesetzlichen Voraussetzungen Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit und Widerspruch. Einwilligungen können Sie jederzeit formlos mit Wirkung für die Zukunft über die oben genannten Praxiskontaktdaten widerrufen. Die bisherige rechtmäßige Verarbeitung bleibt unberührt.
+
+        Beschwerden können Sie an die Landesbeauftragte für Datenschutz und Informationsfreiheit Nordrhein-Westfalen richten: Postfach 20 04 44, 40102 Düsseldorf, www.ldi.nrw.de.
+
+    - title: "Optionale Einwilligungen: E-Mail und SMS"
+      text: |
+        Wenn Sie die jeweilige untenstehende Checkbox aktivieren, willigen Sie ausdrücklich ein, dass wir Ihnen an die von Ihnen angegebene E-Mail-Adresse / Handynummer ohne weitere Sicherungsmaßnahmen, insbesondere ohne Verschlüsselung, E-Mails / SMS zur Kommunikation im Rahmen Ihrer Behandlung übermitteln dürfen.
+
+        Die Einwilligung umfasst die hierfür erforderlichen Gesundheitsdaten.
+
+        Die Kommunikation per unverschlüsselter E-Mail kann mit einem Verlust an Vertraulichkeit und Sicherheit verbunden sein. Unverschlüsselte Nachrichten können auf dem Übertragungsweg von Dritten eingesehen oder verändert werden. Bitte halten Sie die Zugangsdaten zu Ihrem E-Mail-Postfach vertraulich, um unbefugten Dritten keinen Zugriff auf eingehende E-Mails der Praxis zu ermöglichen.
+
+        Beide Einwilligungen sind unabhängig voneinander jederzeit für die Zukunft widerruflich.
+
+    - title: "Erforderliche Angaben und Behandlung ohne Aktenübernahme"
+      text: |
+        Für Behandlung und Abrechnung benötigen wir die erforderlichen Angaben. Ohne Einwilligung zur Aktenübernahme starten wir bei Ihrer Aufnahme mit einer neuen, zunächst leeren Akte. Bitte bringen Sie die nötigen Informationen erneut mit, insbesondere Medikationsplan einschließlich Dosierungen, wichtige Befunde, Arztbriefe sowie Angaben zu Allergien und Unverträglichkeiten.
+
+        Fehlen notwendige Angaben, kann dies Behandlung oder Abrechnung erschweren oder im Einzelfall verhindern. Rezepte, auch Wiederholungsrezepte, können erst nach ärztlicher Prüfung der für die konkrete Verordnung nötigen Informationen ausgestellt werden. Eine fehlende Unterschrift allein verhindert weder Behandlung noch Verordnung. Behandlungsbedarf wird unabhängig davon ärztlich beurteilt.
+
+    - title: "Einwilligung zur Aktenübernahme und Schweigepflichtentbindung"
+      text: |
+        Mit meiner Unterschrift willige ich ausdrücklich ein, dass die oben genannte Gemeinschaftspraxis meine vollständige bisherige Patientenakte in Papier- und/oder elektronischer Form an den oben genannten neuen Praxisinhaber übergibt. Die Übergabe erfolgt frühestens ab dem 01.01.2027 und nach Erteilung meiner Einwilligung.
+
+        Der neue Praxisinhaber und seine zur Verschwiegenheit verpflichteten Mitarbeitenden dürfen die darin enthaltenen Daten zur Fortführung meiner Behandlung und Dokumentation übernehmen, einsehen, speichern und nutzen. Ausschließlich für diese Übergabe entbinde ich die bisherigen Praxisinhaberinnen und ihre Mitarbeitenden gegenüber der übernehmenden Praxis von der Schweigepflicht.
+
+        Die Einwilligung ist freiwillig und jederzeit für die Zukunft über die genannten Praxiskontaktdaten widerruflich. Wenn Sie der Aktenübernahme nicht zustimmen, unterschreiben Sie dieses kombinierte Formular bitte nicht. Ohne Einwilligung darf der neue Praxisinhaber meine bisherige Patientenakte weder einsehen noch für die Behandlung nutzen.
+
+consent:
+  id: "email_unverschluesselt"
+  checkbox_label: "Unverschl. E-Mail erlauben (optional)"
+  pdf_label: "Optionale Einwilligung zur unverschlüsselten E-Mail-Kommunikation"
+  sms_id: "sms_unverschluesselt"
+  sms_checkbox_label: "SMS erlauben (optional)"
+  sms_pdf_label: "Optionale Einwilligung zur SMS-Kommunikation"
+  optional: true
