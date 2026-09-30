@@ -61,7 +61,7 @@ Das Projekt richtet einen Raspberry Pi so ein, dass:
 
 - **Webserver**
   - Apache + PHP
-  - optional HTTPS (self-signed Zertifikat, gültig bis 2050)
+  - optional HTTPS mit dauerhafter lokaler Root-CA und täglich erneuertem Serverzertifikat
   - PHP-Schreibzugriff auf definierte Datenverzeichnisse
 
 - **Datenablage (Variante A)**
@@ -107,6 +107,12 @@ Dieser Modus ergänzt Chrony, die DHCP-Ankündigung und die NTP-Firewallregel,
 ohne Passwörter oder die übrige Einrichtung neu zu setzen. Die Modi 2–5
 rüsten den Zeitserver nicht nach. DHCP-Clients erhalten die Ankündigung beim
 nächsten Bezug bzw. Erneuern ihrer Adresse.
+
+Seit Installer **1.7.2** richtet **7) Nur HTTPS / Zertifikate einrichten /
+aktualisieren** den iPad-Betrieb mit eigener dauerhafter Root-CA ein. HTTP zeigt
+die Installationsanleitung und den CA-Download; die Wartezimmer-Schnittstelle
+bleibt über HTTP erreichbar. HTTPS öffnet das Formular beziehungsweise die
+Tablet-Auswahl. Details, Sicherung, Timer und Abnahme: [HTTPS-Betrieb](HTTPS.md).
 
 Für den **Wartezimmer-Aufrufschirm** auf ZWEITEM Raspberry pi:
 

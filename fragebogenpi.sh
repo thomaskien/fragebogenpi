@@ -4,11 +4,16 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.7.1
+# Version: 1.7.2
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.7.2 (2026-09-30)
+#   * Dauerhafte lokale Root-CA und tägliche, geprüfte Serverzertifikate mit +/-365 Tagen.
+#   * HTTPS-Einrichtung als Modus 7; HTTP-Anleitung, CA-Download und HTTPS-Tablet-Auswahl.
+#   * Wartezimmer-Schnittstelle bleibt über HTTP erreichbar; LAN und fremde Regeln bleiben erhalten.
 #
 # - 1.7.1 (2026-09-29)
 #   * Chrony stellt die per LAN synchronisierte Zeit ausschließlich im isolierten WLAN bereit.
@@ -320,6 +325,10 @@ ADMIN_USER="admin"          # immer vorhanden für webroot-wlan/webroot-lan Shar
 SSL_DIR="/etc/ssl/fragebogenpi"
 SSL_KEY="${SSL_DIR}/fragebogenpi.key"
 SSL_CRT="${SSL_DIR}/fragebogenpi.crt"
+HTTPS_HELPER="/usr/local/sbin/fragebogenpi-https"
+HTTPS_PUBLIC_DIR="/var/lib/fragebogenpi-https/public"
+HTTPS_RENEW_SERVICE="/etc/systemd/system/fragebogenpi-https-renew.service"
+HTTPS_RENEW_TIMER="/etc/systemd/system/fragebogenpi-https-renew.timer"
 
 # AP IP helper/service
 AP_IP_SERVICE="/etc/systemd/system/fragebogenpi-ap-ip.service"
@@ -357,7 +366,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.7.1"
+VERSION="1.7.2"
 STEP_NO=0
 
 banner() {
@@ -621,8 +630,9 @@ ask_choice_existing_install() {
   echo "  4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren" >&2
   echo "  5) Nur Tablet-/Formularbetrieb einrichten / aktualisieren" >&2
   echo "  6) Nur Zeitserver einrichten / aktualisieren" >&2
+  echo "  7) Nur HTTPS / Zertifikate einrichten / aktualisieren" >&2
   while true; do
-    read -r -p "Auswahl [1/2/3/4/5/6]: " answer
+    read -r -p "Auswahl [1/2/3/4/5/6/7]: " answer
     case "$answer" in
       1) echo "full"; return 0 ;;
       2) echo "webroot"; return 0 ;;
@@ -630,7 +640,8 @@ ask_choice_existing_install() {
       4) echo "waiting"; return 0 ;;
       5) echo "tablets"; return 0 ;;
       6) echo "time-server"; return 0 ;;
-      *) echo "Bitte 1, 2, 3, 4, 5 oder 6 eingeben." >&2 ;;
+      7) echo "https-only"; return 0 ;;
+      *) echo "Bitte 1, 2, 3, 4, 5, 6 oder 7 eingeben." >&2 ;;
     esac
   done
 }
@@ -1865,32 +1876,950 @@ EOF
   fi
 }
 
+# Einbettbares Fragment fuer die oeffentliche HTTPS-Einrichtungsseite.
+install_https_public_pages() {
+  : "${HTTPS_PUBLIC_DIR:?HTTPS_PUBLIC_DIR muss gesetzt sein}"
+  : "${AP_IP:?AP_IP muss gesetzt sein}"
+  : "${TABLET_COUNT_FILE:?TABLET_COUNT_FILE muss gesetzt sein}"
+
+  install -d -m 0755 "$(dirname "$HTTPS_PUBLIC_DIR")" "$HTTPS_PUBLIC_DIR"
+  python3 - "$HTTPS_PUBLIC_DIR" "$AP_IP" "$TABLET_COUNT_FILE" <<'PY'
+import html
+import ipaddress
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+public_dir = Path(sys.argv[1])
+ap_ip = sys.argv[2]
+tablet_count_file = Path(sys.argv[3])
+
+if not public_dir.is_absolute():
+    raise SystemExit("HTTPS_PUBLIC_DIR muss ein absoluter Pfad sein")
+if not tablet_count_file.is_absolute():
+    raise SystemExit("TABLET_COUNT_FILE muss ein absoluter Pfad sein")
+
+try:
+    parsed_ip = ipaddress.ip_address(ap_ip)
+except ValueError as exc:
+    raise SystemExit("AP_IP muss eine gueltige IPv4-Adresse sein") from exc
+if parsed_ip.version != 4:
+    raise SystemExit("AP_IP muss eine gueltige IPv4-Adresse sein")
+
+
+def php_single_quoted(value):
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def write_public_file(name, content):
+    target = public_dir / name
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{name}.", dir=public_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.chmod(temporary_name, 0o644)
+        os.replace(temporary_name, target)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+public_dir.mkdir(parents=True, exist_ok=True)
+if public_dir.is_symlink() or any(path.stat().st_uid != os.geteuid() for path in (public_dir, public_dir.parent)):
+    raise SystemExit("HTTPS-Verzeichnis muss dem installierenden Benutzer gehören und darf kein Symlink sein")
+os.chmod(public_dir, 0o755)
+
+escaped_ip = html.escape(ap_ip, quote=True)
+index_html = f"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FragebogenPi sicher einrichten</title>
+  <style>
+    :root {{ color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #f3f5f7; color: #1b2733; line-height: 1.55; }}
+    main {{ width: min(46rem, calc(100% - 2rem)); margin: 2rem auto; padding: clamp(1.4rem, 4vw, 2.5rem); background: #fff; border-radius: 1rem; box-shadow: 0 0.35rem 1.5rem rgba(22, 39, 56, 0.12); }}
+    h1 {{ margin-top: 0; font-size: clamp(1.7rem, 5vw, 2.35rem); line-height: 1.2; }}
+    h2 {{ margin-top: 2rem; font-size: 1.25rem; }}
+    ol {{ padding-left: 1.5rem; }}
+    li + li {{ margin-top: 0.85rem; }}
+    .button {{ display: block; width: 100%; margin-top: 1rem; padding: 0.9rem 1.1rem; border-radius: 0.7rem; background: #075da8; color: #fff; font-weight: 650; text-align: center; text-decoration: none; }}
+    .button.secondary {{ background: #e8f0f7; color: #164a78; border: 1px solid #b9cbdc; }}
+    .note {{ padding: 0.9rem 1rem; border-left: 0.3rem solid #4e7fa9; background: #eef5fb; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sichere Verbindung zu FragebogenPi einrichten</h1>
+    <p>Installieren Sie das lokale Zertifikat einmalig auf diesem iPad. Danach können die Formulare über eine verschlüsselte HTTPS-Verbindung geöffnet werden.</p>
+
+    <h2>Einrichtung in Safari</h2>
+    <ol>
+      <li>Öffnen Sie diese Seite in <strong>Safari</strong> und laden Sie das Zertifikat herunter. Erlauben Sie das Laden des Profils.</li>
+      <li>Öffnen Sie anschließend die App <strong>Einstellungen</strong>. Tippen Sie auf <strong>Profil geladen</strong>. Falls dieser Eintrag nicht angezeigt wird, öffnen Sie <strong>Allgemein → VPN &amp; Geräteverwaltung</strong>.</li>
+      <li>Wählen Sie das Profil <strong>fragebogenpi Root CA</strong> und tippen Sie auf <strong>Installieren</strong>. Bestätigen Sie die Rückfragen des iPads.</li>
+      <li>Öffnen Sie <strong>Allgemein → Info → Zertifikatsvertrauenseinstellungen</strong> und aktivieren Sie für das Zertifikat <strong>fragebogenpi Root CA</strong> das <strong>volle Vertrauen</strong>.</li>
+      <li>Kehren Sie zu Safari zurück und öffnen Sie FragebogenPi über die Schaltfläche unten.</li>
+    </ol>
+
+    <p class="note">Diese Einrichtung ist nur einmal pro iPad erforderlich.</p>
+    <a class="button secondary" href="/ca.crt">CA-Zertifikat herunterladen</a>
+    <a class="button" id="open-https" href="https://{escaped_ip}/">Formular über HTTPS öffnen</a>
+  </main>
+  <script>
+    (function () {{
+      "use strict";
+      var tabletPath = window.location.pathname.match(/^\\/tablet(?:[1-9])?\\.php$/);
+      if (tabletPath) {{
+        document.getElementById("open-https").href = "https://{escaped_ip}" + tabletPath[0];
+      }}
+    }}());
+  </script>
+</body>
+</html>
+"""
+
+count_file_literal = php_single_quoted(tablet_count_file)
+tablets_php = f"""<?php
+declare(strict_types=1);
+
+$tabletCountFile = {count_file_literal};
+
+if (!is_file($tabletCountFile)) {{
+    $tabletCount = 1;
+}} else {{
+    $tabletCountValue = @file_get_contents($tabletCountFile);
+    if ($tabletCountValue === false || preg_match('/\\A([1-9])(?:\\r\\n|\\n)?\\z/D', $tabletCountValue, $matches) !== 1) {{
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo "Ungültige Tablet-Konfiguration. Bitte wenden Sie sich an die Administration.\\n";
+        exit;
+    }}
+    $tabletCount = (int) $matches[1];
+}}
+
+if ($tabletCount === 1) {{
+    header('Location: /tablet.php', true, 302);
+    exit;
+}}
+
+header('Content-Type: text/html; charset=UTF-8');
+?>
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tablet auswählen</title>
+  <style>
+    :root {{ color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #f3f5f7; color: #1b2733; line-height: 1.5; }}
+    main {{ width: min(42rem, calc(100% - 2rem)); margin: 2rem auto; padding: clamp(1.4rem, 4vw, 2.5rem); background: #fff; border-radius: 1rem; box-shadow: 0 0.35rem 1.5rem rgba(22, 39, 56, 0.12); }}
+    h1 {{ margin-top: 0; font-size: clamp(1.7rem, 5vw, 2.35rem); line-height: 1.2; }}
+    .tablets {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.9rem; margin-top: 1.5rem; }}
+    .tablet {{ display: block; padding: 1rem; border-radius: 0.7rem; background: #075da8; color: #fff; font-size: 1.15rem; font-weight: 650; text-align: center; text-decoration: none; }}
+    .tablet:focus-visible {{ outline: 0.25rem solid #efb600; outline-offset: 0.2rem; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Tablet auswählen</h1>
+    <p>Bitte wählen Sie die Nummer dieses Tablets.</p>
+    <nav class="tablets" aria-label="Tablet-Auswahl">
+<?php for ($tabletId = 1; $tabletId <= $tabletCount; $tabletId++): ?>
+      <a class="tablet" href="/tablet<?= $tabletId ?>.php">Tablet <?= $tabletId ?></a>
+<?php endfor; ?>
+    </nav>
+  </main>
+</body>
+</html>
+"""
+
+write_public_file("index.html", index_html)
+write_public_file("tablets.php", tablets_php)
+PY
+}
+
+install_https_tools() {
+  install -d -m 0700 "$SSL_DIR"
+  install -d -m 0755 "$(dirname "$HTTPS_HELPER")"
+  cat > "$HTTPS_HELPER" <<'PY_HTTPS_MANAGER'
+#!/usr/bin/env python3
+"""Privilegierte lokale CA und transaktionale WLAN-Zertifikatserneuerung (v1.7.2)."""
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import http.client
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+
+DAY = 86400
+SERVICE = 'fragebogenpi-apache-wlan.service'
+
+
+def run(*args, data=None, env=None):
+    result = subprocess.run([str(a) for a in args], input=data, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, env=env, timeout=60)
+    if result.returncode:
+        raise RuntimeError(f'{args[0]} {args[1]}: ' + result.stderr.decode(errors='replace').strip())
+    return result.stdout
+
+
+def atomic(path, data, mode=0o600):
+    path = Path(path)
+    if path.is_symlink():
+        raise RuntimeError(f'Symlink als Ziel abgelehnt: {path}')
+    fd, name = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def json_bytes(value):
+    return (json.dumps(value, indent=2) + '\n').encode()
+
+
+def dates(cert):
+    values = run('openssl', 'x509', '-in', cert, '-noout', '-dates').decode().splitlines()
+    return tuple(int(dt.datetime.strptime(v.split('=', 1)[1], '%b %d %H:%M:%S %Y %Z')
+                     .replace(tzinfo=dt.timezone.utc).timestamp()) for v in values)
+
+
+def stamp(epoch):
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime('%Y%m%d%H%M%SZ')
+
+
+def public_key(path, cert=False):
+    if cert:
+        return run('openssl', 'x509', '-in', path, '-pubkey', '-noout')
+    return run('openssl', 'pkey', '-in', path, '-pubout', '-passin', 'pass:')
+
+
+def rsa_key(path, bits=2048):
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f'Kein regulärer privater Schlüssel: {path}')
+    run('openssl', 'rsa', '-in', path, '-passin', 'pass:', '-check', '-noout')
+    pub = public_key(path)
+    info = run('openssl', 'pkey', '-pubin', '-text', '-noout', data=pub).decode()
+    match = re.search(r'Public-Key: \((\d+) bit\)', info)
+    if not match or int(match[1]) < bits:
+        raise RuntimeError(f'RSA-Schlüssel benötigt mindestens {bits} Bit: {path}')
+    os.chmod(path, 0o600)
+    return pub
+
+
+def cert_text(path):
+    return run('openssl', 'x509', '-in', path, '-text', '-noout').decode()
+
+
+def require_extension(text, name, value, critical=False):
+    match = re.search(r'X509v3 ' + re.escape(name) + r':([^\n]*)\n\s+([^\n]+)', text)
+    if not match or match[2].strip() != value or ('critical' in match[1]) != critical:
+        raise RuntimeError(f'Unpassende Zertifikatserweiterung: {name}')
+
+
+def quoted(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$') + '"'
+
+
+class Manager:
+    def __init__(self, state):
+        self.state = Path(state)
+        self.ca = self.state / 'ca.crt'
+        self.ca_key = self.state / 'ca.key'
+        self.key = self.state / 'fragebogenpi.key'
+        self.cert = self.state / 'fragebogenpi.crt'
+        self.config = self.state / 'https.json'
+
+    @contextlib.contextmanager
+    def locked(self, inherited_fd=None, wait=0):
+        if self.state.is_symlink():
+            raise RuntimeError('CA-Verzeichnis darf kein Symlink sein')
+        self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self.state.stat().st_uid != os.geteuid():
+            raise RuntimeError('CA-Verzeichnis gehört nicht dem privilegierten Signierbenutzer')
+        os.chmod(self.state, 0o700)
+        for path in self.state.iterdir():
+            if path.is_symlink():
+                raise RuntimeError(f'Symlink im CA-Verzeichnis abgelehnt: {path.name}')
+            if path.stat().st_uid != os.geteuid():
+                raise RuntimeError(f'Fremder Eigentümer im CA-Verzeichnis: {path.name}')
+        if inherited_fd is not None:
+            actual = os.fstat(inherited_fd)
+            expected = (self.state / 'renew.lock').stat()
+            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                raise RuntimeError('Ungültiger geerbter HTTPS-Lock')
+            fcntl.flock(inherited_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+            return
+        with (self.state / 'renew.lock').open('a') as lock:
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('Eine HTTPS-Einrichtung oder Erneuerung läuft bereits')
+                    time.sleep(0.2)
+            yield
+
+    def reference_time(self):
+        run('chronyc', 'waitsync', '12', '1.0', '0.0', '2')
+        now = int(time.time())
+        if now < 1735689600:
+            raise RuntimeError('Serverzeit liegt vor 2025; Ausstellung abgelehnt')
+        previous = self.state / 'last-success.json'
+        if previous.exists() and now < json.loads(previous.read_text())['reference'] - 300:
+            raise RuntimeError('Serverzeit ist gegenüber letzter Ausstellung zurückgesprungen')
+        return now
+
+    def check_address(self, cfg):
+        address = str(ipaddress.IPv4Address(cfg['ip']))
+        info = json.loads(run('ip', '-j', '-4', 'addr', 'show', 'dev', cfg['interface']))
+        if not any(a.get('local') == address for item in info for a in item.get('addr_info', [])):
+            raise RuntimeError('Konfigurierte Zertifikats-IP ist nicht am WLAN-Interface vorhanden')
+
+    def issue(self, tmp, key, out, before, after, extensions, ca=None, ca_key=None):
+        # Seriennummer vor Benutzung reservieren. Fehlversuche dürfen Lücken hinterlassen.
+        counter = self.state / 'serial'
+        serial = int(counter.read_text().strip(), 16) if counter.exists() else secrets.randbits(152) + 1
+        if serial >= 2**159 - 1:
+            raise RuntimeError('Seriennummernbereich erschöpft')
+        atomic(counter, f'{serial + 1:040X}\n'.encode())
+        (tmp / 'serial').write_text(f'{serial:040X}\n')
+        (tmp / 'index').write_text('')
+        (tmp / 'index.attr').write_text('unique_subject = no\n')
+        signer = ca_key if ca_key else key
+        conf = ('[ca]\ndefault_ca = local\n[local]\n'
+                f'database = {quoted(tmp / "index")}\nserial = {quoted(tmp / "serial")}\n'
+                f'new_certs_dir = {quoted(tmp)}\nprivate_key = {quoted(signer)}\n'
+                'default_md = sha256\npolicy = policy\nunique_subject = no\n'
+                'copy_extensions = none\n'
+                + (f'certificate = {quoted(ca)}\n' if ca else '')
+                + '[policy]\ncommonName = supplied\n[extensions]\n' + extensions)
+        (tmp / 'openssl.cnf').write_text(conf)
+        subject = '/CN=fragebogenpi Root CA' if ca is None else '/CN=fragebogenpi WLAN'
+        run('openssl', 'req', '-new', '-sha256', '-key', key, '-passin', 'pass:',
+            '-subj', subject, '-out', tmp / 'request.csr')
+        args = ['openssl', 'ca', '-batch', '-notext', '-config', tmp / 'openssl.cnf',
+                '-in', tmp / 'request.csr', '-out', out, '-extensions', 'extensions',
+                '-startdate', stamp(before), '-enddate', stamp(after), '-md', 'sha256']
+        if ca is None:
+            args += ['-selfsign', '-keyfile', key]
+        run(*args)
+
+    def validate_ca(self, now):
+        pub = rsa_key(self.ca_key, 4096)
+        if pub != public_key(self.ca, cert=True):
+            raise RuntimeError('CA-Zertifikat und privater CA-Schlüssel passen nicht zusammen')
+        text = cert_text(self.ca)
+        require_extension(text, 'Basic Constraints', 'CA:TRUE, pathlen:0', True)
+        require_extension(text, 'Key Usage', 'Certificate Sign, CRL Sign', True)
+        if 'Signature Algorithm: sha256WithRSAEncryption' not in text:
+            raise RuntimeError('CA benötigt SHA-256 mit RSA')
+        subject = run('openssl', 'x509', '-in', self.ca, '-noout', '-subject', '-issuer').decode().splitlines()
+        if subject[0].split('=', 1)[1] != subject[1].split('=', 1)[1]:
+            raise RuntimeError('Vorhandenes CA-Zertifikat ist keine selbstsignierte Root-CA')
+        run('openssl', 'verify', '-check_ss_sig', '-CAfile', self.ca, '-attime', now, self.ca)
+        before, after = dates(self.ca)
+        if before > now - 365 * DAY or after < now + 365 * DAY:
+            raise RuntimeError('CA deckt das benötigte Zeitfenster nicht ab; niemals automatisch ersetzen')
+
+    def ensure_ca(self, now, create):
+        if self.ca.exists() != self.ca_key.exists():
+            raise RuntimeError('CA unvollständig: CA-Zertifikat/Schlüssel aus Sicherung wiederherstellen')
+        if not self.ca.exists():
+            if any((self.state / name).exists() for name in
+                   ('ca-backup', 'serial', 'https.json', 'pending.json', 'last-success.json', 'previous')):
+                raise RuntimeError('Frühere CA-Daten vorhanden; ursprüngliche Root-CA aus Sicherung wiederherstellen')
+            if not create:
+                raise RuntimeError('CA fehlt; Erneuerung darf keine neue CA erzeugen')
+            with tempfile.TemporaryDirectory(dir=self.state) as folder:
+                tmp = Path(folder)
+                key = tmp / 'ca.key'
+                run('openssl', 'genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:4096', '-out', key)
+                end = dt.datetime.fromtimestamp(now, dt.timezone.utc)
+                try:
+                    end = end.replace(year=end.year + 50)
+                except ValueError:
+                    end = end.replace(year=end.year + 50, day=28)
+                cert = tmp / 'ca.crt'
+                self.issue(tmp, key, cert, now - 365 * DAY, int(end.timestamp()),
+                           'basicConstraints = critical, CA:TRUE, pathlen:0\n'
+                           'keyUsage = critical, keyCertSign, cRLSign\n'
+                           'subjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid:always\n')
+                atomic(self.ca_key, key.read_bytes())
+                atomic(self.ca, cert.read_bytes())
+        self.validate_ca(now)
+        original = self.state / 'ca-backup' / 'ca.crt'
+        if original.exists() and run('openssl', 'x509', '-in', original, '-outform', 'DER') != run('openssl', 'x509', '-in', self.ca, '-outform', 'DER'):
+            raise RuntimeError('Aktive Root-CA stimmt nicht mit der unveränderlichen Erstkopie überein')
+        backup = self.state / 'ca-backup'
+        backup.mkdir(mode=0o700, exist_ok=True)
+        # Erstkopie nie überschreiben. Zusätzlich extern sichern (siehe Betriebsdokumentation).
+        for source in (self.ca, self.ca_key):
+            target = backup / source.name
+            if not target.exists():
+                atomic(target, source.read_bytes())
+
+    def create_leaf(self, cfg, now, out, create=False):
+        self.ensure_ca(now, create)
+        if not self.key.exists():
+            if not create or self.cert.exists():
+                raise RuntimeError('Server-Key fehlt; vorhandenen Betrieb nicht durch Schlüsselwechsel ersetzen')
+            with tempfile.TemporaryDirectory(dir=self.state) as folder:
+                key = Path(folder) / 'key'
+                run('openssl', 'genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048', '-out', key)
+                atomic(self.key, key.read_bytes())
+        rsa_key(self.key)
+        if create and self.cert.exists() and public_key(self.cert, True) != public_key(self.key):
+            raise RuntimeError('Bisheriges Serverzertifikat passt nicht zum vorhandenen Server-Key')
+        sans = ['IP:' + str(ipaddress.IPv4Address(cfg['ip']))]
+        for name in cfg['dns']:
+            if not re.fullmatch(r'(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', name):
+                raise RuntimeError('Ungültiger DNS-SAN')
+            sans.append('DNS:' + name)
+        with tempfile.TemporaryDirectory(dir=self.state) as folder:
+            self.issue(Path(folder), self.key, out, now - 365 * DAY, now + 365 * DAY,
+                       'basicConstraints = critical, CA:FALSE\n'
+                       'keyUsage = critical, digitalSignature, keyEncipherment\n'
+                       'extendedKeyUsage = serverAuth\nsubjectKeyIdentifier = hash\n'
+                       'authorityKeyIdentifier = keyid:always\nsubjectAltName = ' + ','.join(sans) + '\n',
+                       self.ca, self.ca_key)
+        self.validate_leaf(cfg, now, out)
+
+    def validate_leaf(self, cfg, now, path):
+        run('openssl', 'verify', '-CAfile', self.ca, '-purpose', 'sslserver',
+            '-verify_ip', cfg['ip'], '-attime', now, path)
+        for name in cfg['dns']:
+            run('openssl', 'verify', '-CAfile', self.ca, '-verify_hostname', name, '-attime', now, path)
+        if public_key(path, True) != public_key(self.key):
+            raise RuntimeError('Serverzertifikat passt nicht zum Server-Key')
+        if dates(path) != (now - 365 * DAY, now + 365 * DAY):
+            raise RuntimeError('Zeitfenster ist nicht exakt minus/plus 365 Tage')
+        text = cert_text(path)
+        require_extension(text, 'Basic Constraints', 'CA:FALSE', True)
+        require_extension(text, 'Key Usage', 'Digital Signature, Key Encipherment', True)
+        require_extension(text, 'Extended Key Usage', 'TLS Web Server Authentication')
+        if 'Signature Algorithm: sha256WithRSAEncryption' not in text:
+            raise RuntimeError('Serverzertifikat benötigt SHA-256')
+        if self.cert.exists():
+            old = run('openssl', 'x509', '-in', self.cert, '-noout', '-serial')
+            new = run('openssl', 'x509', '-in', path, '-noout', '-serial')
+            if new == old:
+                raise RuntimeError('Seriennummer muss sich bei jeder Ausstellung ändern')
+
+    def apache_test(self, cfg):
+        env = os.environ.copy()
+        env.update(APACHE_RUN_DIR=cfg['run'], APACHE_PID_FILE=cfg['run'] + '/apache2.pid',
+                   APACHE_LOCK_DIR=cfg['run'], APACHE_LOG_DIR=cfg['log'])
+        run('/usr/sbin/apache2', '-t', '-f', cfg['apache'], env=env)
+
+    def verify_served(self, cfg, expected):
+        context = ssl.create_default_context(cafile=str(self.ca))
+        last_error = None
+        for _ in range(10):
+            try:
+                with socket.create_connection((cfg['ip'], 443), timeout=2) as sock:
+                    with context.wrap_socket(sock, server_hostname=cfg['ip']) as tls:
+                        if tls.getpeercert(binary_form=True) != expected:
+                            raise RuntimeError('Apache liefert noch ein anderes Zertifikat')
+                        return
+            except (OSError, RuntimeError) as error:
+                last_error = error
+                time.sleep(0.5)
+        raise RuntimeError(f'Ausgeliefertes Zertifikat konnte nicht bestätigt werden: {last_error}')
+
+    def verify_public_routes(self, cfg):
+        # Nur nebenwirkungsfreie Einrichtungsrouten prüfen. Wartezimmer-GET würde GDT abholen!
+        expected = run('openssl', 'x509', '-in', self.ca, '-outform', 'DER')
+        context = ssl.create_default_context(cafile=str(self.ca))
+        for secure in (False, True):
+            for path in ('/', '/ca.crt'):
+                connection = (http.client.HTTPSConnection(cfg['ip'], context=context, timeout=5)
+                              if secure else http.client.HTTPConnection(cfg['ip'], timeout=5))
+                try:
+                    connection.request('GET', path)
+                    response = connection.getresponse()
+                    body = response.read(1024 * 1024)
+                    if path == '/ca.crt':
+                        valid = (response.status == 200 and body == expected and
+                                 response.getheader('Content-Type', '').startswith('application/x-x509-ca-cert'))
+                    elif not secure:
+                        valid = response.status == 200 and b'Sichere Verbindung zu FragebogenPi' in body
+                    else:
+                        valid = ((response.status == 302 and response.getheader('Location') == '/tablet.php') or
+                                 (response.status == 200 and 'Tablet auswählen'.encode() in body))
+                    if not valid:
+                        raise RuntimeError(f'Einrichtungsroute {"HTTPS" if secure else "HTTP"} {path} ist ungültig')
+                finally:
+                    connection.close()
+
+    def activate(self, cfg, now, candidate, start=False):
+        self.validate_leaf(cfg, now, candidate)
+        old_cert = self.cert.read_bytes() if self.cert.exists() else None
+        old_cfg = self.config.read_bytes() if self.config.exists() else None
+        old_success = (self.state / 'last-success.json').read_bytes() if (self.state / 'last-success.json').exists() else None
+        backup = self.state / 'previous'
+        backup.mkdir(mode=0o700, exist_ok=True)
+        if old_cert:
+            atomic(backup / self.cert.name, old_cert)
+        if old_cfg:
+            atomic(backup / self.config.name, old_cfg)
+        # Recovery-Journal vor dem Austausch: ein Stromausfall verliert den alten Stand nicht.
+        recovery = {'cert': old_cert.decode() if old_cert else None,
+                    'config': old_cfg.decode() if old_cfg else None,
+                    'success': old_success.decode() if old_success else None}
+        atomic(self.state / 'activation-recovery.json', json_bytes(recovery))
+        try:
+            atomic(self.cert, candidate.read_bytes())
+            atomic(self.config, json_bytes(cfg))
+            self.apache_test(cfg)
+            run('systemctl', 'start' if start else 'reload', SERVICE)
+            self.verify_served(cfg, run('openssl', 'x509', '-in', self.cert, '-outform', 'DER'))
+            self.verify_public_routes(cfg)
+            atomic(self.state / 'last-success.json', json_bytes({'reference': now}))
+            (self.state / 'activation-recovery.json').unlink()
+        except BaseException:
+            if start:
+                try:
+                    run('systemctl', 'stop', SERVICE)
+                except Exception as stop_error:
+                    print('FEHLER beim Stoppen des neuen Apache: ' + str(stop_error), file=sys.stderr)
+            self.recover(cfg, reload=not start)
+            raise
+        print('HTTPS-Zertifikat aktiviert; ' + run('openssl', 'x509', '-in', self.cert, '-noout', '-serial').decode().strip())
+
+    def recover(self, cfg, reload=True):
+        journal = self.state / 'activation-recovery.json'
+        if not journal.exists():
+            return
+        old = json.loads(journal.read_text())
+        for key, path in [('cert', self.cert), ('config', self.config), ('success', self.state / 'last-success.json')]:
+            if old[key] is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic(path, old[key].encode())
+        if reload and old['cert']:
+            try:
+                self.apache_test(cfg)
+                run('systemctl', 'reload', SERVICE)
+            except Exception as error:
+                print('FEHLER bei Apache-Wiederherstellung: ' + str(error), file=sys.stderr)
+                raise
+        journal.unlink()
+        print('Vorheriger Zertifikatsstand wiederhergestellt.', file=sys.stderr)
+
+    def prepare(self, cfg):
+        if self.config.exists():
+            previous = json.loads(self.config.read_text())
+            if not self.ca.exists() or hashlib.sha256(run('openssl', 'x509', '-in', self.ca, '-outform', 'DER')).hexdigest() != previous['ca_fingerprint']:
+                raise RuntimeError('Vorhandene Root-CA fehlt oder wurde verändert; aus Sicherung wiederherstellen')
+        if (self.state / 'activation-recovery.json').exists():
+            self.recover(cfg)
+        self.check_address(cfg)
+        now = self.reference_time()
+        pending = self.state / 'pending.crt'
+        self.create_leaf(cfg, now, pending, create=True)
+        cfg['ca_fingerprint'] = hashlib.sha256(run('openssl', 'x509', '-in', self.ca, '-outform', 'DER')).hexdigest()
+        atomic(self.state / 'pending.json', json_bytes({'config': cfg, 'reference': now}))
+        public = Path(cfg['public'])
+        public.mkdir(mode=0o755, parents=True, exist_ok=True)
+        atomic(public / 'ca.crt', run('openssl', 'x509', '-in', self.ca, '-outform', 'DER'), 0o644)
+        print('Root-CA SHA-256: ' + ':'.join(cfg['ca_fingerprint'][i:i+2].upper() for i in range(0, 64, 2)))
+
+    def renew(self):
+        cfg = json.loads(self.config.read_text())
+        if (self.state / 'activation-recovery.json').exists():
+            self.recover(cfg)
+            cfg = json.loads(self.config.read_text())
+        actual = hashlib.sha256(run('openssl', 'x509', '-in', self.ca, '-outform', 'DER')).hexdigest()
+        if actual != cfg['ca_fingerprint']:
+            raise RuntimeError('Root-CA wurde verändert; Erneuerung abgelehnt')
+        self.check_address(cfg)
+        now = self.reference_time()
+        with tempfile.TemporaryDirectory(dir=self.state) as folder:
+            candidate = Path(folder) / 'server.crt'
+            self.create_leaf(cfg, now, candidate)
+            self.activate(cfg, now, candidate)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--state-dir', default='/etc/ssl/fragebogenpi')
+    parser.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
+    parser.add_argument('--wait-lock', type=int, choices=range(0, 61), default=0, help=argparse.SUPPRESS)
+    commands = parser.add_subparsers(dest='command', required=True)
+    prepare = commands.add_parser('prepare')
+    for name in ('ip', 'interface', 'name', 'public', 'apache', 'run', 'log'):
+        prepare.add_argument('--' + name, required=True)
+    commands.add_parser('renew')
+    activate = commands.add_parser('activate')
+    activate.add_argument('--start', action='store_true')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.error('Nur als root ausführen')
+    os.umask(0o077)
+    manager = Manager(args.state_dir)
+    with manager.locked(args.lock_fd, args.wait_lock):
+        if args.command == 'prepare':
+            cfg = {name: getattr(args, name) for name in ('ip', 'interface', 'public', 'apache', 'run', 'log')}
+            hostname = args.name.removesuffix('.local').rstrip('.')
+            cfg['dns'] = list(dict.fromkeys([hostname, hostname + '.local']))
+            manager.prepare(cfg)
+        elif args.command == 'activate':
+            pending = json.loads((manager.state / 'pending.json').read_text())
+            manager.activate(pending['config'], pending['reference'], manager.state / 'pending.crt', args.start)
+        else:
+            manager.renew()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print('[fragebogenpi-https] FEHLER: ' + str(error), file=sys.stderr)
+        sys.exit(1)
+PY_HTTPS_MANAGER
+  chmod 0755 "$HTTPS_HELPER"
+  cat > "$HTTPS_RENEW_SERVICE" <<EOF
+[Unit]
+Description=fragebogenpi: taeglich neues WLAN-Serverzertifikat
+After=network-online.target chrony.service fragebogenpi-apache-wlan.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 ${HTTPS_HELPER} --state-dir ${SSL_DIR} --wait-lock 30 renew
+User=root
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=${SSL_DIR}
+NoNewPrivileges=true
+TimeoutStartSec=120
+EOF
+  cat > "$HTTPS_RENEW_TIMER" <<'EOF'
+[Unit]
+Description=fragebogenpi: taegliche HTTPS-Zertifikatserneuerung
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=fragebogenpi-https-renew.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 0644 "$HTTPS_RENEW_SERVICE" "$HTTPS_RENEW_TIMER"
+}
+
+acquire_https_setup_lock() {
+  [[ ! -L "$SSL_DIR" ]] || die "CA-Verzeichnis darf kein Symlink sein."
+  install -d -m 0700 "$SSL_DIR"
+  [[ ! -L "$SSL_DIR/renew.lock" ]] || die "HTTPS-Lock darf kein Symlink sein."
+  exec 9>"$SSL_DIR/renew.lock"
+  flock -n 9 || die "Eine HTTPS-Einrichtung oder Zertifikatserneuerung läuft bereits."
+}
+
+prepare_https_certificate() {
+  "$HTTPS_HELPER" --state-dir "$SSL_DIR" --lock-fd 9 prepare \
+    --ip "$AP_IP" --interface "$AP_INTERFACE" --name "$HOSTNAME_FQDN" \
+    --public "$HTTPS_PUBLIC_DIR" --apache "$APACHE_WLAN_CONF" \
+    --run "$APACHE_WLAN_RUN_DIR" --log "$APACHE_WLAN_LOG_DIR"
+}
+
+start_https_timer() {
+  systemctl daemon-reload
+  systemctl enable --now fragebogenpi-https-renew.timer
+}
+
 ensure_ssl_cert_if_requested() {
   local mode="$1"
-
-  if [[ "$mode" == "http" ]]; then
-    return 0
-  fi
-
-  log "HTTPS gewählt. Erzeuge self-signed Zertifikat für WLAN-Apache (gültig bis 2050)..."
-
-  mkdir -p "$SSL_DIR"
-  chmod 700 "$SSL_DIR"
-
-  local end_date="2050-01-01"
-  local now_epoch end_epoch days
-  now_epoch="$(date +%s)"
-  end_epoch="$(date -d "${end_date}" +%s)"
-  days="$(( (end_epoch - now_epoch) / 86400 ))"
-
-  openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
-    -keyout "$SSL_KEY" -out "$SSL_CRT" \
-    -days "$days" \
-    -subj "/C=DE/ST=DE/L=DE/O=fragebogenpi/OU=fragebogenpi/CN=${HOSTNAME_FQDN}.local"
-
-  chmod 600 "$SSL_KEY"
-  chmod 644 "$SSL_CRT"
+  [[ "$mode" == "https" ]] || return 0
+  install_https_tools
+  install_https_public_pages
+  prepare_https_certificate
 }
+
+# Getrennte Ausgabe des HTTP-vHosts: PHP ist nur fuer den Wartezimmer-Alias erreichbar.
+write_https_http_vhost() {
+  cat <<EOF
+<VirtualHost ${AP_IP}:80>
+    ServerName ${HOSTNAME_FQDN}.local
+    DocumentRoot "${HTTPS_PUBLIC_DIR}"
+    DirectoryIndex index.html
+    RewriteEngine On
+    RewriteRule ^/?(?:ca\\.crt|wartezimmer-server\\.php|index\\.html)$ - [L]
+    RewriteRule ^ /index.html [PT,L,QSD]
+    AliasMatch "^/ca\\.crt$" "${HTTPS_PUBLIC_DIR}/ca.crt"
+    AliasMatch "^/wartezimmer-server\\.php$" "${WEBROOT_WLAN}/wartezimmer-server.php"
+    <Directory "${WEBROOT_WLAN}">
+        AllowOverride None
+    </Directory>
+    <LocationMatch "^/ca\\.crt$">
+        ForceType application/x-x509-ca-cert
+    </LocationMatch>
+    ErrorLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-http-error.log
+    CustomLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-http-access.log combined env=!wartezimmer_no_log
+</VirtualHost>
+EOF
+}
+
+write_https_apache_modules() {
+  local module
+  for module in socache_shmcb ssl rewrite alias mime dir setenvif; do
+    cat <<EOF
+<IfModule !${module}_module>
+    LoadModule ${module}_module /usr/lib/apache2/modules/mod_${module}.so
+</IfModule>
+EOF
+  done
+}
+
+write_https_vhost_routes() {
+  cat <<EOF
+    SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
+    RewriteEngine On
+    RewriteRule ^/?(?:index\\.html)?$ /.fragebogenpi-tablets.php [PT,L,QSD]
+    AliasMatch "^/\\.fragebogenpi-tablets\\.php$" "${HTTPS_PUBLIC_DIR}/tablets.php"
+    AliasMatch "^/ca\\.crt$" "${HTTPS_PUBLIC_DIR}/ca.crt"
+    <LocationMatch "^/ca\\.crt$">
+        ForceType application/x-x509-ca-cert
+    </LocationMatch>
+EOF
+}
+
+# Nur die eigene 443-Freigabe ergänzen. Kein Laden/Leeren des gesamten Regelwerks.
+https_firewall_candidate() {
+  python3 - "$NFTABLES_CONF" "$1" "$AP_INTERFACE" "$AP_IP" <<'PY_HTTPS_NFT'
+import re
+import sys
+source, target, interface, address = sys.argv[1:]
+lines = open(source, encoding='utf-8').read().splitlines(keepends=True)
+rule = f'    iif "{interface}" ip daddr {address} tcp dport 443 accept comment "fragebogenpi-https"\n'
+depth = 0
+table_depth = chain_depth = None
+tables = chains = 0
+anchors, marked = [], []
+for i, line in enumerate(lines):
+    code = line.split('#', 1)[0].strip()
+    if re.match(r'^table\s+inet\s+fragebogenpi\s*\{', code):
+        tables += 1
+        table_depth = depth + 1
+    elif table_depth is not None and depth == table_depth and re.match(r'^chain\s+input\s*\{', code):
+        chains += 1
+        chain_depth = depth + 1
+    elif chain_depth is not None and depth == chain_depth:
+        if code == f'iif "{interface}" drop':
+            anchors.append(i)
+        if '"fragebogenpi-https"' in code:
+            marked.append(i)
+    depth += code.count('{') - code.count('}')
+    if chain_depth is not None and depth < chain_depth:
+        chain_depth = None
+    if table_depth is not None and depth < table_depth:
+        table_depth = None
+if tables != 1 or chains != 1 or len(anchors) != 1 or depth != 0:
+    raise SystemExit('Unbekannte Firewallstruktur: erwartete eigene input-Chain mit WLAN-Sperre fehlt.')
+if marked:
+    if len(marked) != 1 or lines[marked[0]].strip() != rule.strip() or marked[0] >= anchors[0]:
+        raise SystemExit('Vorhandene markierte HTTPS-Regel passt nicht zur WLAN-IP.')
+else:
+    lines.insert(anchors[0], rule)
+open(target, 'w', encoding='utf-8').writelines(lines)
+PY_HTTPS_NFT
+  nft -c -f "$1"
+}
+
+https_live_firewall_handle() {
+  local rules
+  rules="$(nft -a list chain inet fragebogenpi input)" || return 1
+  python3 - "$rules" "$AP_INTERFACE" "$AP_IP" <<'PY_HTTPS_LIVE'
+import re
+import sys
+rules, interface, address = sys.argv[1:]
+lines = [line.strip() for line in rules.splitlines()]
+drops = [i for i, line in enumerate(lines) if re.fullmatch(r'iif(?:name)? "' + re.escape(interface) + r'" drop # handle \d+', line)]
+marked = [(i, line) for i, line in enumerate(lines) if '"fragebogenpi-https"' in line]
+if len(drops) != 1:
+    raise SystemExit('Aktive WLAN-Sperre ist nicht eindeutig; HTTPS-Modus abgebrochen.')
+if marked:
+    pattern = r'iif(?:name)? "' + re.escape(interface) + r'" ip daddr ' + re.escape(address) + r' tcp dport 443 accept comment "fragebogenpi-https" # handle (\d+)'
+    match = re.fullmatch(pattern, marked[0][1])
+    if len(marked) != 1 or not match or marked[0][0] >= drops[0]:
+        raise SystemExit('Aktive markierte HTTPS-Regel ist unbekannt.')
+    print(match[1])
+PY_HTTPS_LIVE
+}
+
+setup_https_only() (
+  set -euo pipefail
+  umask 077
+  step "Nur HTTPS und Zertifikate einrichten / aktualisieren"
+  local command
+  for command in python3 openssl chronyc nft flock; do
+    command -v "$command" >/dev/null || die "Für Modus 7 fehlt ${command}; zunächst Pakete/Zeitserver einrichten."
+  done
+  [[ -f "$APACHE_WLAN_CONF" && -f "$APACHE_WLAN_SERVICE" ]] || die "WLAN-Apache-Konfiguration fehlt."
+  systemctl is-active --quiet fragebogenpi-apache-wlan.service || die "WLAN-Apache muss vor der HTTPS-Umstellung laufen."
+  [[ -f "${WEBROOT_WLAN}/tablet.php" ]] || die "Tablet-Betrieb zuerst mit Modus 5 einrichten."
+  AP_IP="$(python3 - "$AP_INTERFACE" <<'PY_HTTPS_IP'
+import ipaddress, json, subprocess, sys
+result = subprocess.run(['ip', '-j', '-4', 'addr', 'show', 'dev', sys.argv[1]], check=True, capture_output=True, text=True)
+addresses = [a['local'] for i in json.loads(result.stdout) for a in i.get('addr_info', []) if a.get('scope') == 'global']
+if len(addresses) != 1:
+    raise SystemExit('Genau eine tatsächliche WLAN-IPv4-Adresse erforderlich.')
+print(ipaddress.IPv4Address(addresses[0]))
+PY_HTTPS_IP
+)" || die "WLAN-IP konnte nicht eindeutig festgestellt werden."
+  HOSTNAME_FQDN="$(awk '/^ServerName / {print $2}' "$APACHE_WLAN_CONF")"
+  HOSTNAME_FQDN="${HOSTNAME_FQDN%.local}"
+  [[ "$HOSTNAME_FQDN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die "Apache-ServerName ist nicht eindeutig."
+  python3 - "$TABLET_COUNT_FILE" "$WEBROOT_WLAN" <<'PY_HTTPS_TABLETS'
+from pathlib import Path
+import re, sys
+count_file, webroot = map(Path, sys.argv[1:])
+value = count_file.read_text() if count_file.exists() else '1'
+if not re.fullmatch(r'[1-9](?:\r?\n)?', value):
+    raise SystemExit('Ungültige Tablet-Anzahl: zuerst mit Modus 5 korrigieren.')
+count = int(value)
+endpoints = ['tablet.php'] if count == 1 else [f'tablet{i}.php' for i in range(1, count + 1)]
+for name in endpoints:
+    if not (webroot / name).is_file():
+        raise SystemExit(f'Tablet-Endpunkt fehlt: {name}; zuerst Modus 5 ausführen.')
+PY_HTTPS_TABLETS
+  load_tablet_count
+  log "Geprüfte WLAN-IP: ${AP_IP}; Servername: ${HOSTNAME_FQDN}"
+
+  acquire_https_setup_lock
+  local staged saved_conf old_live_handle added_handle="" changed="no" success="no" old_timer="no"
+  staged="$(mktemp -d)"
+  saved_conf="$APACHE_WLAN_CONF"
+  https_setup_cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ "$changed" == "yes" && "$success" != "yes" ]]; then
+      warn "HTTPS-Einrichtung fehlgeschlagen; vorherige Konfiguration wird wiederhergestellt."
+      cp -p "$staged/apache.original" "$saved_conf" || true
+      cp -p "$staged/nft.original" "$NFTABLES_CONF" || true
+      local name
+      for name in fragebogenpi.crt https.json last-success.json; do
+        if [[ -f "$staged/$name" ]]; then
+          cp -p "$staged/$name" "$SSL_DIR/$name" || true
+        else
+          rm -f -- "$SSL_DIR/$name"
+        fi
+      done
+      if [[ -n "$added_handle" ]]; then
+        nft delete rule inet fragebogenpi input handle "$added_handle" || warn "Die neu ergänzte HTTPS-Regel konnte nicht entfernt werden."
+      fi
+      systemctl reload fragebogenpi-apache-wlan.service || warn "Apache-Rückkehr fehlgeschlagen; Sicherung prüfen."
+    fi
+    if [[ "$old_timer" == "yes" ]]; then
+      systemctl start fragebogenpi-https-renew.timer || true
+    fi
+    rm -rf -- "$staged"
+    exit "$status"
+  }
+  trap https_setup_cleanup EXIT
+  cp -p "$saved_conf" "$staged/apache.original"
+  cp -p "$NFTABLES_CONF" "$staged/nft.original"
+  # Nur eine bekannte Konfiguration ersetzen; individuelle Anpassungen bleiben unangetastet.
+  local variant
+  for variant in http https; do
+    APACHE_WLAN_CONF="$staged/legacy-$variant"
+    write_apache_wlan_config "$variant" legacy
+  done
+  APACHE_WLAN_CONF="$staged/new-https"
+  write_apache_wlan_config https
+  APACHE_WLAN_CONF="$saved_conf"
+  python3 - "$staged" <<'PY_HTTPS_COMPARE'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+def normalized(path):
+    return '\n'.join(line.strip() for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith('#'))
+original = normalized(root / 'apache.original')
+if original not in [normalized(root / name) for name in ('legacy-http', 'legacy-https', 'new-https')]:
+    raise SystemExit('Individuelle oder unbekannte WLAN-Apache-Konfiguration: keine automatische Überschreibung.')
+PY_HTTPS_COMPARE
+  https_firewall_candidate "$staged/nft.candidate"
+  old_live_handle="$(https_live_firewall_handle)"
+  if systemctl is-active --quiet fragebogenpi-https-renew.timer; then
+    old_timer="yes"
+    systemctl stop fragebogenpi-https-renew.timer
+  fi
+  # Ein bereits laufender Signierdienst wird nicht unterbrochen; dessen Lock schützt prepare.
+  install -d -m 0700 "$SSL_DIR"
+  local name
+  for name in fragebogenpi.crt https.json last-success.json; do
+    [[ ! -f "$SSL_DIR/$name" ]] || cp -p "$SSL_DIR/$name" "$staged/$name"
+  done
+  local backup_dir="$SSL_DIR/setup-backups/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  install -d -m 0700 "$backup_dir"
+  cp -p "$staged/apache.original" "$backup_dir/apache2.conf"
+  cp -p "$staged/nft.original" "$backup_dir/nftables.conf"
+  for name in fragebogenpi.crt https.json last-success.json; do
+    [[ ! -f "$staged/$name" ]] || cp -p "$staged/$name" "$backup_dir/$name"
+  done
+  install_https_tools
+  install_https_public_pages
+  prepare_https_certificate
+  changed="yes"
+  if [[ -z "$old_live_handle" ]]; then
+    nft insert rule inet fragebogenpi input iifname "\"${AP_INTERFACE}\"" ip daddr "$AP_IP" \
+      tcp dport 443 accept comment '"fragebogenpi-https"'
+    added_handle="$(https_live_firewall_handle)"
+    [[ -n "$added_handle" ]] || die "Neue HTTPS-Firewallregel nicht gefunden."
+  fi
+  install -m 0644 "$staged/nft.candidate" "${NFTABLES_CONF}.https-next"
+  mv -f "${NFTABLES_CONF}.https-next" "$NFTABLES_CONF"
+  install -m 0644 "$staged/new-https" "${saved_conf}.https-next"
+  mv -f "${saved_conf}.https-next" "$saved_conf"
+  "$HTTPS_HELPER" --state-dir "$SSL_DIR" --lock-fd 9 activate
+  start_https_timer
+  success="yes"
+  ok "HTTPS aktiv: https://${AP_IP}/; CA-Anleitung: http://${AP_IP}/"
+  log "Konfigurationssicherung: ${backup_dir}"
+  log "CA und privaten Schlüssel zusätzlich extern sichern: ${SSL_DIR}/ca-backup"
+  log "Wartezimmer bleibt unter http://${AP_IP}/wartezimmer-server.php erreichbar."
+)
 
 install_apache_lan_bind_helper() {
   mkdir -p "$(dirname "$APACHE_LAN_BIND_HELPER")"
@@ -2007,7 +2936,7 @@ EOF
 }
 
 write_apache_wlan_config() {
-  local mode="$1"
+  local mode="$1" routing="${2:-current}"
 
   mkdir -p "$APACHE_WLAN_DIR" "$APACHE_WLAN_LOG_DIR"
   backup_file "$APACHE_WLAN_CONF"
@@ -2041,6 +2970,11 @@ LogLevel warn
 
 IncludeOptional /etc/apache2/mods-enabled/*.load
 IncludeOptional /etc/apache2/mods-enabled/*.conf
+EOF
+  if [[ "$mode" == "https" && "$routing" != "legacy" ]]; then
+    write_https_apache_modules >> "$APACHE_WLAN_CONF"
+  fi
+  cat >> "$APACHE_WLAN_CONF" <<EOF
 
 # wartezimmer-server.php nicht im Apache-Zugriffslog protokollieren
 SetEnvIf Request_URI "^/wartezimmer-server\.php$" wartezimmer_no_log
@@ -2056,6 +2990,19 @@ SetEnvIf Request_URI "^/wartezimmer-server\.php$" wartezimmer_no_log
     Require all granted
 </Directory>
 
+EOF
+
+  if [[ "$mode" == "https" && "$routing" != "legacy" ]]; then
+    cat >> "$APACHE_WLAN_CONF" <<EOF
+<Directory "${HTTPS_PUBLIC_DIR}">
+    Options None
+    AllowOverride None
+    Require all granted
+</Directory>
+EOF
+    write_https_http_vhost >> "$APACHE_WLAN_CONF"
+  else
+    cat >> "$APACHE_WLAN_CONF" <<EOF
 <VirtualHost ${AP_IP}:80>
     ServerName ${HOSTNAME_FQDN}.local
     DocumentRoot "${WEBROOT_WLAN}"
@@ -2063,6 +3010,7 @@ SetEnvIf Request_URI "^/wartezimmer-server\.php$" wartezimmer_no_log
     CustomLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-http-access.log combined env=!wartezimmer_no_log
 </VirtualHost>
 EOF
+  fi
 
   if [[ "$mode" == "https" ]]; then
     cat >> "$APACHE_WLAN_CONF" <<EOF
@@ -2073,6 +3021,11 @@ EOF
     SSLEngine on
     SSLCertificateFile ${SSL_CRT}
     SSLCertificateKeyFile ${SSL_KEY}
+EOF
+    if [[ "$routing" != "legacy" ]]; then
+      write_https_vhost_routes >> "$APACHE_WLAN_CONF"
+    fi
+    cat >> "$APACHE_WLAN_CONF" <<EOF
     ErrorLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-https-error.log
     CustomLog ${APACHE_WLAN_LOG_DIR}/fragebogenpi-wlan-https-access.log combined env=!wartezimmer_no_log
 </VirtualHost>
@@ -2108,25 +3061,47 @@ WantedBy=multi-user.target
 EOF
 }
 
-setup_apache_instances() {
+setup_apache_instances() (
+  set -euo pipefail
   step "Apache trennen: LAN-Instanz und isolierte WLAN-Instanz"
-  local mode="$1"
+  local mode="$1" old_conf="" previously_active="no" completed="no"
+  if systemctl is-active --quiet fragebogenpi-apache-wlan.service; then
+    previously_active="yes"
+  fi
+  if [[ -f "$APACHE_WLAN_CONF" ]]; then
+    old_conf="$(mktemp)"
+    cp -p "$APACHE_WLAN_CONF" "$old_conf"
+  fi
+  trap 'status=$?; if [[ "$completed" != "yes" && -n "$old_conf" ]]; then cp -p "$old_conf" "$APACHE_WLAN_CONF"; if [[ "$previously_active" == "yes" ]]; then systemctl reload fragebogenpi-apache-wlan.service || true; fi; fi; [[ -z "$old_conf" ]] || rm -f -- "$old_conf"; exit "$status"' EXIT
 
+  if [[ "$mode" == "http" ]]; then
+    systemctl disable --now fragebogenpi-https-renew.timer 2>/dev/null || true
+    systemctl stop fragebogenpi-https-renew.service 2>/dev/null || true
+  fi
+  if [[ "$mode" == "https" ]]; then
+    acquire_https_setup_lock
+  fi
   ensure_ssl_cert_if_requested "$mode"
   configure_apache_lan_instance "$mode"
   write_apache_wlan_config "$mode"
   install_apache_wlan_service
-
   systemctl daemon-reload
-  systemctl enable --now fragebogenpi-apache-wlan.service >/dev/null 2>&1 || true
-  systemctl restart fragebogenpi-apache-wlan.service || print_service_debug_and_die "fragebogenpi-apache-wlan.service"
-
+  systemctl enable fragebogenpi-apache-wlan.service
   if [[ "$mode" == "https" ]]; then
-    ok "Apache getrennt: LAN nur auf ${LAN_INTERFACE}, WLAN HTTP/HTTPS nur auf ${AP_IP} mit ${WEBROOT_WLAN}"
+    install -d -m 0755 "$APACHE_WLAN_RUN_DIR"
+    if [[ "$previously_active" == "yes" ]]; then
+      "$HTTPS_HELPER" --state-dir "$SSL_DIR" --lock-fd 9 activate
+    else
+      "$HTTPS_HELPER" --state-dir "$SSL_DIR" --lock-fd 9 activate --start
+    fi
+    start_https_timer
+    ok "WLAN HTTPS aktiv; HTTP zeigt die CA-Anleitung (Wartezimmer bleibt erreichbar)."
   else
+    systemctl restart fragebogenpi-apache-wlan.service || print_service_debug_and_die "fragebogenpi-apache-wlan.service"
     ok "Apache getrennt: LAN nur auf ${LAN_INTERFACE}, WLAN HTTP nur auf ${AP_IP} mit ${WEBROOT_WLAN}"
   fi
-}
+  completed="yes"
+)
 
 configure_waiting_room_no_access_log() {
   [[ -f "$APACHE_WLAN_CONF" ]] || die "WLAN-Apache-Konfiguration fehlt: ${APACHE_WLAN_CONF}"
@@ -2525,7 +3500,7 @@ write_credentials_file_if_requested() {
     echo "WLAN IP (Pi): ${AP_IP}"
     echo "Webserver (WLAN): http://${AP_IP}/"
     if [[ "$web_mode" == "https" ]]; then
-      echo "Webserver (WLAN): https://${AP_IP}/ (self-signed)"
+      echo "Webserver (WLAN): https://${AP_IP}/ (eigene Root-CA)"
     fi
     echo "WLAN-Webroot: ${WEBROOT_WLAN}"
     echo "LAN-Webroot:  ${WEBROOT_LAN}"
@@ -2624,6 +3599,11 @@ main() {
   local mode="full"
   if [[ -d "${SHARE_BASE}" ]]; then
     mode="$(ask_choice_existing_install)"
+  fi
+
+  if [[ "$mode" == "https-only" ]]; then
+    setup_https_only
+    exit 0
   fi
 
   # ------------------------------------------------------
@@ -2849,7 +3829,7 @@ main() {
   echo "Zeitserver (WLAN): ${AP_IP}:123/UDP (per DHCP-Option 42)"
   echo "Webserver (WLAN): http://${AP_IP}/"
   if [[ "$web_mode" == "https" ]]; then
-    echo "Webserver (WLAN): https://${AP_IP}/  (self-signed Warnung ist normal)"
+    echo "Webserver (WLAN): https://${AP_IP}/  (nach einmaliger CA-Installation ohne Zertifikatswarnung)"
   fi
   echo "WLAN-Webroot:     ${WEBROOT_WLAN}"
   echo "LAN-Webroot:      ${WEBROOT_LAN}"

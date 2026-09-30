@@ -17,7 +17,7 @@ Aenderung am Anamnesebogen lesen.
 - isolierten WLAN-Access-Point `fragebogenpi`
 - hostapd + dnsmasq
 - Firewall-Regeln mit WLAN-Isolation
-- optional HTTPS mit selbstsigniertem Zertifikat
+- optional HTTPS mit eigener dauerhafter Root-CA und täglichen Serverzertifikaten
 - Bootstrap-Download der Webanwendung aus GitHub
 - automatische Sicherheitsupdates
 - Benutzerverwaltung fuer Samba/Windows-Clients
@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigten Basisversionen sind:
 
 ```text
-fragebogenpi.sh v1.7.1
+fragebogenpi.sh v1.7.2
 wartezimmer.sh v1.5.8
 ```
 
@@ -398,6 +398,7 @@ Wenn `/srv/fragebogenpi` existiert, zeigt der Installer:
 4) Nur Wartezimmer-Schnittstelle einrichten / aktualisieren
 5) Nur Tablet-/Formularbetrieb einrichten / aktualisieren
 6) Nur Zeitserver einrichten / aktualisieren
+7) Nur HTTPS / Zertifikate einrichten / aktualisieren
 ```
 
 ### Modus 1
@@ -434,6 +435,36 @@ Nur Zeitserver einrichten oder aktualisieren:
 - richtet Chrony, DHCP-Option 42 und die einzelne NTP-Firewallregel ein
 - laesst fremde Firewallregeln und alle anderen Installerbereiche unveraendert
 - fuehrt keinen Reboot aus
+
+### Modus 7 und dauerhafter HTTPS-Betrieb seit 1.7.2
+
+Verbindliche Details und Betriebshinweise: `HTTPS.md`.
+
+- Modus 7 ermittelt die reale WLAN-IP, prüft die bekannte Apache-/Firewallstruktur
+  sowie Tablet-Anzahl und Endpunkte; unbekannte Konfigurationen werden abgelehnt.
+- Root-CA einmalig mit RSA 4096/SHA-256, Beginn minus 365 Tage, Ablauf in 50 Jahren.
+  Bestehende CA niemals still ersetzen, auch nicht nach Verlust aktiver Dateien bei
+  vorhandener Sicherung. Private Dateien in `/etc/ssl/fragebogenpi` nur für root.
+- Täglich tatsächlich neues Serverzertifikat: gemeinsames UTC-T, exakt T +/-365 Tage,
+  neuer Serial, gleiche CA, tatsächliche IP als IP-SAN. Geeigneten Server-Key behalten.
+- Chrony muss synchron sein; gemeinsame Sperre, Prüfung, atomarer Austausch,
+  WLAN-Apache-Reload, Prüfung des ausgelieferten Zertifikats und Fehler-Rollback.
+- HTTP zeigt immer die Einrichtungsseite, auch direkte Tablet-Aufrufe. Ausnahmen:
+  öffentliches `/ca.crt` und ausdrücklich `/wartezimmer-server.php`.
+- HTTPS `/` und `/index.html`: ein Tablet -> `/tablet.php`, mehrere -> Auswahl.
+  Direkte `/tabletN.php`-Aufrufe, Assets und APIs bleiben erhalten.
+- CA-Download auf HTTP und HTTPS dauerhaft im DER-X.509-Format. Kein automatischer
+  HTTP-HTTPS-Wechsel und kein JavaScript-Vertrauenstest. Keine HSTS-Erzwingung.
+- Modus 7 verändert keine LAN-Konfiguration oder gemeinsam aktivierten Apache-Module;
+  benötigte Module werden ausschließlich in der WLAN-Konfiguration ergänzt.
+  Firewalländerung nur eigene TCP/443-Regel, kein globales Laden/Leeren des Rulesets.
+- Runtime-Proben dürfen den Wartezimmer-Endpunkt nicht aufrufen: Ein GET konsumiert
+  eine GDT-Datei. Tests mit harmlosen Dummies; echte Abnahme mit bewusstem Testauftrag.
+- Timer: `fragebogenpi-https-renew.timer`, `Persistent=true`; manuell
+  `sudo /usr/local/sbin/fragebogenpi-https renew`. CA und Schlüssel extern sichern.
+- Regression: `python3 tests/https_certificates_test.py`,
+  `python3 tests/https_pages_test.py`, `python3 tests/https_installer_test.py`,
+  zusätzlich `python3 tests/https_apache_test.py` mit lokalen Testports.
 
 ### Wartezimmer-Zeit und Abschaltung
 
