@@ -113,6 +113,9 @@ aktualisieren** den iPad-Betrieb mit eigener dauerhafter Root-CA ein. HTTP zeigt
 die Installationsanleitung und den CA-Download; die Wartezimmer-Schnittstelle
 bleibt über HTTP erreichbar. HTTPS öffnet das Formular beziehungsweise die
 Tablet-Auswahl. Details, Sicherung, Timer und Abnahme: [HTTPS-Betrieb](HTTPS.md).
+Version **1.7.3** behebt den Chrony-Zugriff im geschützten Erneuerungsdienst.
+Bestehende HTTPS-Installationen dafür erneut mit Modus 7 aktualisieren; die
+installierte Root-CA bleibt erhalten.
 
 Für den **Wartezimmer-Aufrufschirm** auf ZWEITEM Raspberry pi:
 

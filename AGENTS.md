@@ -26,7 +26,7 @@ Aenderung am Anamnesebogen lesen.
 Die derzeit bestaetigten Basisversionen sind:
 
 ```text
-fragebogenpi.sh v1.7.2
+fragebogenpi.sh v1.7.3
 wartezimmer.sh v1.5.8
 ```
 
@@ -462,6 +462,10 @@ Verbindliche Details und Betriebshinweise: `HTTPS.md`.
   eine GDT-Datei. Tests mit harmlosen Dummies; echte Abnahme mit bewusstem Testauftrag.
 - Timer: `fragebogenpi-https-renew.timer`, `Persistent=true`; manuell
   `sudo /usr/local/sbin/fragebogenpi-https renew`. CA und Schlüssel extern sichern.
+- Seit 1.7.3: Der geschützte Erneuerungsdienst benötigt Schreibzugriff auf
+  `/run/chrony` für den lokalen chronyc-Antwortsocket. `cmdport 0` bleibt bestehen;
+  Synchronisationsprüfung nicht umgehen. Nur bei chronyc auch stdout als
+  Fehlerdiagnose ausgeben, niemals pauschal bei OpenSSL (Schlüsselmaterial).
 - Regression: `python3 tests/https_certificates_test.py`,
   `python3 tests/https_pages_test.py`, `python3 tests/https_installer_test.py`,
   zusätzlich `python3 tests/https_apache_test.py` mit lokalen Testports.

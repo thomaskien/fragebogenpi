@@ -19,6 +19,30 @@ exec(compile(CODE, 'embedded-https-manager.py', 'exec'), https.__dict__)
 REAL_RUN = https.run
 
 
+class CommandDiagnosticsTests(unittest.TestCase):
+    def test_chrony_stdout_failure_is_visible_with_optional_stderr(self):
+        for stderr in (b'', b'Could not bind/connect client Unix socket\n'):
+            with self.subTest(stderr=stderr):
+                result = https.subprocess.CompletedProcess(
+                    ['chronyc', 'waitsync'], 1, b'506 Cannot talk to daemon\n', stderr)
+                with mock.patch.object(https.subprocess, 'run', return_value=result):
+                    with self.assertRaisesRegex(RuntimeError, '506 Cannot talk to daemon') as error:
+                        REAL_RUN('chronyc', 'waitsync', '12', '1.0', '0.0', '2')
+                if stderr:
+                    self.assertIn(stderr.decode().strip(), str(error.exception))
+
+    def test_other_command_stdout_is_not_disclosed_in_errors(self):
+        for stderr in (b'', b'Unable to read key\n'):
+            with self.subTest(stderr=stderr):
+                result = https.subprocess.CompletedProcess(
+                    ['openssl', 'pkey'], 1, b'PRIVATE KEY MATERIAL', stderr)
+                with mock.patch.object(https.subprocess, 'run', return_value=result):
+                    with self.assertRaises(RuntimeError) as error:
+                        REAL_RUN('openssl', 'pkey')
+                self.assertNotIn('PRIVATE KEY MATERIAL', str(error.exception))
+                self.assertIn(stderr.decode().strip() or 'Exit-Code 1', str(error.exception))
+
+
 class CertificateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

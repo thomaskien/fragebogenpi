@@ -1,4 +1,4 @@
-# Lokales HTTPS für iPads – Installer 1.7.2
+# Lokales HTTPS für iPads – Installer 1.7.3
 
 Die Einrichtung verwendet eine eigene dauerhafte Root-CA pro Haupt-Pi. Die iPads
 benötigen keinen Internetzugang. Der Haupt-Pi benötigt seine vorhandene, per LAN
@@ -134,6 +134,19 @@ Regeln bleiben erhalten. Bei fehlgeschlagener Umstellung werden die alte
 Apache-/Firewall-Konfiguration und das vorherige Zertifikat wiederhergestellt.
 
 ## Timer, manuelle Erneuerung und Logs
+
+Version 1.7.3 korrigiert die Dienstfreigabe für `/run/chrony`. Dort legt `chronyc`
+seinen lokalen Antwortsocket an. In 1.7.2 verhinderte `ProtectSystem=strict` dies,
+obwohl `chronyc tracking` in der Root-Shell eine synchronisierte Uhr meldete.
+Der durch `cmdport 0` deaktivierte UDP-Kommandokanal bleibt deaktiviert. Nur das
+Chrony-Laufzeitverzeichnis kommt zur bestehenden Schreibfreigabe hinzu; die
+Zeitsynchronisationsprüfung und alle übrigen Schutzregeln bleiben bestehen.
+Bei Chrony-Fehlern wird nun auch dessen stdout-Diagnose protokolliert.
+
+Bestehende 1.7.2-Installationen mit dem aktuellen Installer in Modus 7 aktualisieren.
+Dabei bleibt die Root-CA erhalten. Anschließend ausdrücklich den Dienst mit
+`systemctl start fragebogenpi-https-renew.service` prüfen: Ein direkter Helper-Aufruf
+läuft außerhalb der systemd-Schutzregeln und prüft deren Zusammenspiel nicht.
 
 ```bash
 sudo systemctl status fragebogenpi-https-renew.timer --no-pager

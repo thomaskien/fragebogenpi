@@ -4,11 +4,15 @@
 # Projekt: fragebogenpi
 # Autor: Thomas Kienzle
 #
-# Version: 1.7.2
+# Version: 1.7.3
 #
 # =========================
 # Changelog (vollständig)
 # =========================
+#
+# - 1.7.3 (2026-09-30)
+#   * HTTPS-Erneuerungsdienst erlaubt Chronys lokalen Antwortsocket trotz Dateisystemschutz.
+#   * Chrony-Fehlerausgaben enthalten auch die Diagnose von stdout statt leerer Meldungen.
 #
 # - 1.7.2 (2026-09-30)
 #   * Dauerhafte lokale Root-CA und tägliche, geprüfte Serverzertifikate mit +/-365 Tagen.
@@ -366,7 +370,7 @@ WIFI_COUNTRY="DE"
 # -------------------------
 # UI / Logging
 # -------------------------
-VERSION="1.7.2"
+VERSION="1.7.3"
 STEP_NO=0
 
 banner() {
@@ -2053,7 +2057,7 @@ install_https_tools() {
   install -d -m 0755 "$(dirname "$HTTPS_HELPER")"
   cat > "$HTTPS_HELPER" <<'PY_HTTPS_MANAGER'
 #!/usr/bin/env python3
-"""Privilegierte lokale CA und transaktionale WLAN-Zertifikatserneuerung (v1.7.2)."""
+"""Privilegierte lokale CA und transaktionale WLAN-Zertifikatserneuerung (v1.7.3)."""
 import argparse
 import contextlib
 import datetime as dt
@@ -2081,7 +2085,12 @@ def run(*args, data=None, env=None):
     result = subprocess.run([str(a) for a in args], input=data, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, env=env, timeout=60)
     if result.returncode:
-        raise RuntimeError(f'{args[0]} {args[1]}: ' + result.stderr.decode(errors='replace').strip())
+        detail = result.stderr.decode(errors='replace').strip()
+        # chronyc meldet z.B. "506 Cannot talk to daemon" auf stdout.
+        # Andere Tools können dort Schlüssel ausgeben: deren stdout niemals loggen.
+        if args[0] == 'chronyc':
+            detail = '\n'.join(filter(None, (detail, result.stdout.decode(errors='replace').strip())))
+        raise RuntimeError(f'{args[0]} {args[1]}: ' + (detail or f'Exit-Code {result.returncode}'))
     return result.stdout
 
 
@@ -2529,7 +2538,9 @@ UMask=0077
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=${SSL_DIR}
+# chronyc muss neben chronyd.sock seinen lokalen Antwortsocket anlegen können.
+# cmdport 0 deaktiviert den UDP-Fallback; /run bleibt ansonsten schreibgeschützt.
+ReadWritePaths=${SSL_DIR} /run/chrony
 NoNewPrivileges=true
 TimeoutStartSec=120
 EOF

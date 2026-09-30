@@ -195,6 +195,12 @@ prepare_https_certificate() { return "${FAIL_PREPARE:-0}"; }
         self.assertIn('User=root', service)
         self.assertIn(' renew\n', service)
         self.assertIn('ProtectSystem=strict', service)
+        writable = next(line.split('=', 1)[1].split() for line in service.splitlines()
+                        if line.startswith('ReadWritePaths='))
+        self.assertEqual(writable, [self.variables['SSL_DIR'], '/run/chrony'])
+        self.assertIn('PrivateTmp=true', service)
+        self.assertIn('ProtectHome=true', service)
+        self.assertIn('NoNewPrivileges=true', service)
         self.assertEqual(Path(self.variables['HTTPS_HELPER']).stat().st_mode & 0o777, 0o755)
 
 
