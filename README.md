@@ -2,6 +2,8 @@
 
 www.fragebogenpi.de
 
+[Lizenz: MIT](LICENSE)
+
 **fragebogenpi** ist ein Installations- und System-Setup für einen Raspberry Pi, der als isolierter Fragebogen- und Datenerfassungs-Server betrieben wird.
 
 Ziel ist:
@@ -346,3 +348,17 @@ Solange **keine** `SLFT2MD.gdt` vorhanden ist:
 
 - wird der Patient **namentlich angezeigt**
 - aktualisiert sich die Seite **automatisch alle 3 Sekunden**
+
+## Lizenz
+
+Der eigene Programmcode von **fragebogenpi** und die zugehörige Dokumentation
+stehen unter der [MIT-Lizenz](LICENSE).
+Copyright (c) 2026 Thomas Kienzle.
+
+Nutzung, Änderung und Weitergabe sind auch kommerziell erlaubt. Bei Weitergabe
+von Kopien oder wesentlichen Teilen müssen der Copyright-Vermerk und der
+vollständige Lizenztext erhalten bleiben.
+
+Rechte an übernommenen Inhalten Dritter, insbesondere medizinischen
+Fragebogentexten, bleiben unberührt. Die MIT-Lizenz erteilt hierfür keine
+zusätzlichen Nutzungsrechte; deren Bedingungen sind gesondert zu prüfen.
